@@ -1,0 +1,6 @@
+#!/usr/bin/env sh
+set -e
+
+bun run knip
+bun run check-duplicates
+bun run lint-staged

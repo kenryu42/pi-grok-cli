@@ -1,0 +1,17 @@
+{
+	"scripts": {
+		"typecheck": "tsc --noEmit",
+		"knip": "knip --production",
+		"lint": "biome check --write .",
+		"lint:ci": "biome ci .",
+		"check-duplicates": "bunx jscpd src tests --exitCode 1 --reporters ai --noTips",
+		"check": "bun run lint && bun run typecheck && bun run knip && bun run check-duplicates && AGENT=1 bun run coverage",
+		"check:ci": "bun run lint:ci && bun run typecheck && bun run knip && bun run check-duplicates && AGENT=1 bun run coverage",
+		"prepare": "husky"
+	},
+	"lintStaged": {
+		"*": ["biome check --write --no-errors-on-unmatched"]
+	},
+	"tsconfig": "{\n\t\"compilerOptions\": {\n\t\t\"target\": \"ES2022\",\n\t\t\"module\": \"ES2022\",\n\t\t\"moduleResolution\": \"bundler\",\n\t\t\"strict\": true,\n\t\t\"esModuleInterop\": true,\n\t\t\"skipLibCheck\": true,\n\t\t\"forceConsistentCasingInFileNames\": true,\n\t\t\"resolveJsonModule\": true,\n\t\t\"declaration\": true,\n\t\t\"declarationMap\": true,\n\t\t\"sourceMap\": true,\n\t\t\"outDir\": \"./dist\",\n\t\t\"rootDir\": \".\"\n\t},\n\t\"include\": [\"src/**/*.ts\"],\n\t\"exclude\": [\"node_modules\", \"dist\"]\n}\n",
+	"installedDeps": []
+}

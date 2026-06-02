@@ -1,0 +1,4 @@
+#!/usr/bin/env sh
+
+# Run all checks (lint, typecheck, knip, tests)
+bun run check
