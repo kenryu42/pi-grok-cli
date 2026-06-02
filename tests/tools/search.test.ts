@@ -1,6 +1,6 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { registerSearchTools } from '../../src/tools/search.js';
 import {
   collectTools,
@@ -12,6 +12,8 @@ import {
   type ToolResult,
   tempDir,
 } from './toolTestHelpers.js';
+
+const originalPath = process.env.PATH;
 
 function setupProject() {
   const dir = tempDir('pi-grok-cli-search-');
@@ -140,6 +142,43 @@ describe('search tools', () => {
 
     expect(firstText(result)).toBe('No files found');
     expect(result.details).toEqual({ fileCount: 0 });
+  });
+
+  it('globs path-containing patterns through the find fallback', async () => {
+    const cwd = setupProject();
+    const bin = tempDir('pi-grok-cli-search-bin-');
+    symlinkSync('/usr/bin/find', join(bin, 'find'));
+    process.env.PATH = bin;
+    vi.resetModules();
+    const fallbackTools = collectTools(
+      (await import('../../src/tools/search.js')).registerSearchTools,
+    );
+
+    try {
+      const result = await executeTool(fallbackTools.get('Glob'), { pattern: 'src/**/*.ts' }, cwd);
+
+      expectGlobResult(cwd, result);
+    } finally {
+      process.env.PATH = originalPath;
+    }
+  });
+
+  it('sorts glob results by modification time newest first', async () => {
+    const cwd = setupProject();
+    const oldTime = new Date('2024-01-01T00:00:00.000Z');
+    const newTime = new Date('2024-01-02T00:00:00.000Z');
+    utimesSync(join(cwd, 'src', 'alpha.ts'), oldTime, oldTime);
+    utimesSync(join(cwd, 'src', 'gamma.ts'), newTime, newTime);
+    const result = await executeTool(
+      collectTools(registerSearchTools).get('Glob'),
+      { pattern: '**/*.ts', path: 'src' },
+      cwd,
+    );
+
+    expect(firstText(result).split('\n')).toEqual([
+      join(cwd, 'src', 'gamma.ts'),
+      join(cwd, 'src', 'alpha.ts'),
+    ]);
   });
 
   it('renders grep calls and result states', () => {

@@ -5,6 +5,7 @@ import { Text } from '@earendil-works/pi-tui';
 const execFileAsync = promisify(execFile);
 
 export const MAX_OUTPUT_CHARS = 50_000;
+export const MAX_OUTPUT_BYTES = MAX_OUTPUT_CHARS * 4 + 1024;
 export const MAX_LINES = 500;
 
 export function recordFrom(value: unknown): Record<string, unknown> | undefined {
@@ -166,14 +167,14 @@ export async function execWithRgFallback(
   if (await hasRipgrep()) {
     const result = await execFileAsync('rg', rgArgs, {
       cwd: options.cwd,
-      maxBuffer: MAX_OUTPUT_CHARS * 2,
+      maxBuffer: MAX_OUTPUT_BYTES,
       signal: options.signal,
     });
     return result.stdout;
   }
   const result = await execFileAsync('grep', grepArgs, {
     cwd: options.cwd,
-    maxBuffer: MAX_OUTPUT_CHARS * 2,
+    maxBuffer: MAX_OUTPUT_BYTES,
     signal: options.signal,
   });
   return result.stdout;

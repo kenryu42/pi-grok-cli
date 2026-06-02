@@ -5,6 +5,7 @@ import { Type } from '@earendil-works/pi-ai';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import {
   detailRecord,
+  MAX_OUTPUT_BYTES,
   MAX_OUTPUT_CHARS,
   renderResultText,
   renderRunning,
@@ -45,7 +46,7 @@ export function registerShellTool(pi: ExtensionAPI) {
       try {
         const { stdout, stderr } = await execFileAsync('bash', ['-c', params.command], {
           cwd,
-          maxBuffer: MAX_OUTPUT_CHARS * 2,
+          maxBuffer: MAX_OUTPUT_BYTES,
           timeout,
           signal,
         });

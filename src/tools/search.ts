@@ -1,12 +1,13 @@
 import { execFile } from 'node:child_process';
-import { resolve } from 'node:path';
+import { statSync } from 'node:fs';
+import { relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { Type } from '@earendil-works/pi-ai';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import {
   execWithRgFallback,
   hasRipgrep,
-  MAX_OUTPUT_CHARS,
+  MAX_OUTPUT_BYTES,
   numberDetail,
   recordFrom,
   renderResultText,
@@ -22,6 +23,40 @@ const execFileAsync = promisify(execFile);
 
 type GrepArgs = { pattern: string; path?: string; include?: string };
 type GlobArgs = { pattern: string; path?: string };
+
+function globToRegExp(pattern: string) {
+  let source = '^';
+  for (let i = 0; i < pattern.length; i += 1) {
+    const char = pattern[i];
+    const next = pattern[i + 1];
+    if (char === '*' && next === '*' && pattern[i + 2] === '/') {
+      source += '(?:.*/)?';
+      i += 2;
+    } else if (char === '*' && next === '*') {
+      source += '.*';
+      i += 1;
+    } else if (char === '*') {
+      source += '[^/]*';
+    } else if (char === '?') {
+      source += '[^/]';
+    } else {
+      source += char.replace(/[|\\{}()[\]^$+?.]/g, '\\$&');
+    }
+  }
+  return new RegExp(`${source}$`);
+}
+
+function normalizePath(filePath: string) {
+  return filePath.replaceAll('\\', '/');
+}
+
+function sortByModifiedNewest(files: string[]) {
+  return files.sort((a, b) => {
+    const delta = statSync(b).mtimeMs - statSync(a).mtimeMs;
+    if (delta !== 0) return delta;
+    return a.localeCompare(b);
+  });
+}
 
 export function registerSearchTools(pi: ExtensionAPI) {
   const GrepParams = Type.Object({
@@ -150,19 +185,23 @@ export function registerSearchTools(pi: ExtensionAPI) {
           const result = await execFileAsync(
             'rg',
             ['--files', '--color=never', '--glob', params.pattern, searchPath],
-            { cwd: ctx.cwd, maxBuffer: MAX_OUTPUT_CHARS * 2, signal },
+            { cwd: ctx.cwd, maxBuffer: MAX_OUTPUT_BYTES, signal },
           );
           files = result.stdout.trim().split('\n').filter(Boolean);
         } else {
-          // find fallback — convert **/*.ext → -name "*.ext"
-          const basename = params.pattern.replace(/^(\*\*\/)+/, '');
-          const result = await execFileAsync(
-            'find',
-            [searchPath, '-type', 'f', '-name', basename],
-            { cwd: ctx.cwd, maxBuffer: MAX_OUTPUT_CHARS * 2, signal },
-          );
-          files = result.stdout.trim().split('\n').filter(Boolean);
+          const matcher = globToRegExp(normalizePath(params.pattern));
+          const result = await execFileAsync('find', [searchPath, '-type', 'f'], {
+            cwd: ctx.cwd,
+            maxBuffer: MAX_OUTPUT_BYTES,
+            signal,
+          });
+          files = result.stdout
+            .trim()
+            .split('\n')
+            .filter(Boolean)
+            .filter((file) => matcher.test(normalizePath(relative(ctx.cwd, file))));
         }
+        files = sortByModifiedNewest(files);
 
         if (files.length === 0) {
           return {

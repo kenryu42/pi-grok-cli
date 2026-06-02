@@ -9,6 +9,7 @@ import {
   detailRecord,
   fileError,
   fileNotFound,
+  MAX_OUTPUT_BYTES,
   MAX_OUTPUT_CHARS,
   numberDetail,
   recordFrom,
@@ -142,7 +143,7 @@ export function registerFileTools(pi: ExtensionAPI) {
       try {
         const { stdout } = await execFileAsync('ls', ['-la', targetPath], {
           cwd: ctx.cwd,
-          maxBuffer: MAX_OUTPUT_CHARS * 2,
+          maxBuffer: MAX_OUTPUT_BYTES,
           signal,
         });
 
@@ -214,12 +215,15 @@ export function registerFileTools(pi: ExtensionAPI) {
         }
 
         const content = readFileSync(filePath, 'utf-8');
-        const lines = content.split('\n');
+        const lines = content.endsWith('\n')
+          ? content.slice(0, -1).split('\n')
+          : content.split('\n');
 
         const startLine = params.offset ?? 0;
-        const endLine = params.limit
-          ? Math.min(startLine + params.limit, lines.length)
-          : Math.min(startLine + 2000, lines.length);
+        const endLine =
+          params.limit !== undefined
+            ? Math.min(startLine + params.limit, lines.length)
+            : Math.min(startLine + 2000, lines.length);
 
         const selectedLines = lines.slice(startLine, endLine);
         const numberedLines = selectedLines.map((line, i) => `${startLine + i + 1}\t${line}`);
@@ -238,8 +242,9 @@ export function registerFileTools(pi: ExtensionAPI) {
           details: { path: filePath, totalLines: lines.length },
         };
       } catch (error: unknown) {
+        const err = error as { code?: string };
         return fileError(error, 'Read', filePath, {
-          exists: false,
+          exists: err.code !== 'ENOENT',
           totalLines: 0,
         });
       }
@@ -249,7 +254,7 @@ export function registerFileTools(pi: ExtensionAPI) {
         args.offset !== undefined || args.limit !== undefined
           ? theme.fg(
               'muted',
-              ` (from ${args.offset ?? 0}${args.limit ? `, ${args.limit} lines` : ''})`,
+              ` (from ${args.offset ?? 0}${args.limit !== undefined ? `, ${args.limit} lines` : ''})`,
             )
           : '';
       return text(
@@ -301,15 +306,16 @@ export function registerFileTools(pi: ExtensionAPI) {
       try {
         mkdirSync(dirname(filePath), { recursive: true });
         writeFileSync(filePath, params.content, 'utf-8');
+        const bytesWritten = Buffer.byteLength(params.content, 'utf8');
 
         return {
           content: [
             {
               type: 'text',
-              text: `Successfully wrote ${params.content.length} bytes to ${params.path}`,
+              text: `Successfully wrote ${bytesWritten} bytes to ${params.path}`,
             },
           ],
-          details: { path: filePath, bytesWritten: params.content.length },
+          details: { path: filePath, bytesWritten },
         };
       } catch (error: unknown) {
         const err = error as ToolError;

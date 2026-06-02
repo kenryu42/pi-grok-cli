@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ExtensionAPI, ProviderConfig } from '@earendil-works/pi-coding-agent';
@@ -229,6 +229,31 @@ describe('Grok CLI status command', () => {
         'grok-build'
       ].remainingRequests,
     ).toBe(179);
+  });
+
+  it('ignores incomplete quota headers instead of caching NaN values', async () => {
+    delete process.env.GROK_CLI_OAUTH_TOKEN;
+    const home = setupHome();
+    streamSimpleOpenAIResponses.mockImplementationOnce((_model, _context, options) => {
+      options?.onResponse?.({
+        headers: {
+          'x-ratelimit-remaining-tokens': '7500000',
+          'x-ratelimit-limit-tokens': '7500000',
+        },
+      });
+      return {};
+    });
+    const extension = await setupExtension();
+    extension.providers
+      .get('grok-cli')
+      ?.streamSimple?.({ provider: 'grok-cli', id: 'grok-build' }, {}, {});
+    const notify = await runStatus(extension);
+
+    expect(existsSync(join(home, '.pi', 'grok-cli-quota.json'))).toBe(false);
+    expect(notify.mock.calls.at(-1)?.[0]).not.toContain('NaN');
+    expect(notify.mock.calls.at(-1)?.[0]).toContain(
+      'no cached quota data — make a request with this model first',
+    );
   });
 
   it('loads cached quotas from the global pi config directory', async () => {

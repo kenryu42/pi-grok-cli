@@ -137,6 +137,55 @@ describe('file tools', () => {
     });
   });
 
+  it('reports UTF-8 bytes written for multibyte content', async () => {
+    const cwd = tempDir('pi-grok-cli-files-');
+    const result = await executeTool(
+      collectTools(registerFileTools).get('Write'),
+      { path: 'emoji.txt', content: 'a🙂漢' },
+      cwd,
+    );
+
+    expect(firstText(result)).toBe('Successfully wrote 8 bytes to emoji.txt');
+    expect(result.details).toEqual({
+      path: join(cwd, 'emoji.txt'),
+      bytesWritten: 8,
+    });
+  });
+
+  it('honors a zero read limit', async () => {
+    const cwd = tempDir('pi-grok-cli-files-');
+    writeFileSync(join(cwd, 'notes.txt'), 'alpha\nbeta', 'utf-8');
+    const result = await executeTool(
+      collectTools(registerFileTools).get('Read'),
+      { path: 'notes.txt', limit: 0 },
+      cwd,
+    );
+
+    expect(firstText(result)).toBe(
+      '\n\n[Showing lines 1-0 of 2 total lines. Use offset to see more.]',
+    );
+    expect(result.details).toEqual({
+      path: join(cwd, 'notes.txt'),
+      totalLines: 2,
+    });
+  });
+
+  it('does not add a blank numbered line for files ending with a newline', async () => {
+    const cwd = tempDir('pi-grok-cli-files-');
+    writeFileSync(join(cwd, 'notes.txt'), 'alpha\nbeta\n', 'utf-8');
+    const result = await executeTool(
+      collectTools(registerFileTools).get('Read'),
+      { path: 'notes.txt' },
+      cwd,
+    );
+
+    expect(firstText(result)).toBe('1\talpha\n2\tbeta');
+    expect(result.details).toEqual({
+      path: join(cwd, 'notes.txt'),
+      totalLines: 2,
+    });
+  });
+
   it('reports missing files without throwing', async () => {
     const cwd = tempDir('pi-grok-cli-files-');
     const result = await executeTool(
@@ -151,6 +200,21 @@ describe('file tools', () => {
       exists: false,
       totalLines: 0,
     });
+  });
+
+  it('renders read errors for existing paths without claiming the file is missing', async () => {
+    const cwd = tempDir('pi-grok-cli-files-');
+    mkdirSync(join(cwd, 'dir'));
+    const tools = collectTools(registerFileTools);
+    const result = await executeTool(tools.get('Read'), { path: 'dir' }, cwd);
+
+    expect(firstText(result).startsWith('Read error:')).toBe(true);
+    expect(result.details).toEqual({
+      path: join(cwd, 'dir'),
+      exists: true,
+      totalLines: 0,
+    });
+    expect(renderToolResult(tools.get('Read'), result)).toBe('0 line(s)');
   });
 
   it('replaces every exact string occurrence', async () => {

@@ -89,6 +89,19 @@ describe('shell tool', () => {
     expect(firstText(failureResult).endsWith('[Output truncated at 50KB]')).toBe(true);
   });
 
+  it('truncates multibyte output by characters without hitting exec buffer limits', async () => {
+    const cwd = tempDir('pi-grok-cli-shell-');
+    const result = await executeTool(
+      collectTools(registerShellTool).get('Shell'),
+      { command: 'perl -e \'print "漢" x 50001\'' },
+      cwd,
+    );
+
+    expect(firstText(result)).toHaveLength('\n\n[Output truncated at 50KB]'.length + 50_000);
+    expect(firstText(result).startsWith('Shell error')).toBe(false);
+    expect(firstText(result).endsWith('[Output truncated at 50KB]')).toBe(true);
+  });
+
   it('renders shell calls and result states', () => {
     const shell = collectTools(registerShellTool).get('Shell');
 

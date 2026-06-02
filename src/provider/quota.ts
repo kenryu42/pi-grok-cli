@@ -76,7 +76,13 @@ function extractRateLimit(h: Record<string, string>): RateLimitInfo | undefined 
   const limitTokens = Number(h['x-ratelimit-limit-tokens']);
   const contextWindow = Number(h['x-grok-context-window']);
 
-  if (Number.isNaN(remainingReqs) && Number.isNaN(remainingTokens)) return undefined;
+  if (
+    [remainingReqs, limitReqs, remainingTokens, limitTokens].some(
+      (value) => !Number.isFinite(value),
+    )
+  ) {
+    return undefined;
+  }
 
   return {
     remainingRequests: remainingReqs,
