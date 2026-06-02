@@ -1,4 +1,11 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { registerFileTools } from '../../src/tools/files.js';
@@ -15,10 +22,14 @@ import {
 
 function expectStoryState(result: ToolResult, cwd: string, replacements: number, content: string) {
   expect(result.details).toEqual({
-    path: join(cwd, 'story.txt'),
+    path: expectedPath(cwd, 'story.txt'),
     replacements,
   });
   expect(readFileSync(join(cwd, 'story.txt'), 'utf-8')).toBe(content);
+}
+
+function expectedPath(cwd: string, ...parts: string[]) {
+  return join(realpathSync(cwd), ...parts);
 }
 
 function strReplace(cwd: string, old_str: string, new_str: string) {
@@ -47,7 +58,7 @@ describe('file tools', () => {
 
     expect(firstText(result)).toContain('.hidden');
     expect(firstText(result)).toContain('visible.txt');
-    expect(result.details).toEqual({ path: cwd });
+    expect(result.details).toEqual({ path: realpathSync(cwd) });
   });
 
   it('reports filesystem errors for invalid file operations', async () => {
@@ -78,14 +89,20 @@ describe('file tools', () => {
     expect(writeResult.details).toEqual({
       path: join(cwd, 'blocked', 'file.txt'),
       bytesWritten: 0,
+      failed: true,
+      error: expect.stringContaining('EEXIST: file already exists, mkdir'),
     });
     expect(replaceResult.details).toEqual({
       path: join(cwd, 'dir'),
       replacements: 0,
+      failed: true,
+      error: expect.stringContaining('EISDIR: illegal operation on a directory, read'),
     });
     expect(deleteResult.details).toEqual({
       path: join(cwd, 'dir'),
       deleted: false,
+      failed: true,
+      error: expect.stringContaining('operation not permitted'),
     });
   });
 
@@ -101,7 +118,7 @@ describe('file tools', () => {
 
     expect(firstText(writeResult)).toBe('Successfully wrote 22 bytes to nested/notes.txt');
     expect(writeResult.details).toEqual({
-      path: join(cwd, 'nested/notes.txt'),
+      path: expectedPath(cwd, 'nested/notes.txt'),
       bytesWritten: 22,
     });
 
@@ -115,7 +132,7 @@ describe('file tools', () => {
       '2\tbeta\n3\tgamma\n\n[Showing lines 2-3 of 4 total lines. Use offset to see more.]',
     );
     expect(readResult.details).toEqual({
-      path: join(cwd, 'nested/notes.txt'),
+      path: expectedPath(cwd, 'nested/notes.txt'),
       totalLines: 4,
     });
   });
@@ -132,7 +149,7 @@ describe('file tools', () => {
     expect(firstText(result)).toBe('Successfully wrote 10 bytes to nested/notes.txt');
     expect(readFileSync(join(cwd, 'nested/notes.txt'), 'utf-8')).toBe('alpha\nbeta');
     expect(result.details).toEqual({
-      path: join(cwd, 'nested/notes.txt'),
+      path: expectedPath(cwd, 'nested/notes.txt'),
       bytesWritten: 10,
     });
   });
@@ -147,7 +164,7 @@ describe('file tools', () => {
 
     expect(firstText(result)).toBe('Successfully wrote 8 bytes to emoji.txt');
     expect(result.details).toEqual({
-      path: join(cwd, 'emoji.txt'),
+      path: expectedPath(cwd, 'emoji.txt'),
       bytesWritten: 8,
     });
   });
@@ -165,7 +182,7 @@ describe('file tools', () => {
       '\n\n[Showing lines 1-0 of 2 total lines. Use offset to see more.]',
     );
     expect(result.details).toEqual({
-      path: join(cwd, 'notes.txt'),
+      path: expectedPath(cwd, 'notes.txt'),
       totalLines: 2,
     });
   });
@@ -181,7 +198,7 @@ describe('file tools', () => {
 
     expect(firstText(result)).toBe('1\talpha\n2\tbeta');
     expect(result.details).toEqual({
-      path: join(cwd, 'notes.txt'),
+      path: expectedPath(cwd, 'notes.txt'),
       totalLines: 2,
     });
   });
@@ -202,6 +219,41 @@ describe('file tools', () => {
     });
   });
 
+  it('rejects paths that escape the workspace', async () => {
+    const cwd = tempDir('pi-grok-cli-files-');
+    const outside = tempDir('pi-grok-cli-files-outside-');
+    writeFileSync(join(outside, 'secret.txt'), 'secret', 'utf-8');
+    symlinkSync(outside, join(cwd, 'outside'));
+
+    const readResult = await executeTool(
+      collectTools(registerFileTools).get('Read'),
+      { path: 'outside/secret.txt' },
+      cwd,
+    );
+    const writeResult = await executeTool(
+      collectTools(registerFileTools).get('Write'),
+      { path: '../escape.txt', content: 'escape' },
+      cwd,
+    );
+
+    expect(firstText(readResult)).toBe('Read error: Path is outside the workspace');
+    expect(readResult.details).toEqual({
+      path: join(cwd, 'outside', 'secret.txt'),
+      exists: true,
+      totalLines: 0,
+      failed: true,
+      error: 'Path is outside the workspace',
+    });
+    expect(firstText(writeResult)).toBe('Write error: Path is outside the workspace');
+    expect(writeResult.details).toEqual({
+      path: join(cwd, '..', 'escape.txt'),
+      bytesWritten: 0,
+      failed: true,
+      error: 'Path is outside the workspace',
+    });
+    expect(existsSync(join(cwd, '..', 'escape.txt'))).toBe(false);
+  });
+
   it('renders read errors for existing paths without claiming the file is missing', async () => {
     const cwd = tempDir('pi-grok-cli-files-');
     mkdirSync(join(cwd, 'dir'));
@@ -213,6 +265,8 @@ describe('file tools', () => {
       path: join(cwd, 'dir'),
       exists: true,
       totalLines: 0,
+      failed: true,
+      error: expect.stringContaining('EISDIR: illegal operation on a directory, read'),
     });
     expect(renderToolResult(tools.get('Read'), result)).toBe('0 line(s)');
   });
@@ -391,7 +445,7 @@ describe('file tools', () => {
 
     expect(firstText(deletedResult)).toBe('Successfully deleted remove.txt');
     expect(deletedResult.details).toEqual({
-      path: join(cwd, 'remove.txt'),
+      path: expectedPath(cwd, 'remove.txt'),
       deleted: true,
     });
     expect(existsSync(join(cwd, 'remove.txt'))).toBe(false);

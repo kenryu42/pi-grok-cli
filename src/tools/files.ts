@@ -1,6 +1,13 @@
 import { execFile } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import {
+  existsSync,
+  promises as fs,
+  mkdirSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { Type } from '@earendil-works/pi-ai';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
@@ -23,6 +30,7 @@ import {
 const execFileAsync = promisify(execFile);
 
 type ReplacementEdit = { oldText: string; newText: string };
+type FileDetails = { path: string; [key: string]: unknown };
 type WriteArgs = { path: string; content: string };
 type StrReplaceArgs = { path: string; old_str: string; new_str: string };
 type EditArgs = {
@@ -122,6 +130,48 @@ function renderPathToolCall(toolName: string, filePath: string, theme: ToolTheme
   return text(theme.fg('toolTitle', theme.bold(`${toolName} `)) + theme.fg('accent', filePath));
 }
 
+async function canonicalizeWithinWorkspace(cwd: string, requestedPath: string) {
+  const targetPath = resolve(cwd, requestedPath);
+  const realCwd = await fs.realpath(cwd);
+  const missingParts: string[] = [];
+  let currentPath = targetPath;
+  let realTarget: string | undefined;
+  while (!realTarget) {
+    try {
+      realTarget = join(await fs.realpath(currentPath), ...[...missingParts].reverse());
+    } catch (error) {
+      const parentPath = dirname(currentPath);
+      if (parentPath === currentPath) throw error;
+      missingParts.push(basename(currentPath));
+      currentPath = parentPath;
+    }
+  }
+  if (realTarget !== realCwd && !realTarget.startsWith(`${realCwd}${sep}`)) {
+    throw new Error('Path is outside the workspace');
+  }
+  return realTarget;
+}
+
+async function existingPathWithinWorkspace(cwd: string, requestedPath: string) {
+  const safePath = await canonicalizeWithinWorkspace(cwd, requestedPath);
+  return existsSync(safePath) ? safePath : undefined;
+}
+
+async function existingPathOrNotFound<T extends FileDetails>(
+  cwd: string,
+  requestedPath: string,
+  extraDetails: Omit<T, 'path'>,
+) {
+  return (
+    (await existingPathWithinWorkspace(cwd, requestedPath)) ??
+    fileNotFound(resolve(cwd, requestedPath), extraDetails)
+  );
+}
+
+function replacementPathOrNotFound(cwd: string, requestedPath: string) {
+  return existingPathOrNotFound(cwd, requestedPath, { replacements: 0 });
+}
+
 export function registerFileTools(pi: ExtensionAPI) {
   // ── LS tool ──────────────────────────────────────────────────────────
 
@@ -141,7 +191,8 @@ export function registerFileTools(pi: ExtensionAPI) {
       const targetPath = resolve(ctx.cwd, params.path);
 
       try {
-        const { stdout } = await execFileAsync('ls', ['-la', targetPath], {
+        const safePath = await canonicalizeWithinWorkspace(ctx.cwd, params.path);
+        const { stdout } = await execFileAsync('ls', ['-la', safePath], {
           cwd: ctx.cwd,
           maxBuffer: MAX_OUTPUT_BYTES,
           signal,
@@ -154,18 +205,19 @@ export function registerFileTools(pi: ExtensionAPI) {
 
         return {
           content: [{ type: 'text', text: output }],
-          details: { path: targetPath },
+          details: { path: safePath },
         };
       } catch (error: unknown) {
         const err = error as ToolError;
+        const message = err.message ?? 'Unknown error';
         return {
           content: [
             {
               type: 'text',
-              text: `LS error: ${err.message ?? 'Unknown error'}`,
+              text: `LS error: ${message}`,
             },
           ],
-          details: { path: targetPath },
+          details: { path: targetPath, failed: true, error: message },
         };
       }
     },
@@ -210,11 +262,13 @@ export function registerFileTools(pi: ExtensionAPI) {
       const filePath = resolve(ctx.cwd, params.path);
 
       try {
-        if (!existsSync(filePath)) {
-          return fileNotFound(filePath, { exists: false, totalLines: 0 });
-        }
+        const safePath = await existingPathOrNotFound(ctx.cwd, params.path, {
+          exists: false,
+          totalLines: 0,
+        });
+        if (typeof safePath !== 'string') return safePath;
 
-        const content = readFileSync(filePath, 'utf-8');
+        const content = readFileSync(safePath, 'utf-8');
         const lines = content.endsWith('\n')
           ? content.slice(0, -1).split('\n')
           : content.split('\n');
@@ -239,7 +293,7 @@ export function registerFileTools(pi: ExtensionAPI) {
 
         return {
           content: [{ type: 'text', text: output }],
-          details: { path: filePath, totalLines: lines.length },
+          details: { path: safePath, totalLines: lines.length },
         };
       } catch (error: unknown) {
         const err = error as { code?: string };
@@ -304,8 +358,9 @@ export function registerFileTools(pi: ExtensionAPI) {
       const filePath = resolve(ctx.cwd, params.path);
 
       try {
-        mkdirSync(dirname(filePath), { recursive: true });
-        writeFileSync(filePath, params.content, 'utf-8');
+        const safePath = await canonicalizeWithinWorkspace(ctx.cwd, params.path);
+        mkdirSync(dirname(safePath), { recursive: true });
+        writeFileSync(safePath, params.content, 'utf-8');
         const bytesWritten = Buffer.byteLength(params.content, 'utf8');
 
         return {
@@ -315,18 +370,19 @@ export function registerFileTools(pi: ExtensionAPI) {
               text: `Successfully wrote ${bytesWritten} bytes to ${params.path}`,
             },
           ],
-          details: { path: filePath, bytesWritten },
+          details: { path: safePath, bytesWritten },
         };
       } catch (error: unknown) {
         const err = error as ToolError;
+        const message = err.message ?? 'Unknown error';
         return {
           content: [
             {
               type: 'text',
-              text: `Write error: ${err.message ?? 'Unknown error'}`,
+              text: `Write error: ${message}`,
             },
           ],
-          details: { path: filePath, bytesWritten: 0 },
+          details: { path: filePath, bytesWritten: 0, failed: true, error: message },
         };
       }
     },
@@ -383,16 +439,16 @@ export function registerFileTools(pi: ExtensionAPI) {
     },
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const filePath = resolve(ctx.cwd, params.path);
+      const requestedPath = params.path;
+      const filePath = resolve(ctx.cwd, requestedPath);
 
       try {
-        if (!existsSync(filePath)) {
-          return fileNotFound(filePath, { replacements: 0 });
-        }
+        const safePath = await replacementPathOrNotFound(ctx.cwd, requestedPath);
+        if (typeof safePath !== 'string') return safePath;
 
-        const content = readFileSync(filePath, 'utf-8');
+        const content = readFileSync(safePath, 'utf-8');
         if (params.old_str === '') {
-          return replacementResult('StrReplace error: old_str must not be empty', filePath);
+          return replacementResult('StrReplace error: old_str must not be empty', safePath);
         }
 
         const count = content.split(params.old_str).length - 1;
@@ -400,12 +456,12 @@ export function registerFileTools(pi: ExtensionAPI) {
         if (count === 0) {
           return replacementResult(
             `String not found in ${params.path}: "${params.old_str}"`,
-            filePath,
+            safePath,
           );
         }
 
         const newContent = content.replaceAll(params.old_str, () => params.new_str);
-        writeFileSync(filePath, newContent, 'utf-8');
+        writeFileSync(safePath, newContent, 'utf-8');
 
         return {
           content: [
@@ -414,7 +470,7 @@ export function registerFileTools(pi: ExtensionAPI) {
               text: `Replaced ${count} occurrence(s) in ${params.path}`,
             },
           ],
-          details: { path: filePath, replacements: count },
+          details: { path: safePath, replacements: count },
         };
       } catch (error: unknown) {
         return fileError(error, 'StrReplace', filePath, { replacements: 0 });
@@ -488,11 +544,9 @@ export function registerFileTools(pi: ExtensionAPI) {
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const filePath = resolve(ctx.cwd, params.path);
 
-      if (!existsSync(filePath)) {
-        return fileNotFound(filePath, { replacements: 0 });
-      }
-
       try {
+        const safePath = await replacementPathOrNotFound(ctx.cwd, params.path);
+        if (typeof safePath !== 'string') return safePath;
         if (!params.edits?.length) {
           return {
             content: [
@@ -503,20 +557,20 @@ export function registerFileTools(pi: ExtensionAPI) {
                   : 'Edit error: provide at least one exact text replacement',
               },
             ],
-            details: { path: filePath, replacements: 0 },
+            details: { path: safePath, replacements: 0 },
           };
         }
         if (params.edits.some((edit) => edit.oldText === '')) {
-          return replacementResult('Edit error: oldText must not be empty', filePath);
+          return replacementResult('Edit error: oldText must not be empty', safePath);
         }
 
-        const result = applyEdits(readFileSync(filePath, 'utf-8'), params.edits);
+        const result = applyEdits(readFileSync(safePath, 'utf-8'), params.edits);
 
         if (result.replacements === 0) {
-          return replacementResult(`No replacement strings found in ${params.path}`, filePath);
+          return replacementResult(`No replacement strings found in ${params.path}`, safePath);
         }
 
-        writeFileSync(filePath, result.content, 'utf-8');
+        writeFileSync(safePath, result.content, 'utf-8');
 
         return {
           content: [
@@ -525,7 +579,7 @@ export function registerFileTools(pi: ExtensionAPI) {
               text: `Applied ${result.replacements} replacement(s) in ${params.path}`,
             },
           ],
-          details: { path: filePath, replacements: result.replacements },
+          details: { path: safePath, replacements: result.replacements },
         };
       } catch (error: unknown) {
         return fileError(error, 'Edit', filePath, { replacements: 0 });
@@ -557,15 +611,14 @@ export function registerFileTools(pi: ExtensionAPI) {
       const filePath = resolve(ctx.cwd, params.path);
 
       try {
-        if (!existsSync(filePath)) {
-          return fileNotFound(filePath, { deleted: false });
-        }
+        const safePath = await existingPathOrNotFound(ctx.cwd, params.path, { deleted: false });
+        if (typeof safePath !== 'string') return safePath;
 
-        unlinkSync(filePath);
+        unlinkSync(safePath);
 
         return {
           content: [{ type: 'text', text: `Successfully deleted ${params.path}` }],
-          details: { path: filePath, deleted: true },
+          details: { path: safePath, deleted: true },
         };
       } catch (error: unknown) {
         return fileError(error, 'Delete', filePath, { deleted: false });
