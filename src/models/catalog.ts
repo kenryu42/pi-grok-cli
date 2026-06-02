@@ -40,7 +40,7 @@ const FALLBACK_MODELS: GrokCliModelConfig[] = [
 		reasoning: false,
 		input: ["text", "image"],
 		cost: COST_COMPOSER,
-		contextWindow: 512_000,
+		contextWindow: 200_000,
 		maxTokens: 30_000,
 		thinkingLevelMap: {
 			off: "none",
@@ -57,7 +57,7 @@ const FALLBACK_MODELS: GrokCliModelConfig[] = [
 		reasoning: true,
 		input: ["text", "image"],
 		cost: COST_BUILD,
-		contextWindow: 1_000_000,
+		contextWindow: 512_000,
 		maxTokens: 30_000,
 	},
 	{

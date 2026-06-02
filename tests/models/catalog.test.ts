@@ -22,7 +22,9 @@ describe("model catalog", () => {
 	it("uses fallback models when no override is configured", () => {
 		delete process.env.PI_GROK_CLI_MODELS;
 
-		expect(resolveModels().map((model) => model.id)).toEqual([
+		const models = resolveModels();
+
+		expect(models.map((model) => model.id)).toEqual([
 			"grok-composer-2.5-fast",
 			"grok-build",
 			"grok-4.3",
@@ -30,6 +32,12 @@ describe("model catalog", () => {
 			"grok-4.20-0309-non-reasoning",
 			"grok-4.20-multi-agent-0309",
 		]);
+		expect(
+			models.find((model) => model.id === "grok-composer-2.5-fast"),
+		).toMatchObject({ contextWindow: 200_000 });
+		expect(models.find((model) => model.id === "grok-build")).toMatchObject({
+			contextWindow: 512_000,
+		});
 	});
 
 	it("filters, reorders, and fills unknown model overrides", () => {
