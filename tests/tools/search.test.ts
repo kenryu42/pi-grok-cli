@@ -203,6 +203,19 @@ describe('search tools', () => {
     });
   });
 
+  it('greps files without ripgrep or Unix grep on PATH', async () => {
+    const cwd = setupProject();
+    await withNoSearchBinaries(async (fallbackTools) => {
+      const result = await executeTool(
+        fallbackTools.get('Grep'),
+        { pattern: 'needle', path: 'src', include: '*.ts' },
+        cwd,
+      );
+
+      expectGrepResult(cwd, result);
+    });
+  });
+
   it('sorts glob results by modification time newest first', async () => {
     const cwd = setupProject();
     const oldTime = new Date('2024-01-01T00:00:00.000Z');

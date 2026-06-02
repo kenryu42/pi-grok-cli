@@ -1,4 +1,6 @@
 import { execFile } from 'node:child_process';
+import { promises as fs } from 'node:fs';
+import { basename, join, relative } from 'node:path';
 import { promisify } from 'node:util';
 import { Text } from '@earendil-works/pi-tui';
 
@@ -33,6 +35,55 @@ export function truncateChars(output: string): string {
     return `${output.slice(0, MAX_OUTPUT_CHARS)}\n\n[Output truncated at 50KB]`;
   }
   return output;
+}
+
+export function globToRegExp(pattern: string) {
+  let source = '^';
+  for (let i = 0; i < pattern.length; i += 1) {
+    const char = pattern[i];
+    const next = pattern[i + 1];
+    if (char === '*' && next === '*' && pattern[i + 2] === '/') {
+      source += '(?:.*/)?';
+      i += 2;
+    } else if (char === '*' && next === '*') {
+      source += '.*';
+      i += 1;
+    } else if (char === '*') {
+      source += '[^/]*';
+    } else if (char === '?') {
+      source += '[^/]';
+    } else {
+      source += char.replace(/[|\\{}()[\]^$+?.]/g, '\\$&');
+    }
+  }
+  return new RegExp(`${source}$`);
+}
+
+export function normalizePath(filePath: string) {
+  return filePath.replaceAll('\\', '/');
+}
+
+export async function listFilesRecursive(
+  searchPath: string,
+  signal?: AbortSignal,
+): Promise<string[]> {
+  if (signal?.aborted) throw new Error('The operation was aborted');
+  const stats = await fs.stat(searchPath);
+  if (stats.isFile()) return [searchPath];
+  if (!stats.isDirectory()) return [];
+
+  return (
+    await Promise.all(
+      (
+        await fs.readdir(searchPath, { withFileTypes: true })
+      ).map((entry) => {
+        const entryPath = join(searchPath, entry.name);
+        if (entry.isDirectory()) return listFilesRecursive(entryPath, signal);
+        if (entry.isFile()) return [entryPath];
+        return [];
+      }),
+    )
+  ).flat();
 }
 
 let rgAvailable: boolean | undefined;
@@ -163,8 +214,13 @@ export function toolError<T>(error: unknown, toolName: string, emptyDetails: T):
 
 export async function execWithRgFallback(
   rgArgs: string[],
-  grepArgs: string[],
-  options: { cwd: string; signal?: AbortSignal },
+  options: {
+    cwd: string;
+    signal?: AbortSignal;
+    pattern: string;
+    searchPath: string;
+    include?: string;
+  },
 ): Promise<string> {
   if (await hasRipgrep()) {
     const result = await execFileAsync('rg', rgArgs, {
@@ -174,10 +230,28 @@ export async function execWithRgFallback(
     });
     return result.stdout;
   }
-  const result = await execFileAsync('grep', grepArgs, {
-    cwd: options.cwd,
-    maxBuffer: MAX_OUTPUT_BYTES,
-    signal: options.signal,
-  });
-  return result.stdout;
+
+  const regex = new RegExp(options.pattern);
+  const matcher = options.include ? globToRegExp(normalizePath(options.include)) : undefined;
+  return (
+    await Promise.all(
+      (
+        await listFilesRecursive(options.searchPath, options.signal)
+      )
+        .filter((file) => {
+          if (!matcher) return true;
+          if (!options.include?.includes('/')) return matcher.test(basename(file));
+          return matcher.test(normalizePath(relative(options.cwd, file)));
+        })
+        .map(async (file) =>
+          (
+            await fs.readFile(file, 'utf8')
+          )
+            .split(/\r?\n/)
+            .flatMap((line, index) => (regex.test(line) ? `${file}:${index + 1}:${line}` : [])),
+        ),
+    )
+  )
+    .flat()
+    .join('\n');
 }

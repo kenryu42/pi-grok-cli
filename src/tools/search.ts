@@ -1,13 +1,16 @@
 import { execFile } from 'node:child_process';
-import { promises as fs, statSync } from 'node:fs';
-import { basename, join, relative, resolve } from 'node:path';
+import { statSync } from 'node:fs';
+import { basename, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { Type } from '@earendil-works/pi-ai';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import {
   execWithRgFallback,
+  globToRegExp,
   hasRipgrep,
+  listFilesRecursive,
   MAX_OUTPUT_BYTES,
+  normalizePath,
   numberDetail,
   recordFrom,
   renderResultText,
@@ -24,58 +27,12 @@ const execFileAsync = promisify(execFile);
 type GrepArgs = { pattern: string; path?: string; include?: string };
 type GlobArgs = { pattern: string; path?: string };
 
-function globToRegExp(pattern: string) {
-  let source = '^';
-  for (let i = 0; i < pattern.length; i += 1) {
-    const char = pattern[i];
-    const next = pattern[i + 1];
-    if (char === '*' && next === '*' && pattern[i + 2] === '/') {
-      source += '(?:.*/)?';
-      i += 2;
-    } else if (char === '*' && next === '*') {
-      source += '.*';
-      i += 1;
-    } else if (char === '*') {
-      source += '[^/]*';
-    } else if (char === '?') {
-      source += '[^/]';
-    } else {
-      source += char.replace(/[|\\{}()[\]^$+?.]/g, '\\$&');
-    }
-  }
-  return new RegExp(`${source}$`);
-}
-
-function normalizePath(filePath: string) {
-  return filePath.replaceAll('\\', '/');
-}
-
 function sortByModifiedNewest(files: string[]) {
   return files.sort((a, b) => {
     const delta = statSync(b).mtimeMs - statSync(a).mtimeMs;
     if (delta !== 0) return delta;
     return a.localeCompare(b);
   });
-}
-
-async function listFilesRecursive(searchPath: string, signal?: AbortSignal): Promise<string[]> {
-  if (signal?.aborted) throw new Error('The operation was aborted');
-  const stats = await fs.stat(searchPath);
-  if (stats.isFile()) return [searchPath];
-  if (!stats.isDirectory()) return [];
-
-  return (
-    await Promise.all(
-      (
-        await fs.readdir(searchPath, { withFileTypes: true })
-      ).map((entry) => {
-        const entryPath = join(searchPath, entry.name);
-        if (entry.isDirectory()) return listFilesRecursive(entryPath, signal);
-        if (entry.isFile()) return [entryPath];
-        return [];
-      }),
-    )
-  ).flat();
 }
 
 export function registerSearchTools(pi: ExtensionAPI) {
@@ -119,13 +76,12 @@ export function registerSearchTools(pi: ExtensionAPI) {
         if (params.include) rgArgs.push('--glob', params.include);
         rgArgs.push('--', params.pattern, searchPath);
 
-        const grepArgs = ['-r', '-n', '-H', '--color=never'];
-        if (params.include) grepArgs.push(`--include=${params.include}`);
-        grepArgs.push('--', params.pattern, searchPath);
-
-        const stdout = await execWithRgFallback(rgArgs, grepArgs, {
+        const stdout = await execWithRgFallback(rgArgs, {
           cwd: ctx.cwd,
           signal,
+          pattern: params.pattern,
+          searchPath,
+          include: params.include,
         });
 
         const lines = stdout.trim().split('\n').filter(Boolean);
