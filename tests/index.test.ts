@@ -125,6 +125,7 @@ async function runStatus(
 describe("Grok CLI status command", () => {
 	it("uses only cached quota data and tells users to make requests first", async () => {
 		delete process.env.GROK_CLI_OAUTH_TOKEN;
+		setupHome();
 		const fetchMock = vi.fn<typeof fetch>();
 		globalThis.fetch = fetchMock;
 		const extension = await setupExtension();
