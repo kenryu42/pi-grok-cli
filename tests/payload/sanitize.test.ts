@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { sanitizePayload } from '../../src/payload/sanitize.js';
 
 describe('payload sanitization', () => {
-  it('removes unsupported items and moves leading instructions', () => {
+  it('removes unsupported items and moves all instructions', () => {
     const payload = sanitizePayload(
       {
         instructions: 'existing instruction',
@@ -21,6 +21,7 @@ describe('payload sanitization', () => {
           { type: 'reasoning', content: 'cached reasoning' },
           { role: 'user', content: '' },
           { role: 'user', content: 'hello' },
+          { role: 'system', content: 'later system instruction' },
         ],
         include: ['reasoning.encrypted_content', 'message.output_text'],
         prompt_cache_retention: '24h',
@@ -32,7 +33,7 @@ describe('payload sanitization', () => {
     );
 
     expect(payload.instructions).toBe(
-      'existing instruction\n\nsystem instruction\n\ndeveloper instruction\noutput text instruction',
+      'existing instruction\n\nsystem instruction\n\ndeveloper instruction\noutput text instruction\n\nlater system instruction',
     );
     expect(payload.input).toEqual([{ role: 'user', content: 'hello' }]);
     expect(payload.include).toEqual(['message.output_text']);
@@ -41,6 +42,20 @@ describe('payload sanitization', () => {
     expect(payload.text).toEqual({ format: { type: 'json_object' } });
     expect(payload.response_format).toBeUndefined();
     expect(payload.prompt_cache_key).toBe('session-123');
+  });
+
+  it('preserves existing text while removing response_format', () => {
+    const payload = sanitizePayload(
+      {
+        input: 'plain prompt',
+        text: { format: { type: 'text' } },
+        response_format: { type: 'json_object' },
+      },
+      'grok-4.3',
+    );
+
+    expect(payload.text).toEqual({ format: { type: 'text' } });
+    expect(payload.response_format).toBeUndefined();
   });
 
   it('strips reasoning fields for models that do not accept reasoning effort', () => {

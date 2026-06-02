@@ -248,15 +248,13 @@ export function sanitizePayload(
     // Move system/developer messages to top-level instructions.
     // xAI rejects role: "developer" and role: "system" in the input array.
     const instructionParts: string[] = [];
-    while (input.length > 0) {
-      const first = input[0];
-      if (!first || typeof first !== 'object') break;
-      const role = (first as Record<string, unknown>).role;
-      if (role !== 'developer' && role !== 'system') break;
-      const text = textFromContent((first as Record<string, unknown>).content).trim();
+    input = input.filter((item) => {
+      const role = (item as Record<string, unknown>).role;
+      if (role !== 'developer' && role !== 'system') return true;
+      const text = textFromContent((item as Record<string, unknown>).content).trim();
       if (text) instructionParts.push(text);
-      input.shift();
-    }
+      return false;
+    });
     if (instructionParts.length > 0) {
       const existing =
         typeof next.instructions === 'string' && next.instructions ? next.instructions : '';
@@ -276,8 +274,8 @@ export function sanitizePayload(
   }
 
   // ── response_format → text.format ────────────────────────────────────
-  if (next.response_format && !next.text) {
-    next.text = { format: next.response_format };
+  if (next.response_format) {
+    if (!next.text) next.text = { format: next.response_format };
     delete next.response_format;
   }
 
