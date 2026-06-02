@@ -26,6 +26,10 @@ const CALLBACK_PORT = Number.parseInt(process.env.PI_GROK_CLI_CALLBACK_PORT || '
 const CALLBACK_PATH = '/callback';
 /** Refresh 120s before actual expiry. */
 const REFRESH_SKEW_MS = 120_000;
+const TOKEN_REQUEST_TIMEOUT_MS = Number.parseInt(
+  process.env.PI_GROK_CLI_TOKEN_TIMEOUT_MS || '30000',
+  10,
+);
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -128,7 +132,15 @@ async function discover(): Promise<XaiDiscovery> {
       XaiErrorCode.DISCOVERY_FAILED,
     );
   }
-  const payload = (await response.json()) as Record<string, unknown>;
+  let payload: Record<string, unknown>;
+  try {
+    payload = (await response.json()) as Record<string, unknown>;
+  } catch (cause) {
+    throw new XaiOAuthError(
+      `xAI OIDC discovery returned invalid JSON: ${cause instanceof Error ? cause.message : String(cause)}`,
+      XaiErrorCode.DISCOVERY_FAILED,
+    );
+  }
   const authorizationEndpoint = validateEndpoint(
     String(payload.authorization_endpoint ?? ''),
     'authorization_endpoint',
@@ -216,8 +228,20 @@ function startCallbackServer(): Promise<{
     let actualPort: number;
     try {
       actualPort = await listen(CALLBACK_PORT);
-    } catch {
-      actualPort = await listen(0);
+    } catch (firstError) {
+      try {
+        actualPort = await listen(0);
+      } catch (secondError) {
+        const errorDescription = `Could not bind xAI OAuth callback server on ${CALLBACK_HOST}:${CALLBACK_PORT} or an ephemeral port: ${secondError instanceof Error ? secondError.message : String(secondError)} (initial error: ${firstError instanceof Error ? firstError.message : String(firstError)})`;
+        return {
+          server,
+          redirectUri: `http://${CALLBACK_HOST}:${CALLBACK_PORT}${CALLBACK_PATH}`,
+          waitForCallback: async () => ({
+            error: XaiErrorCode.CALLBACK_BIND_FAILED,
+            errorDescription,
+          }),
+        };
+      }
     }
     const redirectUri = `http://${CALLBACK_HOST}:${actualPort}${CALLBACK_PATH}`;
     return {
@@ -230,7 +254,7 @@ function startCallbackServer(): Promise<{
             setTimeout(
               () =>
                 resolve({
-                  error: 'timeout',
+                  error: XaiErrorCode.CALLBACK_TIMEOUT,
                   errorDescription: 'Timed out waiting for xAI OAuth callback.',
                 }),
               timeoutMs,
@@ -243,33 +267,86 @@ function startCallbackServer(): Promise<{
 
 // ─── Token exchange ───────────────────────────────────────────────────────────
 
+async function fetchTokenResponse(
+  tokenEndpoint: string,
+  body: URLSearchParams,
+  errorCode: string,
+  label: string,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), TOKEN_REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(tokenEndpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Accept: 'application/json',
+      },
+      body,
+      signal: controller.signal,
+    });
+  } catch (cause) {
+    throw new XaiOAuthError(
+      `xAI ${label} failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+      errorCode,
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function tokenResponseText(response: Response) {
+  try {
+    return await response.text();
+  } catch (cause) {
+    return `unable to read response body: ${cause instanceof Error ? cause.message : String(cause)}`;
+  }
+}
+
+async function tokenResponseJson(
+  response: Response,
+  errorCode: string,
+  label: string,
+): Promise<Record<string, unknown>> {
+  try {
+    return (await response.json()) as Record<string, unknown>;
+  } catch (cause) {
+    throw new XaiOAuthError(
+      `xAI ${label} returned invalid JSON: ${cause instanceof Error ? cause.message : String(cause)}`,
+      errorCode,
+    );
+  }
+}
+
 async function exchangeCode(
   tokenEndpoint: string,
   code: string,
   redirectUri: string,
   verifier: string,
 ): Promise<XaiOAuthCredentials> {
-  const response = await fetch(tokenEndpoint, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      Accept: 'application/json',
-    },
-    body: new URLSearchParams({
+  const response = await fetchTokenResponse(
+    tokenEndpoint,
+    new URLSearchParams({
       grant_type: 'authorization_code',
       client_id: CLIENT_ID,
       code,
       redirect_uri: redirectUri,
       code_verifier: verifier,
     }),
-  });
+    XaiErrorCode.TOKEN_EXCHANGE_FAILED,
+    'token exchange',
+  );
   if (!response.ok) {
     throw new XaiOAuthError(
-      `xAI token exchange failed: ${response.status} ${await response.text()}`,
+      `xAI token exchange failed: ${response.status} ${await tokenResponseText(response)}`,
       XaiErrorCode.TOKEN_EXCHANGE_FAILED,
     );
   }
-  const payload = (await response.json()) as Record<string, unknown>;
+  const payload = await tokenResponseJson(
+    response,
+    XaiErrorCode.TOKEN_EXCHANGE_FAILED,
+    'token exchange',
+  );
   const access = String(payload.access_token ?? '');
   const refresh = String(payload.refresh_token ?? '');
   if (!access) {
@@ -332,10 +409,12 @@ export async function login(
     const result = await callback.waitForCallback(180_000);
 
     if (result.error) {
-      throw new XaiOAuthError(
-        result.errorDescription ?? result.error,
-        XaiErrorCode.AUTHORIZATION_FAILED,
-      );
+      const code =
+        result.error === XaiErrorCode.CALLBACK_BIND_FAILED ||
+        result.error === XaiErrorCode.CALLBACK_TIMEOUT
+          ? result.error
+          : XaiErrorCode.AUTHORIZATION_FAILED;
+      throw new XaiOAuthError(result.errorDescription ?? result.error, code);
     }
     if (result.state !== state) {
       throw new XaiOAuthError(
@@ -381,29 +460,27 @@ export async function refresh(
     );
   }
 
-  const response = await fetch(tokenEndpoint, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      Accept: 'application/json',
-    },
-    body: new URLSearchParams({
+  const response = await fetchTokenResponse(
+    tokenEndpoint,
+    new URLSearchParams({
       grant_type: 'refresh_token',
       client_id: CLIENT_ID,
       refresh_token: credentials.refresh,
     }),
-  });
+    XaiErrorCode.REFRESH_FAILED,
+    'token refresh',
+  );
 
   if (!response.ok) {
     const isFatal = response.status === 400 || response.status === 401 || response.status === 403;
     throw new XaiOAuthError(
-      `xAI token refresh failed: ${response.status} ${await response.text()}`,
+      `xAI token refresh failed: ${response.status} ${await tokenResponseText(response)}`,
       XaiErrorCode.REFRESH_FAILED,
       isFatal,
     );
   }
 
-  const payload = (await response.json()) as Record<string, unknown>;
+  const payload = await tokenResponseJson(response, XaiErrorCode.REFRESH_FAILED, 'token refresh');
   const access = String(payload.access_token ?? '');
   if (!access) {
     throw new XaiOAuthError(

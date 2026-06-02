@@ -20,6 +20,13 @@ const discoveryDocument = {
   token_endpoint: 'https://auth.x.ai/oauth/token',
 };
 
+function authorizeCallback(auth: { url: string }) {
+  const url = new URL(auth.url);
+  void originalFetch(
+    `${url.searchParams.get('redirect_uri')}?code=callback-code&state=${url.searchParams.get('state')}`,
+  );
+}
+
 afterEach(() => {
   process.env = { ...originalEnv };
   globalThis.fetch = originalFetch;
@@ -168,6 +175,26 @@ describe('OAuth helpers without network access', () => {
     });
   });
 
+  it('wraps refresh transport and JSON failures', async () => {
+    globalThis.fetch = vi.fn<typeof fetch>(async () => {
+      throw new Error('socket closed');
+    });
+
+    await expect(refresh(storedRefreshCredentials)).rejects.toMatchObject({
+      code: XaiErrorCode.REFRESH_FAILED,
+      message: 'xAI token refresh failed: socket closed',
+    });
+
+    globalThis.fetch = vi.fn<typeof fetch>(
+      async () => new Response('<html>proxy error</html>', { status: 200 }),
+    );
+
+    await expect(refresh(storedRefreshCredentials)).rejects.toMatchObject({
+      code: XaiErrorCode.REFRESH_FAILED,
+      message: expect.stringContaining('xAI token refresh returned invalid JSON:'),
+    });
+  });
+
   it('rejects unsafe token endpoints before fetching', async () => {
     const fetchMock = vi.fn<typeof fetch>();
     globalThis.fetch = fetchMock;
@@ -215,6 +242,17 @@ describe('OAuth helpers without network access', () => {
     });
   });
 
+  it('wraps malformed discovery JSON as discovery failure', async () => {
+    globalThis.fetch = vi.fn<typeof fetch>(
+      async () => new Response('<html>proxy error</html>', { status: 200 }),
+    );
+
+    await expect(refresh(credentialsWithoutEndpoint)).rejects.toMatchObject({
+      code: XaiErrorCode.DISCOVERY_FAILED,
+      message: expect.stringContaining('xAI OIDC discovery returned invalid JSON:'),
+    });
+  });
+
   it('rejects failed and invalid discovery responses', async () => {
     globalThis.fetch = vi.fn<typeof fetch>(
       async () => new Response('unavailable', { status: 503 }),
@@ -255,12 +293,7 @@ describe('OAuth helpers without network access', () => {
 
     await expect(
       login({
-        onAuth: (auth) => {
-          const url = new URL(auth.url);
-          void originalFetch(
-            `${url.searchParams.get('redirect_uri')}?code=callback-code&state=${url.searchParams.get('state')}`,
-          );
-        },
+        onAuth: authorizeCallback,
       }),
     ).resolves.toMatchObject({
       access: 'login-access',
@@ -276,5 +309,58 @@ describe('OAuth helpers without network access', () => {
     expect((fetchMock.mock.calls[1]?.[1]?.body as URLSearchParams).get('code')).toBe(
       'callback-code',
     );
+  });
+
+  it('reports callback timeouts with a dedicated error code', async () => {
+    vi.useFakeTimers();
+    globalThis.fetch = vi.fn<typeof fetch>(async () => Response.json(discoveryDocument));
+    const onAuth = vi.fn();
+    const resultPromise = login({ onAuth }).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+
+    await vi.waitFor(() => expect(onAuth).toHaveBeenCalledOnce());
+    await vi.advanceTimersByTimeAsync(180_000);
+
+    await expect(resultPromise).resolves.toMatchObject({
+      code: XaiErrorCode.CALLBACK_TIMEOUT,
+      message: 'Timed out waiting for xAI OAuth callback.',
+    });
+  });
+
+  it('wraps token exchange transport and JSON failures', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input) => {
+      if (input === 'https://auth.x.ai/.well-known/openid-configuration') {
+        return Response.json(discoveryDocument);
+      }
+      throw new Error('exchange socket closed');
+    });
+    globalThis.fetch = fetchMock;
+
+    await expect(
+      login({
+        onAuth: authorizeCallback,
+      }),
+    ).rejects.toMatchObject({
+      code: XaiErrorCode.TOKEN_EXCHANGE_FAILED,
+      message: 'xAI token exchange failed: exchange socket closed',
+    });
+
+    globalThis.fetch = vi.fn<typeof fetch>(async (input) => {
+      if (input === 'https://auth.x.ai/.well-known/openid-configuration') {
+        return Response.json(discoveryDocument);
+      }
+      return new Response('<html>proxy error</html>', { status: 200 });
+    });
+
+    await expect(
+      login({
+        onAuth: authorizeCallback,
+      }),
+    ).rejects.toMatchObject({
+      code: XaiErrorCode.TOKEN_EXCHANGE_FAILED,
+      message: expect.stringContaining('xAI token exchange returned invalid JSON:'),
+    });
   });
 });
