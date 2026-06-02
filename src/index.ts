@@ -48,7 +48,7 @@ interface RateLimitInfo {
 	capturedAt: number;
 }
 
-let cachedRateLimit: RateLimitInfo | undefined;
+const cachedRateLimits = new Map<string, RateLimitInfo>();
 
 /**
  * Extract rate limit info from response headers.
@@ -77,43 +77,32 @@ function extractRateLimit(
 	};
 }
 
-/**
- * Lightweight probe to fetch rate limit headers when no cached data exists.
- * Makes a minimal POST to /v1/responses and extracts x-ratelimit-* headers.
- * Costs 1 request + a few tokens.
- */
-async function probeRateLimit(
-	apiKey: string,
-): Promise<RateLimitInfo | undefined> {
-	const url = `${getBaseUrl()}/responses`;
-	try {
-		const response = await fetch(url, {
-			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				Authorization: `Bearer ${apiKey}`,
-				"x-xai-token-auth": "xai-grok-cli",
-				"x-grok-client-identifier": "pi-grok-cli",
-				"x-grok-client-version": GROK_CLI_VERSION,
-			},
-			body: JSON.stringify({
-				model: "grok-build",
-				input: [{ type: "message", role: "user", content: "hi" }],
-				max_output_tokens: 1,
-				stream: false,
-			}),
-			signal: AbortSignal.timeout(10_000),
-		});
-
-		const h: Record<string, string> = {};
-		response.headers.forEach((value, key) => {
-			h[key] = value;
-		});
-		return extractRateLimit(h);
-	} catch {
-		// Probe failed — caller handles undefined
+function formatQuota(name: string, rateLimit: RateLimitInfo | undefined) {
+	if (!rateLimit) {
+		return [
+			`  ${name}:`,
+			"    no cached quota data — make a request with this model first",
+		];
 	}
-	return undefined;
+
+	const ageSec = Math.round((Date.now() - rateLimit.capturedAt) / 1000);
+	const ageStr =
+		ageSec < 60 ? `${ageSec}s ago` : `${Math.round(ageSec / 60)}m ago`;
+	const lines = [`  ${name}:`];
+	lines.push(`    Cached: ${ageStr}`);
+	lines.push(
+		`    Requests: ${rateLimit.remainingRequests}/${rateLimit.limitRequests} remaining`,
+	);
+	lines.push(
+		`    Tokens:   ${rateLimit.remainingTokens.toLocaleString()}/${rateLimit.limitTokens.toLocaleString()} remaining`,
+	);
+	lines.push(
+		`    Context Limit: ${rateLimit.contextWindow.toLocaleString()} tokens`,
+	);
+	if (rateLimit.zeroDataRetention) {
+		lines.push("    Data:     Zero retention ✓");
+	}
+	return lines;
 }
 
 // ─── Stream function ─────────────────────────────────────────────────────────
@@ -154,7 +143,7 @@ function streamGrokCli(
 			headers,
 			onResponse(response) {
 				const rateLimit = extractRateLimit(response.headers);
-				if (rateLimit) cachedRateLimit = rateLimit;
+				if (rateLimit) cachedRateLimits.set(model.id, rateLimit);
 				options?.onResponse?.(response, model);
 			},
 		},
@@ -237,7 +226,6 @@ export default function (pi: ExtensionAPI) {
 					"⚠️  Grok CLI: using GROK_CLI_OAUTH_TOKEN env bypass — no auto-refresh available",
 					"warning",
 				);
-				return;
 			}
 
 			try {
@@ -264,55 +252,17 @@ export default function (pi: ExtensionAPI) {
 					"info",
 				);
 
-				if (cachedRateLimit) {
-					const ageSec = Math.round(
-						(Date.now() - cachedRateLimit.capturedAt) / 1000,
-					);
-					const ageStr =
-						ageSec < 60 ? `${ageSec}s ago` : `${Math.round(ageSec / 60)}m ago`;
-					const lines = [
-						`  Quota (captured ${ageStr}):`,
-						`    Requests: ${cachedRateLimit.remainingRequests}/${cachedRateLimit.limitRequests} remaining`,
-						`    Tokens:   ${cachedRateLimit.remainingTokens.toLocaleString()}/${cachedRateLimit.limitTokens.toLocaleString()} remaining`,
-						`    Context Limit: ${cachedRateLimit.contextWindow.toLocaleString()} tokens`,
-					];
-					if (cachedRateLimit.zeroDataRetention) {
-						lines.push("    Data:     Zero retention ✓");
-					}
-					ctx.ui.notify(lines.join("\n"), "info");
-				} else {
-					// No cached data — probe the API for rate limits
-					const apiKey =
-						await ctx.modelRegistry.getApiKeyForProvider("grok-cli");
-					if (!apiKey) {
-						ctx.ui.notify(
-							"  Quota: no credentials — run /login grok-cli first",
-							"warning",
-						);
-						return;
-					}
-
-					ctx.ui.notify("  Quota: fetching...", "info");
-					const probed = await probeRateLimit(apiKey);
-					if (probed) {
-						cachedRateLimit = probed;
-						const lines = [
-							"  Quota (just now):",
-							`    Requests: ${probed.remainingRequests}/${probed.limitRequests} remaining`,
-							`    Tokens:   ${probed.remainingTokens.toLocaleString()}/${probed.limitTokens.toLocaleString()} remaining`,
-							`    Context Limit: ${probed.contextWindow.toLocaleString()} tokens`,
-						];
-						if (probed.zeroDataRetention) {
-							lines.push("    Data:     Zero retention ✓");
-						}
-						ctx.ui.notify(lines.join("\n"), "info");
-					} else {
-						ctx.ui.notify(
-							"  Quota: unable to fetch — try making a request first",
-							"warning",
-						);
-					}
-				}
+				const lines = [
+					"  Quota:",
+					"",
+					...formatQuota("grok-build", cachedRateLimits.get("grok-build")),
+					"",
+					...formatQuota(
+						"grok-composer-2.5-fast",
+						cachedRateLimits.get("grok-composer-2.5-fast"),
+					),
+				];
+				ctx.ui.notify(lines.join("\n"), "info");
 			} catch (err) {
 				const msg =
 					err instanceof XaiOAuthError
