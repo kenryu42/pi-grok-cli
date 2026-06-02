@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { Type } from '@earendil-works/pi-ai';
@@ -13,6 +14,35 @@ import {
 } from './rendering.js';
 
 const execFileAsync = promisify(execFile);
+
+function shellCommand(command: string): { file: string; args: string[] } | undefined {
+  if (process.platform === 'win32') {
+    if (existsSync('C:\\Windows\\System32\\cmd.exe')) {
+      return { file: 'cmd.exe', args: ['/d', '/s', '/c', command] };
+    }
+    if (existsSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe')) {
+      return {
+        file: 'powershell.exe',
+        args: ['-NoLogo', '-NoProfile', '-Command', command],
+      };
+    }
+    return undefined;
+  }
+
+  if (
+    process.platform !== 'darwin' &&
+    process.platform !== 'linux' &&
+    process.platform !== 'freebsd'
+  ) {
+    return undefined;
+  }
+
+  if (existsSync('/bin/bash')) return { file: '/bin/bash', args: ['-c', command] };
+  if (existsSync('/usr/bin/bash')) return { file: '/usr/bin/bash', args: ['-c', command] };
+  if (existsSync('/bin/sh')) return { file: '/bin/sh', args: ['-c', command] };
+  if (existsSync('/usr/bin/sh')) return { file: '/usr/bin/sh', args: ['-c', command] };
+  return undefined;
+}
 
 export function registerShellTool(pi: ExtensionAPI) {
   // ── Shell tool ───────────────────────────────────────────────────────
@@ -44,7 +74,19 @@ export function registerShellTool(pi: ExtensionAPI) {
       const timeout = params.timeout ?? 120_000;
 
       try {
-        const { stdout, stderr } = await execFileAsync('bash', ['-c', params.command], {
+        const shell = shellCommand(params.command);
+        if (!shell) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: 'Shell error: unsupported platform or shell not found',
+              },
+            ],
+            details: { exitCode: 1, command: params.command },
+          };
+        }
+        const { stdout, stderr } = await execFileAsync(shell.file, shell.args, {
           cwd,
           maxBuffer: MAX_OUTPUT_BYTES,
           timeout,
