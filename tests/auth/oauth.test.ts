@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { XaiErrorCode } from "../src/errors.js";
-import { getBaseUrl, login, refresh } from "../src/oauth.js";
+import { getBaseUrl, login, refresh } from "../../src/auth/oauth.js";
+import { XaiErrorCode } from "../../src/shared/errors.js";
 
 const originalEnv = { ...process.env };
 const originalFetch = globalThis.fetch;

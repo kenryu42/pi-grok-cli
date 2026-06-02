@@ -109,7 +109,7 @@ async function setupExtension(initialActiveTools = ["read", "bash"]) {
 	const setActiveTools = vi.fn((toolNames: string[]) => {
 		activeTools = toolNames;
 	});
-	const registerGrokCli = (await import("../src/index.js")).default;
+	const registerGrokCli = (await import("../../src/index.js")).default;
 	registerGrokCli({
 		registerProvider(name: string, config: ProviderConfig) {
 			providers.set(name, config);

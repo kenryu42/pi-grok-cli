@@ -10,7 +10,7 @@
  */
 
 import { createServer } from "node:http";
-import { XaiErrorCode, XaiOAuthError } from "./errors.js";
+import { XaiErrorCode, XaiOAuthError } from "../shared/errors.js";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 

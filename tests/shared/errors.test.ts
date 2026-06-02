@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { XaiErrorCode, XaiOAuthError } from "../src/errors.js";
+import { XaiErrorCode, XaiOAuthError } from "../../src/shared/errors.js";
 
 describe("OAuth errors", () => {
 	it("keeps machine-readable code and relogin state", () => {

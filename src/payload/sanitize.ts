@@ -22,7 +22,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { extname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { supportsReasoningEffort } from "./models.js";
+import { supportsReasoningEffort } from "../models/catalog.js";
 
 // ─── Content text extraction ─────────────────────────────────────────────────
 

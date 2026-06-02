@@ -2,7 +2,7 @@ import { existsSync, globSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const packageJson = JSON.parse(
-	readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+	readFileSync(new URL("../../package.json", import.meta.url), "utf8"),
 );
 
 describe("npm package manifest", () => {
@@ -25,34 +25,44 @@ describe("npm package manifest", () => {
 		);
 		expect(packageJson.devDependencies?.vitest).toBeDefined();
 		expect(packageJson.devDependencies?.["@vitest/coverage-v8"]).toBeDefined();
-		expect(existsSync(new URL("../vitest.config.ts", import.meta.url))).toBe(
+		expect(existsSync(new URL("../../vitest.config.ts", import.meta.url))).toBe(
 			true,
 		);
 	});
 });
 
 describe("repository layout", () => {
-	it("keeps extension source files under src", () => {
-		for (const file of [
-			"index.ts",
-			"models.ts",
-			"oauth.ts",
-			"sanitize.ts",
-			"errors.ts",
-		]) {
-			expect(existsSync(new URL(`../src/${file}`, import.meta.url))).toBe(true);
-			expect(existsSync(new URL(`../${file}`, import.meta.url))).toBe(false);
-		}
+	it("keeps the extension entrypoint at src/index.ts", () => {
+		expect(existsSync(new URL("../../src/index.ts", import.meta.url))).toBe(
+			true,
+		);
 	});
 
-	it("contains the expected source files", () => {
-		const sourceFiles = globSync("src/*.ts").sort();
-		expect(sourceFiles).toEqual([
-			"src/errors.ts",
+	it("contains the expected domain source files", () => {
+		expect(globSync("src/**/*.ts").sort()).toEqual([
+			"src/auth/oauth.ts",
 			"src/index.ts",
-			"src/models.ts",
-			"src/oauth.ts",
-			"src/sanitize.ts",
+			"src/models/catalog.ts",
+			"src/payload/sanitize.ts",
+			"src/provider/quota.ts",
+			"src/provider/register.ts",
+			"src/provider/status.ts",
+			"src/provider/stream.ts",
+			"src/provider/toolScope.ts",
+			"src/shared/errors.ts",
+			"src/tools/files.ts",
+			"src/tools/register.ts",
+			"src/tools/rendering.ts",
+			"src/tools/search.ts",
+			"src/tools/shell.ts",
 		]);
+	});
+
+	it("does not keep top-level helper compatibility wrappers", () => {
+		for (const file of ["errors.ts", "models.ts", "oauth.ts", "sanitize.ts"]) {
+			expect(existsSync(new URL(`../../src/${file}`, import.meta.url))).toBe(
+				false,
+			);
+		}
 	});
 });

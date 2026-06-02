@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { resolveModels, supportsReasoningEffort } from "../src/models.js";
+import {
+	resolveModels,
+	supportsReasoningEffort,
+} from "../../src/models/catalog.js";
 
 const originalEnv = { ...process.env };
 
