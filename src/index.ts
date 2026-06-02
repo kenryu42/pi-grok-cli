@@ -38,6 +38,7 @@ import type {
 	ExtensionAPI,
 	ProviderConfig,
 } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 
 const execFileAsync = promisify(execFile);
 
@@ -51,6 +52,16 @@ import { sanitizePayload } from "./sanitize.js";
 
 const GROK_CLI_VERSION = "0.2.16";
 const QUOTA_CACHE_FILE = "grok-cli-quota.json";
+const GROK_TOOL_NAMES = [
+	"Grep",
+	"Glob",
+	"LS",
+	"Read",
+	"Write",
+	"StrReplace",
+	"Delete",
+	"Shell",
+];
 
 // ─── Rate limit cache (piggybacks on onResponse from normal traffic) ──────────
 
@@ -229,6 +240,32 @@ export default function (pi: ExtensionAPI) {
 	const baseUrl = getBaseUrl();
 	const models = resolveModels();
 
+	function syncGrokTools(provider: string | undefined) {
+		const currentTools = pi.getActiveTools();
+		const baseTools = currentTools.filter(
+			(toolName) => !GROK_TOOL_NAMES.includes(toolName),
+		);
+		const nextTools =
+			provider === "grok-cli" ? [...baseTools, ...GROK_TOOL_NAMES] : baseTools;
+
+		if (
+			currentTools.length === nextTools.length &&
+			currentTools.every((toolName, i) => toolName === nextTools[i])
+		) {
+			return;
+		}
+
+		pi.setActiveTools(nextTools);
+	}
+
+	pi.on("model_select", (event) => {
+		syncGrokTools(event.model.provider);
+	});
+
+	pi.on("before_agent_start", (_event, ctx) => {
+		syncGrokTools(ctx.model?.provider);
+	});
+
 	// ── Register provider ─────────────────────────────────────────────────
 	pi.registerProvider("grok-cli", {
 		name: "Grok CLI",
@@ -315,6 +352,52 @@ export default function (pi: ExtensionAPI) {
 		content: [{ type: "text"; text: string }];
 		details: T;
 	};
+
+	function text(text: string): Text {
+		return new Text(text, 0, 0);
+	}
+
+	function firstText(result: { content: { type: string; text?: string }[] }) {
+		const first = result.content[0];
+		if (first?.type !== "text") return undefined;
+		return first.text;
+	}
+
+	function renderResultText(
+		result: { content: { type: string; text?: string }[] },
+		expanded: boolean,
+		summary: string,
+	): Text {
+		if (expanded) return text(firstText(result) ?? summary);
+		return text(summary);
+	}
+
+	function renderRunning(isPartial: boolean): Text | undefined {
+		if (!isPartial) return undefined;
+		return text("Running...");
+	}
+
+	function detailRecord(result: { details: unknown }): Record<string, unknown> {
+		if (!result.details || typeof result.details !== "object") return {};
+		return result.details as Record<string, unknown>;
+	}
+
+	function numberDetail(result: { details: unknown }, key: string): number {
+		const value = detailRecord(result)[key];
+		if (typeof value !== "number") return 0;
+		return value;
+	}
+
+	function stringDetail(result: { details: unknown }, key: string): string {
+		const value = detailRecord(result)[key];
+		if (typeof value !== "string") return "";
+		return value;
+	}
+
+	function booleanDetail(result: { details: unknown }, key: string): boolean {
+		const value = detailRecord(result)[key];
+		return value === true;
+	}
 
 	type FileDetails = { path: string; [key: string]: unknown };
 
@@ -450,6 +533,28 @@ export default function (pi: ExtensionAPI) {
 				return toolError(error, "Grep", { matchCount: 0 });
 			}
 		},
+		renderCall(args, theme) {
+			const path = args.path ? theme.fg("muted", ` in ${args.path}`) : "";
+			const include = args.include ? theme.fg("dim", ` [${args.include}]`) : "";
+			return text(
+				theme.fg("toolTitle", theme.bold("Grep ")) +
+					theme.fg("accent", `"${args.pattern}"`) +
+					path +
+					include,
+			);
+		},
+		renderResult(result, { expanded, isPartial }, theme) {
+			const running = renderRunning(isPartial);
+			if (running) return running;
+			const matchCount = numberDetail(result, "matchCount");
+			return renderResultText(
+				result,
+				expanded,
+				matchCount === 0
+					? theme.fg("dim", "No matches")
+					: theme.fg("muted", `${matchCount} match(es)`),
+			);
+		},
 	});
 
 	const GlobParams = Type.Object({
@@ -512,6 +617,26 @@ export default function (pi: ExtensionAPI) {
 				return toolError(error, "Glob", { fileCount: 0 });
 			}
 		},
+		renderCall(args, theme) {
+			const path = args.path ? theme.fg("muted", ` in ${args.path}`) : "";
+			return text(
+				theme.fg("toolTitle", theme.bold("Glob ")) +
+					theme.fg("accent", args.pattern) +
+					path,
+			);
+		},
+		renderResult(result, { expanded, isPartial }, theme) {
+			const running = renderRunning(isPartial);
+			if (running) return running;
+			const fileCount = numberDetail(result, "fileCount");
+			return renderResultText(
+				result,
+				expanded,
+				fileCount === 0
+					? theme.fg("dim", "No files")
+					: theme.fg("muted", `${fileCount} file(s)`),
+			);
+		},
 	});
 
 	// ── LS tool ──────────────────────────────────────────────────────────
@@ -559,6 +684,21 @@ export default function (pi: ExtensionAPI) {
 					details: { path: targetPath },
 				};
 			}
+		},
+		renderCall(args, theme) {
+			return text(
+				theme.fg("toolTitle", theme.bold("LS ")) +
+					theme.fg("accent", args.path),
+			);
+		},
+		renderResult(result, { expanded, isPartial }, theme) {
+			const running = renderRunning(isPartial);
+			if (running) return running;
+			return renderResultText(
+				result,
+				expanded,
+				theme.fg("muted", stringDetail(result, "path")),
+			);
 		},
 	});
 
@@ -628,6 +768,31 @@ export default function (pi: ExtensionAPI) {
 				});
 			}
 		},
+		renderCall(args, theme) {
+			const range =
+				args.offset !== undefined || args.limit !== undefined
+					? theme.fg(
+							"muted",
+							` (from ${args.offset ?? 0}${args.limit ? `, ${args.limit} lines` : ""})`,
+						)
+					: "";
+			return text(
+				theme.fg("toolTitle", theme.bold("Read ")) +
+					theme.fg("accent", args.path) +
+					range,
+			);
+		},
+		renderResult(result, { expanded, isPartial }, theme) {
+			const running = renderRunning(isPartial);
+			if (running) return running;
+			return renderResultText(
+				result,
+				expanded,
+				detailRecord(result).exists === false
+					? theme.fg("error", "File not found")
+					: theme.fg("muted", `${numberDetail(result, "totalLines")} line(s)`),
+			);
+		},
 	});
 
 	// ── Write tool ───────────────────────────────────────────────────────
@@ -676,6 +841,24 @@ export default function (pi: ExtensionAPI) {
 					details: { path: filePath, bytesWritten: 0 },
 				};
 			}
+		},
+		renderCall(args, theme) {
+			return text(
+				theme.fg("toolTitle", theme.bold("Write ")) +
+					theme.fg("accent", args.path),
+			);
+		},
+		renderResult(result, { expanded, isPartial }, theme) {
+			const running = renderRunning(isPartial);
+			if (running) return running;
+			return renderResultText(
+				result,
+				expanded,
+				theme.fg(
+					"muted",
+					`${numberDetail(result, "bytesWritten")} bytes written`,
+				),
+			);
 		},
 	});
 
@@ -739,6 +922,26 @@ export default function (pi: ExtensionAPI) {
 				return fileError(error, "StrReplace", filePath, { replacements: 0 });
 			}
 		},
+		renderCall(args, theme) {
+			return text(
+				theme.fg("toolTitle", theme.bold("StrReplace ")) +
+					theme.fg("accent", args.path),
+			);
+		},
+		renderResult(result, { expanded, isPartial }, theme) {
+			const running = renderRunning(isPartial);
+			if (running) return running;
+			return renderResultText(
+				result,
+				expanded,
+				numberDetail(result, "replacements") === 0
+					? theme.fg("dim", "No replacements")
+					: theme.fg(
+							"muted",
+							`${numberDetail(result, "replacements")} replacement(s)`,
+						),
+			);
+		},
 	});
 
 	// ── Delete tool ──────────────────────────────────────────────────────
@@ -774,6 +977,23 @@ export default function (pi: ExtensionAPI) {
 			} catch (error: unknown) {
 				return fileError(error, "Delete", filePath, { deleted: false });
 			}
+		},
+		renderCall(args, theme) {
+			return text(
+				theme.fg("toolTitle", theme.bold("Delete ")) +
+					theme.fg("accent", args.path),
+			);
+		},
+		renderResult(result, { expanded, isPartial }, theme) {
+			const running = renderRunning(isPartial);
+			if (running) return running;
+			return renderResultText(
+				result,
+				expanded,
+				booleanDetail(result, "deleted")
+					? theme.fg("muted", "Deleted")
+					: theme.fg("error", "Not deleted"),
+			);
 		},
 	});
 
@@ -861,6 +1081,27 @@ export default function (pi: ExtensionAPI) {
 					},
 				};
 			}
+		},
+		renderCall(args, theme) {
+			const cwd = args.working_directory
+				? theme.fg("muted", ` in ${args.working_directory}`)
+				: "";
+			return text(
+				theme.fg("toolTitle", theme.bold("Shell ")) +
+					theme.fg("accent", args.command) +
+					cwd,
+			);
+		},
+		renderResult(result, { expanded, isPartial }, theme) {
+			const running = renderRunning(isPartial);
+			if (running) return running;
+			return renderResultText(
+				result,
+				expanded,
+				numberDetail(result, "exitCode") === 0
+					? theme.fg("muted", "Exit 0")
+					: theme.fg("warning", `Exit ${numberDetail(result, "exitCode")}`),
+			);
 		},
 	});
 

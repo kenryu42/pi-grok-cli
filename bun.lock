@@ -8,6 +8,7 @@
         "@biomejs/biome": "2.4.16",
         "@earendil-works/pi-ai": "^0.78.0",
         "@earendil-works/pi-coding-agent": "^0.78.0",
+        "@earendil-works/pi-tui": "^0.78.0",
         "@vitest/coverage-v8": "^4.1.8",
         "release-tools": "github:kenryu42/release-tools",
         "husky": "^9.1.7",
@@ -20,6 +21,7 @@
       "peerDependencies": {
         "@earendil-works/pi-ai": "*",
         "@earendil-works/pi-coding-agent": "*",
+        "@earendil-works/pi-tui": "*",
       },
     },
   },
