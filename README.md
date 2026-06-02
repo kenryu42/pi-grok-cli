@@ -4,11 +4,8 @@
 [![Version](https://img.shields.io/github/v/tag/kenryu42/pi-grok-cli?label=version&color=blue)](https://github.com/kenryu42/pi-grok-cli)
 [![License: MIT](https://img.shields.io/badge/License-MIT-red.svg)](https://opensource.org/licenses/MIT)
 
-A pi extension that connects to **Grok CLI's API endpoint** .
-
-## Why?
-
-The Grok CLI uhas access to models **not available** on the public `api.x.ai` API yet:
+A pi extension that connects to **Grok CLI's API endpoint**.
+The Grok CLI has access to models **not available** on the public `api.x.ai` API yet:
 
 | Model | Public API (`api.x.ai`) | Grok CLI |
 |---|---|---|
@@ -17,6 +14,16 @@ The Grok CLI uhas access to models **not available** on the public `api.x.ai` AP
 | `grok-4.3` | ✅ | ✅ |
 
 `grok-composer-2.5-fast` is Cursor's Composer 2.5 model, a purpose-built agentic coding model optimized for long-horizon coding tasks.
+
+## Cursor Tool Compatibility
+
+Grok CLI models are trained to use Cursor-style coding tools. This extension includes compatibility shims so those models can keep using familiar tool calls inside pi:
+
+- File tools: `Read`, `Write`, `StrReplace`, `Edit`, `Delete`, and `LS`
+- Search tools: `Grep` and `Glob`
+- Terminal tool: `Shell`
+
+The shims also normalize common Cursor/Grok argument shapes, such as `contents` for writes, `glob_pattern` for file search, `glob_filter` for grep filters, and `old_string`/`new_string` or `oldText`/`newText` for exact replacements. This keeps agentic coding workflows moving instead of failing on tool schema mismatches.
 
 ## Requirements
 
