@@ -12,6 +12,9 @@
  *   PI_GROK_CLI_OAUTH_SCOPE      - Override OAuth scopes
  */
 
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import {
 	type Api,
 	type AssistantMessageEventStream,
@@ -35,6 +38,7 @@ import { sanitizePayload } from "./sanitize.js";
 // ─── Grok CLI version (observed from traffic capture) ─────────────────────────
 
 const GROK_CLI_VERSION = "0.2.16";
+const QUOTA_CACHE_FILE = "grok-cli-quota.json";
 
 // ─── Rate limit cache (piggybacks on onResponse from normal traffic) ──────────
 
@@ -49,6 +53,59 @@ interface RateLimitInfo {
 }
 
 const cachedRateLimits = new Map<string, RateLimitInfo>();
+
+function quotaCachePath() {
+	return join(homedir(), ".pi", QUOTA_CACHE_FILE);
+}
+
+function isRateLimitInfo(value: unknown): value is RateLimitInfo {
+	if (!value || typeof value !== "object") return false;
+	const info = value as Record<string, unknown>;
+	return (
+		typeof info.remainingRequests === "number" &&
+		typeof info.limitRequests === "number" &&
+		typeof info.remainingTokens === "number" &&
+		typeof info.limitTokens === "number" &&
+		typeof info.contextWindow === "number" &&
+		typeof info.zeroDataRetention === "boolean" &&
+		typeof info.capturedAt === "number"
+	);
+}
+
+function loadQuotaCache() {
+	cachedRateLimits.clear();
+	if (!existsSync(quotaCachePath())) return;
+
+	try {
+		const payload = JSON.parse(
+			readFileSync(quotaCachePath(), "utf8"),
+		) as Record<string, unknown>;
+		const models = payload.models;
+		if (!models || typeof models !== "object") return;
+
+		Object.entries(models).forEach(([model, rateLimit]) => {
+			if (isRateLimitInfo(rateLimit)) cachedRateLimits.set(model, rateLimit);
+		});
+	} catch {
+		cachedRateLimits.clear();
+	}
+}
+
+function persistQuotaCache() {
+	try {
+		mkdirSync(dirname(quotaCachePath()), { recursive: true });
+		writeFileSync(
+			quotaCachePath(),
+			JSON.stringify(
+				{ version: 1, models: Object.fromEntries(cachedRateLimits) },
+				null,
+				"\t",
+			),
+		);
+	} catch {
+		// Status remains cache-only; persistence failures should not break requests.
+	}
+}
 
 /**
  * Extract rate limit info from response headers.
@@ -143,7 +200,10 @@ function streamGrokCli(
 			headers,
 			onResponse(response) {
 				const rateLimit = extractRateLimit(response.headers);
-				if (rateLimit) cachedRateLimits.set(model.id, rateLimit);
+				if (rateLimit) {
+					cachedRateLimits.set(model.id, rateLimit);
+					persistQuotaCache();
+				}
 				options?.onResponse?.(response, model);
 			},
 		},
@@ -153,6 +213,7 @@ function streamGrokCli(
 // ─── Extension entry point ───────────────────────────────────────────────────
 
 export default function (pi: ExtensionAPI) {
+	loadQuotaCache();
 	const baseUrl = getBaseUrl();
 	const models = resolveModels();
 
