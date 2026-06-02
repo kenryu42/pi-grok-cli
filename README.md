@@ -73,4 +73,4 @@ Select **"Grok CLI"** from the provider list. This opens the xAI OAuth page in y
 | `PI_GROK_CLI_MODELS` | (all models) | Comma-separated model IDs to expose |
 | `PI_GROK_CLI_OAUTH_CLIENT_ID` | `b1a00492-...` | Override OAuth client ID |
 | `PI_GROK_CLI_OAUTH_SCOPE` | `openid profile email offline_access grok-cli:access api:access` | Override OAuth scopes |
-| `GROK_CLI_OAUTH_TOKEN` | — | Direct token bypass (no auto-refresh) |
+| `GROK_CLI_OAUTH_TOKEN` | — | Direct token bypass that skips OAuth entirely. No automatic refresh or renewal is performed; provide a valid external access token and replace or rotate it when it expires. |
