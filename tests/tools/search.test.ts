@@ -4,10 +4,12 @@ import { describe, expect, it } from "vitest";
 import { registerSearchTools } from "../../src/tools/search.js";
 import {
 	collectTools,
+	executePreparedTool,
 	executeTool,
 	firstText,
 	plainTheme,
 	renderText,
+	type ToolResult,
 	tempDir,
 } from "./toolTestHelpers.js";
 
@@ -20,6 +22,21 @@ function setupProject() {
 	return dir;
 }
 
+function expectGrepResult(cwd: string, result: ToolResult) {
+	expect(firstText(result)).toContain(
+		`${join(cwd, "src", "alpha.ts")}:1:needle`,
+	);
+	expect(firstText(result)).not.toContain("beta.md");
+	expect(result.details).toEqual({ matchCount: 1 });
+}
+
+function expectGlobResult(cwd: string, result: ToolResult) {
+	expect(firstText(result)).toContain(join(cwd, "src", "alpha.ts"));
+	expect(firstText(result)).toContain(join(cwd, "src", "gamma.ts"));
+	expect(firstText(result)).not.toContain("beta.md");
+	expect(result.details).toEqual({ fileCount: 2 });
+}
+
 describe("search tools", () => {
 	it("greps matching file contents with include filters", async () => {
 		const cwd = setupProject();
@@ -29,11 +46,18 @@ describe("search tools", () => {
 			cwd,
 		);
 
-		expect(firstText(result)).toContain(
-			`${join(cwd, "src", "alpha.ts")}:1:needle`,
+		expectGrepResult(cwd, result);
+	});
+
+	it("greps matching file contents with Cursor-style glob filters", async () => {
+		const cwd = setupProject();
+		const result = await executePreparedTool(
+			collectTools(registerSearchTools).get("Grep"),
+			{ pattern: "needle", path: "src", glob_filter: "*.ts" },
+			cwd,
 		);
-		expect(firstText(result)).not.toContain("beta.md");
-		expect(result.details).toEqual({ matchCount: 1 });
+
+		expectGrepResult(cwd, result);
 	});
 
 	it("reports no grep matches as an empty result", async () => {
@@ -68,10 +92,18 @@ describe("search tools", () => {
 			cwd,
 		);
 
-		expect(firstText(result)).toContain(join(cwd, "src", "alpha.ts"));
-		expect(firstText(result)).toContain(join(cwd, "src", "gamma.ts"));
-		expect(firstText(result)).not.toContain("beta.md");
-		expect(result.details).toEqual({ fileCount: 2 });
+		expectGlobResult(cwd, result);
+	});
+
+	it("globs files with Cursor-style glob pattern arguments", async () => {
+		const cwd = setupProject();
+		const result = await executePreparedTool(
+			collectTools(registerSearchTools).get("Glob"),
+			{ glob_pattern: "**/*.ts", path: "src" },
+			cwd,
+		);
+
+		expectGlobResult(cwd, result);
 	});
 
 	it("reports empty glob command results", async () => {

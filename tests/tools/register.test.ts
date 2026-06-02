@@ -20,6 +20,7 @@ describe("Grok tool registration", () => {
 
 		expect(toolNames.sort()).toEqual([
 			"Delete",
+			"Edit",
 			"Glob",
 			"Grep",
 			"LS",

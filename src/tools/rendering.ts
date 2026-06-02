@@ -7,6 +7,18 @@ const execFileAsync = promisify(execFile);
 export const MAX_OUTPUT_CHARS = 50_000;
 export const MAX_LINES = 500;
 
+export function recordFrom(
+	value: unknown,
+): Record<string, unknown> | undefined {
+	if (!value || typeof value !== "object") return undefined;
+	return value as Record<string, unknown>;
+}
+
+export function stringFrom(value: unknown): string | undefined {
+	if (typeof value !== "string") return undefined;
+	return value;
+}
+
 export function truncateLines(lines: string[]): string {
 	if (lines.length > MAX_LINES) {
 		return (

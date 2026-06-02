@@ -77,6 +77,7 @@ const grokToolNames = [
 	"Read",
 	"Write",
 	"StrReplace",
+	"Edit",
 	"Delete",
 	"Shell",
 ];

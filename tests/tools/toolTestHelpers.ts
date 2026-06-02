@@ -24,6 +24,9 @@ type ToolTheme = {
 
 type RegisteredTool = {
 	name: string;
+	prepareArguments?: (
+		params: Record<string, unknown>,
+	) => Record<string, unknown>;
 	execute: (
 		toolCallId: string,
 		params: Record<string, unknown>,
@@ -65,6 +68,23 @@ export async function executeTool(
 			cwd,
 		},
 	);
+}
+
+export function prepareToolArguments(
+	tool: RegisteredTool | undefined,
+	params: Record<string, unknown>,
+) {
+	if (!tool) throw new Error("Tool was not registered");
+	return tool.prepareArguments?.(params) ?? params;
+}
+
+export async function executePreparedTool(
+	tool: RegisteredTool | undefined,
+	params: Record<string, unknown>,
+	cwd: string,
+) {
+	if (!tool) throw new Error("Tool was not registered");
+	return executeTool(tool, prepareToolArguments(tool, params), cwd);
 }
 
 export function firstText(result: ToolResult) {

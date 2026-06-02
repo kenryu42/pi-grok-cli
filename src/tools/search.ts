@@ -8,8 +8,10 @@ import {
 	hasRipgrep,
 	MAX_OUTPUT_CHARS,
 	numberDetail,
+	recordFrom,
 	renderResultText,
 	renderRunning,
+	stringFrom,
 	text,
 	toolError,
 	truncateChars,
@@ -17,6 +19,9 @@ import {
 } from "./rendering.js";
 
 const execFileAsync = promisify(execFile);
+
+type GrepArgs = { pattern: string; path?: string; include?: string };
+type GlobArgs = { pattern: string; path?: string };
 
 export function registerSearchTools(pi: ExtensionAPI) {
 	const GrepParams = Type.Object({
@@ -43,6 +48,15 @@ export function registerSearchTools(pi: ExtensionAPI) {
 		description:
 			"Search for a regex pattern in file contents. Returns matching lines with file path and line number. Use the include parameter to filter by file type.",
 		parameters: GrepParams,
+
+		prepareArguments(args) {
+			const input = recordFrom(args);
+			if (!input) return args as GrepArgs;
+			return {
+				...input,
+				include: stringFrom(input.include) ?? stringFrom(input.glob_filter),
+			} as GrepArgs;
+		},
 
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 			const searchPath = resolve(ctx.cwd, params.path ?? ".");
@@ -121,6 +135,15 @@ export function registerSearchTools(pi: ExtensionAPI) {
 		description:
 			"Find files matching a glob pattern. Returns a list of matching file paths sorted by modification time (newest first).",
 		parameters: GlobParams,
+
+		prepareArguments(args) {
+			const input = recordFrom(args);
+			if (!input) return args as GlobArgs;
+			return {
+				...input,
+				pattern: stringFrom(input.pattern) ?? stringFrom(input.glob_pattern),
+			} as GlobArgs;
+		},
 
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 			const searchPath = resolve(ctx.cwd, params.path ?? ".");

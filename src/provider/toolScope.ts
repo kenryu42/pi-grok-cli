@@ -7,6 +7,7 @@ export const GROK_TOOL_NAMES = [
 	"Read",
 	"Write",
 	"StrReplace",
+	"Edit",
 	"Delete",
 	"Shell",
 ];

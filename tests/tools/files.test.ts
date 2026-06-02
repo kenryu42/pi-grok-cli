@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { registerFileTools } from "../../src/tools/files.js";
 import {
 	collectTools,
+	executePreparedTool,
 	executeTool,
 	firstText,
 	renderToolCall,
@@ -29,6 +30,17 @@ function strReplace(cwd: string, old_str: string, new_str: string) {
 	return executeTool(
 		collectTools(registerFileTools).get("StrReplace"),
 		{ path: "story.txt", old_str, new_str },
+		cwd,
+	);
+}
+
+function strReplaceWithPreparedArgs(
+	cwd: string,
+	params: Record<string, unknown>,
+) {
+	return executePreparedTool(
+		collectTools(registerFileTools).get("StrReplace"),
+		{ path: "story.txt", ...params },
 		cwd,
 	);
 }
@@ -134,6 +146,27 @@ describe("file tools", () => {
 		});
 	});
 
+	it("writes Cursor-style contents arguments", async () => {
+		const cwd = tempDir("pi-grok-cli-files-");
+
+		const result = await executePreparedTool(
+			collectTools(registerFileTools).get("Write"),
+			{ path: "nested/notes.txt", contents: "alpha\nbeta" },
+			cwd,
+		);
+
+		expect(firstText(result)).toBe(
+			"Successfully wrote 10 bytes to nested/notes.txt",
+		);
+		expect(readFileSync(join(cwd, "nested/notes.txt"), "utf-8")).toBe(
+			"alpha\nbeta",
+		);
+		expect(result.details).toEqual({
+			path: join(cwd, "nested/notes.txt"),
+			bytesWritten: 10,
+		});
+	});
+
 	it("reports missing files without throwing", async () => {
 		const cwd = tempDir("pi-grok-cli-files-");
 		const result = await executeTool(
@@ -160,6 +193,115 @@ describe("file tools", () => {
 
 		expect(firstText(result)).toBe("Replaced 2 occurrence(s) in story.txt");
 		expectStoryState(result, cwd, 2, "green blue green");
+	});
+
+	it("replaces string occurrences with Grok and Cursor argument variants", async () => {
+		const oldStringCwd = tempDir("pi-grok-cli-files-");
+		writeFileSync(join(oldStringCwd, "story.txt"), "red blue red", "utf-8");
+
+		const oldStringResult = await strReplaceWithPreparedArgs(oldStringCwd, {
+			old_string: "red",
+			new_string: "green",
+		});
+
+		expect(firstText(oldStringResult)).toBe(
+			"Replaced 2 occurrence(s) in story.txt",
+		);
+		expectStoryState(oldStringResult, oldStringCwd, 2, "green blue green");
+
+		const oldTextCwd = tempDir("pi-grok-cli-files-");
+		writeFileSync(join(oldTextCwd, "story.txt"), "red blue red", "utf-8");
+
+		const oldTextResult = await strReplaceWithPreparedArgs(oldTextCwd, {
+			oldText: "red",
+			newText: "green",
+		});
+
+		expect(firstText(oldTextResult)).toBe(
+			"Replaced 2 occurrence(s) in story.txt",
+		);
+		expectStoryState(oldTextResult, oldTextCwd, 2, "green blue green");
+
+		const nestedCwd = tempDir("pi-grok-cli-files-");
+		writeFileSync(join(nestedCwd, "story.txt"), "red blue red", "utf-8");
+
+		const nestedResult = await strReplaceWithPreparedArgs(nestedCwd, {
+			strReplace: { oldText: "red", newText: "green" },
+		});
+
+		expect(firstText(nestedResult)).toBe(
+			"Replaced 2 occurrence(s) in story.txt",
+		);
+		expectStoryState(nestedResult, nestedCwd, 2, "green blue green");
+	});
+
+	it("edits files with single, multiple, and stringified replacement inputs", async () => {
+		const singleCwd = tempDir("pi-grok-cli-files-");
+		writeFileSync(join(singleCwd, "story.txt"), "red blue red", "utf-8");
+
+		const singleResult = await executePreparedTool(
+			collectTools(registerFileTools).get("Edit"),
+			{ path: "story.txt", oldText: "red", newText: "green" },
+			singleCwd,
+		);
+
+		expect(firstText(singleResult)).toBe(
+			"Applied 2 replacement(s) in story.txt",
+		);
+		expectStoryState(singleResult, singleCwd, 2, "green blue green");
+
+		const multipleCwd = tempDir("pi-grok-cli-files-");
+		writeFileSync(join(multipleCwd, "story.txt"), "red blue red", "utf-8");
+
+		const multipleResult = await executePreparedTool(
+			collectTools(registerFileTools).get("Edit"),
+			{
+				path: "story.txt",
+				edits: [
+					{ oldText: "red", newText: "green" },
+					{ oldText: "blue", newText: "yellow" },
+				],
+			},
+			multipleCwd,
+		);
+
+		expect(firstText(multipleResult)).toBe(
+			"Applied 3 replacement(s) in story.txt",
+		);
+		expectStoryState(multipleResult, multipleCwd, 3, "green yellow green");
+
+		const stringifiedCwd = tempDir("pi-grok-cli-files-");
+		writeFileSync(join(stringifiedCwd, "story.txt"), "red blue red", "utf-8");
+
+		const stringifiedResult = await executePreparedTool(
+			collectTools(registerFileTools).get("Edit"),
+			{
+				path: "story.txt",
+				edits: JSON.stringify([{ oldText: "red", newText: "green" }]),
+			},
+			stringifiedCwd,
+		);
+
+		expect(firstText(stringifiedResult)).toBe(
+			"Applied 2 replacement(s) in story.txt",
+		);
+		expectStoryState(stringifiedResult, stringifiedCwd, 2, "green blue green");
+	});
+
+	it("reports unsupported edit strategies without changing files", async () => {
+		const cwd = tempDir("pi-grok-cli-files-");
+		writeFileSync(join(cwd, "story.txt"), "red blue red", "utf-8");
+
+		const result = await executePreparedTool(
+			collectTools(registerFileTools).get("Edit"),
+			{ path: "story.txt", applyPatch: { patchContent: "patch" } },
+			cwd,
+		);
+
+		expect(firstText(result)).toBe(
+			"Edit error: applyPatch is not supported by this Grok tool shim",
+		);
+		expectStoryState(result, cwd, 0, "red blue red");
 	});
 
 	it("leaves files unchanged when the replacement string is absent", async () => {
