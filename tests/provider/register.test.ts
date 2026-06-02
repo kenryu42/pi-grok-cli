@@ -60,6 +60,9 @@ interface TestContext {
 		getApiKeyForProvider?: (provider: string) => Promise<string | undefined>;
 	};
 	model?: { provider: string; id: string };
+	sessionManager?: {
+		getSessionId: () => string;
+	};
 	ui: {
 		notify: (message: string, level: string) => void;
 	};
@@ -139,6 +142,13 @@ function statusContext(notify: TestContext["ui"]["notify"]): TestContext {
 				{ provider: "grok-cli", id: "grok-composer-2.5-fast" },
 			],
 		},
+		ui: { notify },
+	};
+}
+
+function emptyStatusContext(notify: TestContext["ui"]["notify"]): TestContext {
+	return {
+		modelRegistry: { getAll: () => [] },
 		ui: { notify },
 	};
 }
@@ -269,6 +279,181 @@ describe("Grok CLI status command", () => {
 
 		expect(notify.mock.calls.at(-1)?.[0]).toContain(
 			"Requests: 42/180 remaining",
+		);
+	});
+
+	it("warns when no Grok models are registered", async () => {
+		const extension = await setupExtension();
+		const notify = vi.fn();
+
+		await extension.commands
+			.get("grok-cli-status")
+			?.handler([], emptyStatusContext(notify));
+
+		expect(notify).toHaveBeenCalledOnce();
+		expect(notify).toHaveBeenCalledWith(
+			"Grok CLI: no models registered. Run /login grok-cli first.",
+			"warning",
+		);
+	});
+
+	it("shows env-token bypass and truncates long model lists", async () => {
+		process.env.GROK_CLI_OAUTH_TOKEN = "token";
+		const extension = await setupExtension();
+		const notify = vi.fn();
+
+		await extension.commands.get("grok-cli-status")?.handler([], {
+			modelRegistry: {
+				getAll: () =>
+					Array.from({ length: 7 }, (_value, index) => ({
+						provider: "grok-cli",
+						id: `grok-model-${index + 1}`,
+					})),
+			},
+			ui: { notify },
+		});
+
+		expect(notify.mock.calls[0]).toEqual([
+			"⚠️  Grok CLI: using GROK_CLI_OAUTH_TOKEN env bypass — no auto-refresh available",
+			"warning",
+		]);
+		expect(notify.mock.calls[1]).toEqual([
+			"✓ Grok CLI: 7 models available (grok-model-1, grok-model-2, grok-model-3, grok-model-4, grok-model-5 (+2 more))",
+			"info",
+		]);
+	});
+
+	it("reports registry errors as status warnings", async () => {
+		const extension = await setupExtension();
+		const notify = vi.fn();
+
+		await extension.commands.get("grok-cli-status")?.handler([], {
+			modelRegistry: {
+				getAll: () => {
+					throw new Error("registry unavailable");
+				},
+			},
+			ui: { notify },
+		});
+
+		expect(notify).toHaveBeenCalledWith(
+			"Grok CLI: registry unavailable",
+			"warning",
+		);
+	});
+
+	it("includes OAuth error codes in status warnings", async () => {
+		const { XaiOAuthError } = await import("../../src/shared/errors.js");
+		const extension = await setupExtension();
+		const notify = vi.fn();
+
+		await extension.commands.get("grok-cli-status")?.handler([], {
+			modelRegistry: {
+				getAll: () => {
+					throw new XaiOAuthError("refresh failed", "refresh_failed", true);
+				},
+			},
+			ui: { notify },
+		});
+
+		expect(notify).toHaveBeenCalledWith(
+			"Grok CLI: refresh failed (code: refresh_failed)",
+			"warning",
+		);
+	});
+});
+
+describe("Grok CLI provider registration", () => {
+	it("registers provider metadata and OAuth helpers", async () => {
+		const extension = await setupExtension();
+		const provider = extension.providers.get("grok-cli");
+
+		expect(provider?.name).toBe("Grok CLI");
+		expect(provider?.api).toBe("openai-responses");
+		expect(provider?.apiKey).toBe("$GROK_CLI_OAUTH_TOKEN");
+		expect(provider?.models.map((model) => model.id)).toContain("grok-build");
+		expect(provider?.oauth?.getApiKey({ access: "access-token" })).toBe(
+			"access-token",
+		);
+		expect(
+			provider?.oauth?.modifyModels(
+				[
+					{ provider: "grok-cli", id: "grok-build", baseUrl: "old" },
+					{ provider: "openai", id: "gpt-4", baseUrl: "keep" },
+				],
+				{
+					access: "access-token",
+					refresh: "refresh-token",
+					expires: 123,
+					baseUrl: "https://example.invalid/custom///",
+				},
+			),
+		).toEqual([
+			{
+				provider: "grok-cli",
+				id: "grok-build",
+				baseUrl: "https://example.invalid/custom",
+			},
+			{ provider: "openai", id: "gpt-4", baseUrl: "keep" },
+		]);
+	});
+
+	it("sanitizes Grok provider requests with the current session id", async () => {
+		const extension = await setupExtension();
+		const result = extension.handlers.get("before_provider_request")?.(
+			{
+				payload: {
+					input: [{ role: "system", content: "system instruction" }],
+				},
+			},
+			{
+				model: { provider: "grok-cli", id: "grok-4.3" },
+				modelRegistry: { getAll: () => [] },
+				sessionManager: { getSessionId: () => "session-123" },
+				ui: { notify: vi.fn() },
+			},
+		);
+
+		expect(result).toEqual({
+			input: [],
+			instructions: "system instruction",
+			prompt_cache_key: "session-123",
+		});
+	});
+
+	it("leaves non-Grok provider requests untouched", async () => {
+		const extension = await setupExtension();
+		const payload = { input: [{ role: "system", content: "keep" }] };
+		const result = extension.handlers.get("before_provider_request")?.(
+			{ payload },
+			{
+				model: { provider: "openai", id: "gpt-4" },
+				modelRegistry: { getAll: () => [] },
+				sessionManager: { getSessionId: () => "session-123" },
+				ui: { notify: vi.fn() },
+			},
+		);
+
+		expect(result).toBeUndefined();
+		expect(payload).toEqual({ input: [{ role: "system", content: "keep" }] });
+	});
+
+	it("warns at session start when env-token bypass is active", async () => {
+		process.env.GROK_CLI_OAUTH_TOKEN = "token";
+		const extension = await setupExtension();
+		const notify = vi.fn();
+
+		await extension.handlers.get("session_start")?.(
+			{},
+			{
+				modelRegistry: { getAll: () => [] },
+				ui: { notify },
+			},
+		);
+
+		expect(notify).toHaveBeenCalledWith(
+			"[pi-grok-cli] Using GROK_CLI_OAUTH_TOKEN bypass — no auto-refresh, no model discovery",
+			"warning",
 		);
 	});
 });
