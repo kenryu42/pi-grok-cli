@@ -1,7 +1,7 @@
-import { mkdirSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { registerSearchTools } from '../../src/tools/search.js';
+import { registerSearchTools, sortByModifiedNewest } from '../../src/tools/search.js';
 import {
   collectTools,
   executePreparedTool,
@@ -231,6 +231,18 @@ describe('search tools', () => {
     expect(firstText(result).split('\n')).toEqual([
       join(cwd, 'src', 'gamma.ts'),
       join(cwd, 'src', 'alpha.ts'),
+    ]);
+  });
+
+  it('sorts existing glob results when another match is deleted before stat', () => {
+    const cwd = setupProject();
+    const deleted = join(cwd, 'src', 'deleted.ts');
+    writeFileSync(deleted, 'deleted\n', 'utf-8');
+    rmSync(deleted);
+
+    expect(sortByModifiedNewest([deleted, join(cwd, 'src', 'alpha.ts')])).toEqual([
+      join(cwd, 'src', 'alpha.ts'),
+      deleted,
     ]);
   });
 

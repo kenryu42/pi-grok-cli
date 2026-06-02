@@ -27,9 +27,17 @@ const execFileAsync = promisify(execFile);
 type GrepArgs = { pattern: string; path?: string; include?: string };
 type GlobArgs = { pattern: string; path?: string };
 
-function sortByModifiedNewest(files: string[]) {
+function modifiedTimeMs(file: string) {
+  try {
+    return statSync(file).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
+export function sortByModifiedNewest(files: string[]) {
   return files.sort((a, b) => {
-    const delta = statSync(b).mtimeMs - statSync(a).mtimeMs;
+    const delta = modifiedTimeMs(b) - modifiedTimeMs(a);
     if (delta !== 0) return delta;
     return a.localeCompare(b);
   });
