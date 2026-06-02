@@ -72,7 +72,7 @@ describe('tool rendering helpers', () => {
     });
     expect(fileError({}, 'Read', '/tmp/file.txt', { totalLines: 0 })).toEqual({
       content: [{ type: 'text', text: 'Read error: Unknown error' }],
-      details: { path: '/tmp/file.txt', totalLines: 0 },
+      details: { path: '/tmp/file.txt', totalLines: 0, failed: true, error: 'Unknown error' },
     });
     expect(toolError({ code: 1 }, 'Grep', { matchCount: 0 })).toEqual({
       content: [{ type: 'text', text: 'No matches found' }],
@@ -82,11 +82,11 @@ describe('tool rendering helpers', () => {
       toolError({ code: 1, message: 'find: missing: No such file' }, 'Glob', { fileCount: 0 }),
     ).toEqual({
       content: [{ type: 'text', text: 'Glob error: find: missing: No such file' }],
-      details: { fileCount: 0 },
+      details: { fileCount: 0, failed: true, error: 'find: missing: No such file' },
     });
     expect(toolError({}, 'Grep', { matchCount: 0 })).toEqual({
       content: [{ type: 'text', text: 'Grep error: Unknown error' }],
-      details: { matchCount: 0 },
+      details: { matchCount: 0, failed: true, error: 'Unknown error' },
     });
   });
 });

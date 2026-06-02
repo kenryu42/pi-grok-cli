@@ -129,14 +129,15 @@ export function fileError<T extends FileDetails>(
   extraDetails: Omit<T, 'path'>,
 ): ToolResult<T> {
   const err = error as ToolError;
+  const message = err.message ?? 'Unknown error';
   return {
     content: [
       {
         type: 'text',
-        text: `${toolName} error: ${err.message ?? 'Unknown error'}`,
+        text: `${toolName} error: ${message}`,
       },
     ],
-    details: { path: filePath, ...extraDetails } as T,
+    details: { path: filePath, ...extraDetails, failed: true, error: message } as unknown as T,
   };
 }
 
@@ -148,14 +149,15 @@ export function toolError<T>(error: unknown, toolName: string, emptyDetails: T):
       details: emptyDetails,
     };
   }
+  const message = err.message ?? 'Unknown error';
   return {
     content: [
       {
         type: 'text',
-        text: `${toolName} error: ${err.message ?? 'Unknown error'}`,
+        text: `${toolName} error: ${message}`,
       },
     ],
-    details: emptyDetails,
+    details: { ...emptyDetails, failed: true, error: message } as T,
   };
 }
 
