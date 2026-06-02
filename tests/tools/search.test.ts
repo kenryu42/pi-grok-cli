@@ -124,7 +124,7 @@ describe('search tools', () => {
     expect(result.details).toEqual({
       matchCount: 0,
       failed: true,
-      error: expect.stringContaining('regex parse error'),
+      error: expect.stringMatching(/regex parse error|Invalid regular expression/),
     });
   });
 

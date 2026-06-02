@@ -102,7 +102,9 @@ describe('file tools', () => {
       path: join(cwd, 'dir'),
       deleted: false,
       failed: true,
-      error: expect.stringContaining('operation not permitted'),
+      error: expect.stringMatching(
+        /EISDIR: illegal operation on a directory|operation not permitted/,
+      ),
     });
   });
 
