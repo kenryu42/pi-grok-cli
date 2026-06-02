@@ -12,9 +12,17 @@
  *   PI_GROK_CLI_OAUTH_SCOPE      - Override OAuth scopes
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { execFile } from "node:child_process";
+import {
+	existsSync,
+	mkdirSync,
+	readFileSync,
+	unlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { promisify } from "node:util";
 import {
 	type Api,
 	type AssistantMessageEventStream,
@@ -24,11 +32,15 @@ import {
 	type OAuthLoginCallbacks,
 	type SimpleStreamOptions,
 	streamSimpleOpenAIResponses,
+	Type,
 } from "@earendil-works/pi-ai";
 import type {
 	ExtensionAPI,
 	ProviderConfig,
 } from "@earendil-works/pi-coding-agent";
+
+const execFileAsync = promisify(execFile);
+
 import { XaiOAuthError } from "./errors.js";
 import { type GrokCliModelConfig, resolveModels } from "./models.js";
 import * as oauth from "./oauth.js";
@@ -262,6 +274,594 @@ export default function (pi: ExtensionAPI) {
 		} satisfies ProviderConfig["oauth"],
 
 		streamSimple: streamGrokCli,
+	});
+
+	// ── Register Grok/Cursor-native tools ──────────────────────────────────
+
+	const MAX_OUTPUT_CHARS = 50_000;
+	const MAX_LINES = 500;
+
+	function truncateLines(lines: string[]): string {
+		if (lines.length > MAX_LINES) {
+			return (
+				lines.slice(0, MAX_LINES).join("\n") +
+				`\n\n[Showing first ${MAX_LINES} of ${lines.length} results. Refine your pattern to narrow results.]`
+			);
+		}
+		return lines.join("\n");
+	}
+
+	function truncateChars(output: string): string {
+		if (output.length > MAX_OUTPUT_CHARS) {
+			return `${output.slice(0, MAX_OUTPUT_CHARS)}\n\n[Output truncated at 50KB]`;
+		}
+		return output;
+	}
+
+	let rgAvailable: boolean | undefined;
+	async function hasRipgrep(): Promise<boolean> {
+		if (rgAvailable !== undefined) return rgAvailable;
+		try {
+			await execFileAsync("rg", ["--version"]);
+			rgAvailable = true;
+		} catch {
+			rgAvailable = false;
+		}
+		return rgAvailable;
+	}
+
+	type ToolError = { code?: number; message?: string };
+	type ToolResult<T> = {
+		content: [{ type: "text"; text: string }];
+		details: T;
+	};
+
+	type FileDetails = { path: string; [key: string]: unknown };
+
+	function fileNotFound<T extends FileDetails>(
+		filePath: string,
+		extraDetails: Omit<T, "path">,
+	): ToolResult<T> {
+		return {
+			content: [{ type: "text", text: `File not found: ${filePath}` }],
+			details: { path: filePath, ...extraDetails } as T,
+		};
+	}
+
+	function fileError<T extends FileDetails>(
+		error: unknown,
+		toolName: string,
+		filePath: string,
+		extraDetails: Omit<T, "path">,
+	): ToolResult<T> {
+		const err = error as ToolError;
+		return {
+			content: [
+				{
+					type: "text",
+					text: `${toolName} error: ${err.message ?? "Unknown error"}`,
+				},
+			],
+			details: { path: filePath, ...extraDetails } as T,
+		};
+	}
+
+	function toolError<T>(
+		error: unknown,
+		toolName: string,
+		emptyDetails: T,
+	): ToolResult<T> {
+		const err = error as ToolError;
+		if (err.code === 1) {
+			return {
+				content: [{ type: "text", text: "No matches found" }],
+				details: emptyDetails,
+			};
+		}
+		return {
+			content: [
+				{
+					type: "text",
+					text: `${toolName} error: ${err.message ?? "Unknown error"}`,
+				},
+			],
+			details: emptyDetails,
+		};
+	}
+
+	async function execWithRgFallback(
+		rgArgs: string[],
+		grepArgs: string[],
+		options: { cwd: string; signal?: AbortSignal },
+	): Promise<string> {
+		if (await hasRipgrep()) {
+			const result = await execFileAsync("rg", rgArgs, {
+				cwd: options.cwd,
+				maxBuffer: MAX_OUTPUT_CHARS * 2,
+				signal: options.signal,
+			});
+			return result.stdout;
+		}
+		const result = await execFileAsync("grep", grepArgs, {
+			cwd: options.cwd,
+			maxBuffer: MAX_OUTPUT_CHARS * 2,
+			signal: options.signal,
+		});
+		return result.stdout;
+	}
+
+	const GrepParams = Type.Object({
+		pattern: Type.String({
+			description: "Regex pattern to search for in file contents",
+		}),
+		path: Type.Optional(
+			Type.String({
+				description:
+					"Directory or file to search. Defaults to current working directory.",
+			}),
+		),
+		include: Type.Optional(
+			Type.String({
+				description:
+					"Glob pattern to filter which files are searched (e.g. *.ts, **/*.md)",
+			}),
+		),
+	});
+
+	pi.registerTool({
+		name: "Grep",
+		label: "Grep",
+		description:
+			"Search for a regex pattern in file contents. Returns matching lines with file path and line number. Use the include parameter to filter by file type.",
+		parameters: GrepParams,
+
+		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+			const searchPath = resolve(ctx.cwd, params.path ?? ".");
+
+			try {
+				const rgArgs = ["-n", "--no-heading", "--color=never"];
+				if (params.include) rgArgs.push("--glob", params.include);
+				rgArgs.push(params.pattern, searchPath);
+
+				const grepArgs = ["-r", "-n", "--color=never"];
+				if (params.include) grepArgs.push(`--include=${params.include}`);
+				grepArgs.push(params.pattern, searchPath);
+
+				const stdout = await execWithRgFallback(rgArgs, grepArgs, {
+					cwd: ctx.cwd,
+					signal,
+				});
+
+				const lines = stdout.trim().split("\n").filter(Boolean);
+				if (lines.length === 0) {
+					return {
+						content: [{ type: "text", text: "No matches found" }],
+						details: { matchCount: 0 },
+					};
+				}
+
+				return {
+					content: [
+						{ type: "text", text: truncateChars(truncateLines(lines)) },
+					],
+					details: { matchCount: lines.length },
+				};
+			} catch (error: unknown) {
+				return toolError(error, "Grep", { matchCount: 0 });
+			}
+		},
+	});
+
+	const GlobParams = Type.Object({
+		pattern: Type.String({
+			description: "Glob pattern to match files (e.g. **/*.ts, src/**/*.json)",
+		}),
+		path: Type.Optional(
+			Type.String({
+				description:
+					"Directory to search within. Defaults to current working directory.",
+			}),
+		),
+	});
+
+	pi.registerTool({
+		name: "Glob",
+		label: "Glob",
+		description:
+			"Find files matching a glob pattern. Returns a list of matching file paths sorted by modification time (newest first).",
+		parameters: GlobParams,
+
+		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+			const searchPath = resolve(ctx.cwd, params.path ?? ".");
+
+			try {
+				let files: string[];
+
+				if (await hasRipgrep()) {
+					const result = await execFileAsync(
+						"rg",
+						["--files", "--color=never", "--glob", params.pattern, searchPath],
+						{ cwd: ctx.cwd, maxBuffer: MAX_OUTPUT_CHARS * 2, signal },
+					);
+					files = result.stdout.trim().split("\n").filter(Boolean);
+				} else {
+					// find fallback — convert **/*.ext → -name "*.ext"
+					const basename = params.pattern.replace(/^(\*\*\/)+/, "");
+					const result = await execFileAsync(
+						"find",
+						[searchPath, "-type", "f", "-name", basename],
+						{ cwd: ctx.cwd, maxBuffer: MAX_OUTPUT_CHARS * 2, signal },
+					);
+					files = result.stdout.trim().split("\n").filter(Boolean);
+				}
+
+				if (files.length === 0) {
+					return {
+						content: [{ type: "text", text: "No files found" }],
+						details: { fileCount: 0 },
+					};
+				}
+
+				return {
+					content: [
+						{ type: "text", text: truncateChars(truncateLines(files)) },
+					],
+					details: { fileCount: files.length },
+				};
+			} catch (error: unknown) {
+				return toolError(error, "Glob", { fileCount: 0 });
+			}
+		},
+	});
+
+	// ── LS tool ──────────────────────────────────────────────────────────
+
+	const LsParams = Type.Object({
+		path: Type.String({
+			description: "Directory path to list",
+		}),
+	});
+
+	pi.registerTool({
+		name: "LS",
+		label: "LS",
+		description: "List the contents of a directory, including hidden files.",
+		parameters: LsParams,
+
+		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+			const targetPath = resolve(ctx.cwd, params.path);
+
+			try {
+				const { stdout } = await execFileAsync("ls", ["-la", targetPath], {
+					cwd: ctx.cwd,
+					maxBuffer: MAX_OUTPUT_CHARS * 2,
+					signal,
+				});
+
+				let output = stdout.trim();
+				if (output.length > MAX_OUTPUT_CHARS) {
+					output = `${output.slice(0, MAX_OUTPUT_CHARS)}\n\n[LS: output truncated at 50KB]`;
+				}
+
+				return {
+					content: [{ type: "text", text: output }],
+					details: { path: targetPath },
+				};
+			} catch (error: unknown) {
+				const err = error as ToolError;
+				return {
+					content: [
+						{
+							type: "text",
+							text: `LS error: ${err.message ?? "Unknown error"}`,
+						},
+					],
+					details: { path: targetPath },
+				};
+			}
+		},
+	});
+
+	// ── Read tool ────────────────────────────────────────────────────────
+
+	const ReadParams = Type.Object({
+		path: Type.String({
+			description: "Path to the file to read",
+		}),
+		offset: Type.Optional(
+			Type.Number({
+				description: "Line number to start reading from (0-indexed)",
+			}),
+		),
+		limit: Type.Optional(
+			Type.Number({
+				description: "Maximum number of lines to read",
+			}),
+		),
+	});
+
+	pi.registerTool({
+		name: "Read",
+		label: "Read",
+		description:
+			"Read the contents of a file. Returns the file content with line numbers.",
+		parameters: ReadParams,
+
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			const filePath = resolve(ctx.cwd, params.path);
+
+			try {
+				if (!existsSync(filePath)) {
+					return fileNotFound(filePath, { exists: false, totalLines: 0 });
+				}
+
+				const content = readFileSync(filePath, "utf-8");
+				const lines = content.split("\n");
+
+				const startLine = params.offset ?? 0;
+				const endLine = params.limit
+					? Math.min(startLine + params.limit, lines.length)
+					: Math.min(startLine + 2000, lines.length);
+
+				const selectedLines = lines.slice(startLine, endLine);
+				const numberedLines = selectedLines.map(
+					(line, i) => `${startLine + i + 1}\t${line}`,
+				);
+
+				let output = numberedLines.join("\n");
+				if (endLine < lines.length) {
+					output += `\n\n[Showing lines ${startLine + 1}-${endLine} of ${lines.length} total lines. Use offset to see more.]`;
+				}
+
+				if (output.length > MAX_OUTPUT_CHARS) {
+					output = `${output.slice(0, MAX_OUTPUT_CHARS)}\n\n[Output truncated at 50KB]`;
+				}
+
+				return {
+					content: [{ type: "text", text: output }],
+					details: { path: filePath, totalLines: lines.length },
+				};
+			} catch (error: unknown) {
+				return fileError(error, "Read", filePath, {
+					exists: false,
+					totalLines: 0,
+				});
+			}
+		},
+	});
+
+	// ── Write tool ───────────────────────────────────────────────────────
+
+	const WriteParams = Type.Object({
+		path: Type.String({
+			description: "Path to the file to write",
+		}),
+		content: Type.String({
+			description: "Content to write to the file",
+		}),
+	});
+
+	pi.registerTool({
+		name: "Write",
+		label: "Write",
+		description:
+			"Create or overwrite a file with the given content. Creates parent directories if needed.",
+		parameters: WriteParams,
+
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			const filePath = resolve(ctx.cwd, params.path);
+
+			try {
+				mkdirSync(dirname(filePath), { recursive: true });
+				writeFileSync(filePath, params.content, "utf-8");
+
+				return {
+					content: [
+						{
+							type: "text",
+							text: `Successfully wrote ${params.content.length} bytes to ${params.path}`,
+						},
+					],
+					details: { path: filePath, bytesWritten: params.content.length },
+				};
+			} catch (error: unknown) {
+				const err = error as ToolError;
+				return {
+					content: [
+						{
+							type: "text",
+							text: `Write error: ${err.message ?? "Unknown error"}`,
+						},
+					],
+					details: { path: filePath, bytesWritten: 0 },
+				};
+			}
+		},
+	});
+
+	// ── StrReplace tool ──────────────────────────────────────────────────
+
+	const StrReplaceParams = Type.Object({
+		path: Type.String({
+			description: "Path to the file to modify",
+		}),
+		old_str: Type.String({
+			description: "String to search for (exact match)",
+		}),
+		new_str: Type.String({
+			description: "String to replace with",
+		}),
+	});
+
+	pi.registerTool({
+		name: "StrReplace",
+		label: "StrReplace",
+		description:
+			"Replace all occurrences of a string in a file. The old_str must be an exact match.",
+		parameters: StrReplaceParams,
+
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			const filePath = resolve(ctx.cwd, params.path);
+
+			try {
+				if (!existsSync(filePath)) {
+					return fileNotFound(filePath, { replacements: 0 });
+				}
+
+				const content = readFileSync(filePath, "utf-8");
+				const count = content.split(params.old_str).length - 1;
+
+				if (count === 0) {
+					return {
+						content: [
+							{
+								type: "text",
+								text: `String not found in ${params.path}: "${params.old_str}"`,
+							},
+						],
+						details: { path: filePath, replacements: 0 },
+					};
+				}
+
+				const newContent = content.replaceAll(params.old_str, params.new_str);
+				writeFileSync(filePath, newContent, "utf-8");
+
+				return {
+					content: [
+						{
+							type: "text",
+							text: `Replaced ${count} occurrence(s) in ${params.path}`,
+						},
+					],
+					details: { path: filePath, replacements: count },
+				};
+			} catch (error: unknown) {
+				return fileError(error, "StrReplace", filePath, { replacements: 0 });
+			}
+		},
+	});
+
+	// ── Delete tool ──────────────────────────────────────────────────────
+
+	const DeleteParams = Type.Object({
+		path: Type.String({
+			description: "Path to the file to delete",
+		}),
+	});
+
+	pi.registerTool({
+		name: "Delete",
+		label: "Delete",
+		description: "Delete a file from the filesystem.",
+		parameters: DeleteParams,
+
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			const filePath = resolve(ctx.cwd, params.path);
+
+			try {
+				if (!existsSync(filePath)) {
+					return fileNotFound(filePath, { deleted: false });
+				}
+
+				unlinkSync(filePath);
+
+				return {
+					content: [
+						{ type: "text", text: `Successfully deleted ${params.path}` },
+					],
+					details: { path: filePath, deleted: true },
+				};
+			} catch (error: unknown) {
+				return fileError(error, "Delete", filePath, { deleted: false });
+			}
+		},
+	});
+
+	// ── Shell tool ───────────────────────────────────────────────────────
+
+	const ShellParams = Type.Object({
+		command: Type.String({
+			description: "Shell command to execute",
+		}),
+		working_directory: Type.Optional(
+			Type.String({
+				description: "Working directory for the command",
+			}),
+		),
+		timeout: Type.Optional(
+			Type.Number({
+				description: "Timeout in milliseconds (default: 120000)",
+			}),
+		),
+	});
+
+	pi.registerTool({
+		name: "Shell",
+		label: "Shell",
+		description:
+			"Execute a shell command and return stdout, stderr, and exit code.",
+		parameters: ShellParams,
+
+		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+			const cwd = params.working_directory
+				? resolve(ctx.cwd, params.working_directory)
+				: ctx.cwd;
+			const timeout = params.timeout ?? 120_000;
+
+			try {
+				const { stdout, stderr } = await execFileAsync(
+					"bash",
+					["-c", params.command],
+					{
+						cwd,
+						maxBuffer: MAX_OUTPUT_CHARS * 2,
+						timeout,
+						signal,
+					},
+				);
+
+				let output = "";
+				if (stdout) output += stdout;
+				if (stderr) output += `\n[stderr]\n${stderr}`;
+
+				if (output.length > MAX_OUTPUT_CHARS) {
+					output = `${output.slice(0, MAX_OUTPUT_CHARS)}\n\n[Output truncated at 50KB]`;
+				}
+
+				return {
+					content: [{ type: "text", text: output || "(no output)" }],
+					details: { exitCode: 0, command: params.command },
+				};
+			} catch (error: unknown) {
+				const err = error as {
+					code?: number;
+					message?: string;
+					stdout?: string;
+					stderr?: string;
+				};
+
+				let output = "";
+				if (err.stdout) output += err.stdout;
+				if (err.stderr) output += `\n[stderr]\n${err.stderr}`;
+
+				if (output.length > MAX_OUTPUT_CHARS) {
+					output = `${output.slice(0, MAX_OUTPUT_CHARS)}\n\n[Output truncated at 50KB]`;
+				}
+
+				return {
+					content: [
+						{
+							type: "text",
+							text: `Shell error (exit code ${err.code ?? "unknown"}): ${err.message ?? "Unknown error"}${output ? `\n${output}` : ""}`,
+						},
+					],
+					details: {
+						exitCode: err.code ?? 1,
+						command: params.command,
+					},
+				};
+			}
+		},
 	});
 
 	// ── Payload sanitization via event ────────────────────────────────────

@@ -79,6 +79,7 @@ afterEach(() => {
 async function setupExtension() {
 	const commands = new Map<string, CommandConfig>();
 	const providers = new Map<string, ProviderConfig>();
+	const tools = new Map<string, unknown>();
 	const registerGrokCli = (await import("../src/index.js")).default;
 	registerGrokCli({
 		registerProvider(name: string, config: ProviderConfig) {
@@ -88,8 +89,11 @@ async function setupExtension() {
 		registerCommand(name: string, config: unknown) {
 			commands.set(name, config as CommandConfig);
 		},
+		registerTool(tool: { name: string }) {
+			tools.set(tool.name, tool);
+		},
 	} as unknown as ExtensionAPI);
-	return { commands, providers };
+	return { commands, providers, tools };
 }
 
 function statusContext(notify: TestContext["ui"]["notify"]): TestContext {
