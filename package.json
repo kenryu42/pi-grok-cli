@@ -1,76 +1,76 @@
 {
-	"name": "pi-grok-cli",
-	"version": "0.1.0",
-	"description": "Use Grok CLI's API endpoint in pi.",
-	"keywords": [
-		"pi-package",
-		"pi-extension",
-		"xai",
-		"grok",
-		"grok-cli",
-		"oauth",
-		"xai-oauth"
-	],
-	"type": "module",
-	"main": "./src/index.ts",
-	"files": [
-		"README.md",
-		"src",
-		"tsconfig.json"
-	],
-	"scripts": {
-		"test": "vitest run --reporter=agent",
-		"coverage": "vitest run --reporter=agent --coverage",
-		"typecheck": "tsc --noEmit",
-		"prepack": "bun run test && bun run coverage && bun run typecheck",
-		"knip": "knip --production",
-		"lint": "biome check --write .",
-		"lint:ci": "biome ci .",
-		"check": "bun run lint && bun run typecheck && bun run knip && bun run check-duplicates && AGENT=1 bun run coverage",
-		"check:ci": "bun run lint:ci && bun run typecheck && bun run knip && bun run check-duplicates && AGENT=1 bun run coverage",
-		"prepare": "husky",
-		"check-duplicates": "bunx jscpd src tests --exitCode 1 --reporters ai --noTips"
-	},
-	"author": {
-		"name": "J Liew",
-		"email": "jliew@420024lab.com"
-	},
-	"license": "MIT",
-	"repository": {
-		"type": "git",
-		"url": "git+https://github.com/kenryu42/pi-grok-cli.git"
-	},
-	"bugs": {
-		"url": "https://github.com/kenryu42/pi-grok-cli/issues"
-	},
-	"homepage": "https://github.com/kenryu42/pi-grok-cli#readme",
-	"pi": {
-		"extensions": [
-			"./src/index.ts"
-		]
-	},
-	"peerDependencies": {
-		"@earendil-works/pi-ai": "*",
-		"@earendil-works/pi-coding-agent": "*",
-		"@earendil-works/pi-tui": "*"
-	},
-	"devDependencies": {
-		"@biomejs/biome": "2.4.16",
-		"@earendil-works/pi-ai": "^0.78.0",
-		"@earendil-works/pi-coding-agent": "^0.78.0",
-		"@earendil-works/pi-tui": "^0.78.0",
-		"@vitest/coverage-v8": "^4.1.8",
-		"husky": "^9.1.7",
-		"jscpd": "^4.2.4",
-		"knip": "^6.15.0",
-		"lint-staged": "^17.0.7",
-		"release-tools": "github:kenryu42/release-tools",
-		"typescript": "^6.0.3",
-		"vitest": "^4.1.8"
-	},
-	"lint-staged": {
-		"*": [
-			"biome check --write --no-errors-on-unmatched"
-		]
-	}
+  "name": "pi-grok-cli",
+  "version": "0.1.0",
+  "description": "Use Grok CLI's API endpoint in pi.",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "xai",
+    "grok",
+    "grok-cli",
+    "oauth",
+    "xai-oauth"
+  ],
+  "type": "module",
+  "main": "./src/index.ts",
+  "files": [
+    "README.md",
+    "src",
+    "tsconfig.json"
+  ],
+  "scripts": {
+    "test": "vitest run --reporter=agent",
+    "coverage": "vitest run --reporter=agent --coverage",
+    "typecheck": "tsc --noEmit",
+    "prepack": "bun run test && bun run coverage && bun run typecheck",
+    "knip": "knip --production",
+    "lint": "biome check --write .",
+    "lint:ci": "biome ci .",
+    "check": "bun run lint && bun run typecheck && bun run knip && bun run check-duplicates && AGENT=1 bun run coverage",
+    "check:ci": "bun run lint:ci && bun run typecheck && bun run knip && bun run check-duplicates && AGENT=1 bun run coverage",
+    "prepare": "husky",
+    "check-duplicates": "bunx jscpd src tests --exitCode 1 --reporters ai --noTips"
+  },
+  "author": {
+    "name": "J Liew",
+    "email": "jliew@420024lab.com"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kenryu42/pi-grok-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/kenryu42/pi-grok-cli/issues"
+  },
+  "homepage": "https://github.com/kenryu42/pi-grok-cli#readme",
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.4.16",
+    "@earendil-works/pi-ai": "^0.78.0",
+    "@earendil-works/pi-coding-agent": "^0.78.0",
+    "@earendil-works/pi-tui": "^0.78.0",
+    "@vitest/coverage-v8": "^4.1.8",
+    "husky": "^9.1.7",
+    "jscpd": "^4.2.4",
+    "knip": "^6.15.0",
+    "lint-staged": "^17.0.7",
+    "release-tools": "github:kenryu42/release-tools",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.8"
+  },
+  "lint-staged": {
+    "*": [
+      "biome check --write --no-errors-on-unmatched"
+    ]
+  }
 }

@@ -1,5 +1,5 @@
 {
-	"entry": ["src/shared/backup_worker.ts"],
-	"project": ["**/*.ts", "!**/*.d.ts", "!.release-tools/**"],
-	"ignoreDependencies": ["lint-staged"]
+  "entry": ["src/shared/backup_worker.ts"],
+  "project": ["**/*.ts", "!**/*.d.ts", "!.release-tools/**"],
+  "ignoreDependencies": ["lint-staged"]
 }

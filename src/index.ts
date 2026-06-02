@@ -4,4 +4,4 @@
  * Brings access to the Grok CLI's endpoint into pi.
  */
 
-export { default } from "./provider/register.js";
+export { default } from './provider/register.js';
