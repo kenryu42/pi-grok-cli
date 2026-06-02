@@ -1,4 +1,3 @@
-import { execFile } from 'node:child_process';
 import {
   existsSync,
   promises as fs,
@@ -8,7 +7,6 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { basename, dirname, join, resolve, sep } from 'node:path';
-import { promisify } from 'node:util';
 import { Type } from '@earendil-works/pi-ai';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import {
@@ -16,7 +14,6 @@ import {
   detailRecord,
   fileError,
   fileNotFound,
-  MAX_OUTPUT_BYTES,
   MAX_OUTPUT_CHARS,
   numberDetail,
   recordFrom,
@@ -26,8 +23,6 @@ import {
   type ToolError,
   text,
 } from './rendering.js';
-
-const execFileAsync = promisify(execFile);
 
 type ReplacementEdit = { oldText: string; newText: string };
 type FileDetails = { path: string; [key: string]: unknown };
@@ -192,13 +187,9 @@ export function registerFileTools(pi: ExtensionAPI) {
 
       try {
         const safePath = await canonicalizeWithinWorkspace(ctx.cwd, params.path);
-        const { stdout } = await execFileAsync('ls', ['-la', safePath], {
-          cwd: ctx.cwd,
-          maxBuffer: MAX_OUTPUT_BYTES,
-          signal,
-        });
+        if (signal?.aborted) throw new Error('The operation was aborted');
 
-        let output = stdout.trim();
+        let output = (await fs.readdir(safePath)).sort().join('\n');
         if (output.length > MAX_OUTPUT_CHARS) {
           output = `${output.slice(0, MAX_OUTPUT_CHARS)}\n\n[LS: output truncated at 50KB]`;
         }

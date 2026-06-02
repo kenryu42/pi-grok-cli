@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
-import { statSync } from 'node:fs';
-import { basename, relative, resolve } from 'node:path';
+import { promises as fs, statSync } from 'node:fs';
+import { basename, join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { Type } from '@earendil-works/pi-ai';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
@@ -56,6 +56,26 @@ function sortByModifiedNewest(files: string[]) {
     if (delta !== 0) return delta;
     return a.localeCompare(b);
   });
+}
+
+async function listFilesRecursive(searchPath: string, signal?: AbortSignal): Promise<string[]> {
+  if (signal?.aborted) throw new Error('The operation was aborted');
+  const stats = await fs.stat(searchPath);
+  if (stats.isFile()) return [searchPath];
+  if (!stats.isDirectory()) return [];
+
+  return (
+    await Promise.all(
+      (
+        await fs.readdir(searchPath, { withFileTypes: true })
+      ).map((entry) => {
+        const entryPath = join(searchPath, entry.name);
+        if (entry.isDirectory()) return listFilesRecursive(entryPath, signal);
+        if (entry.isFile()) return [entryPath];
+        return [];
+      }),
+    )
+  ).flat();
 }
 
 export function registerSearchTools(pi: ExtensionAPI) {
@@ -194,12 +214,7 @@ export function registerSearchTools(pi: ExtensionAPI) {
           const matchesFile = normalizedPattern.includes('/')
             ? (file: string) => matcher.test(normalizePath(relative(ctx.cwd, file)))
             : (file: string) => matcher.test(basename(file));
-          const result = await execFileAsync('find', [searchPath, '-type', 'f'], {
-            cwd: ctx.cwd,
-            maxBuffer: MAX_OUTPUT_BYTES,
-            signal,
-          });
-          files = result.stdout.trim().split('\n').filter(Boolean).filter(matchesFile);
+          files = (await listFilesRecursive(searchPath, signal)).filter(matchesFile);
         }
         files = sortByModifiedNewest(files);
 

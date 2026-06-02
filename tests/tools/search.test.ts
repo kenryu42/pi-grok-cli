@@ -51,6 +51,20 @@ async function withFindFallbackTools(
   }
 }
 
+async function withNoSearchBinaries(
+  run: (tools: ReturnType<typeof collectTools>) => Promise<void>,
+) {
+  const oldPath = process.env.PATH;
+  process.env.PATH = tempDir('pi-grok-cli-empty-bin-');
+  vi.resetModules();
+  try {
+    await run(collectTools((await import('../../src/tools/search.js')).registerSearchTools));
+  } finally {
+    process.env.PATH = oldPath;
+    vi.resetModules();
+  }
+}
+
 describe('search tools', () => {
   it('greps matching file contents with include filters', async () => {
     const cwd = setupProject();
@@ -175,6 +189,15 @@ describe('search tools', () => {
     const cwd = setupProject();
     await withFindFallbackTools(async (fallbackTools) => {
       const result = await executeTool(fallbackTools.get('Glob'), { pattern: '*.ts' }, cwd);
+
+      expectGlobResult(cwd, result);
+    });
+  });
+
+  it('globs files without ripgrep or Unix find on PATH', async () => {
+    const cwd = setupProject();
+    await withNoSearchBinaries(async (fallbackTools) => {
+      const result = await executeTool(fallbackTools.get('Glob'), { pattern: 'src/**/*.ts' }, cwd);
 
       expectGlobResult(cwd, result);
     });

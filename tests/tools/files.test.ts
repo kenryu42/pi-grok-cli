@@ -7,7 +7,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { registerFileTools } from '../../src/tools/files.js';
 import {
   collectTools,
@@ -59,6 +59,28 @@ describe('file tools', () => {
     expect(firstText(result)).toContain('.hidden');
     expect(firstText(result)).toContain('visible.txt');
     expect(result.details).toEqual({ path: realpathSync(cwd) });
+  });
+
+  it('lists directory contents when Unix ls is not on PATH', async () => {
+    const cwd = tempDir('pi-grok-cli-files-');
+    const oldPath = process.env.PATH;
+    process.env.PATH = tempDir('pi-grok-cli-empty-bin-');
+    vi.resetModules();
+    writeFileSync(join(cwd, 'visible.txt'), 'visible', 'utf-8');
+
+    try {
+      const result = await executeTool(
+        collectTools((await import('../../src/tools/files.js')).registerFileTools).get('LS'),
+        { path: '.' },
+        cwd,
+      );
+
+      expect(firstText(result)).toContain('visible.txt');
+      expect(result.details).toEqual({ path: realpathSync(cwd) });
+    } finally {
+      process.env.PATH = oldPath;
+      vi.resetModules();
+    }
   });
 
   it('reports filesystem errors for invalid file operations', async () => {

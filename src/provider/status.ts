@@ -35,10 +35,10 @@ export function registerStatusCommand(pi: Pick<ExtensionAPI, 'registerCommand'>)
 
         const lines = [
           '  Quota:',
-          '',
-          ...formatQuota('grok-build', getCachedRateLimit('grok-build')),
-          '',
-          ...formatQuota('grok-composer-2.5-fast', getCachedRateLimit('grok-composer-2.5-fast')),
+          ...grokModels.flatMap((model: Model<Api>) => [
+            '',
+            ...formatQuota(model.id, getCachedRateLimit(model.id)),
+          ]),
         ];
         ctx.ui.notify(lines.join('\n'), 'info');
       } catch (err) {

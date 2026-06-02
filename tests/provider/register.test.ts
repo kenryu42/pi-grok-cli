@@ -46,6 +46,7 @@ interface Renderable {
 }
 
 interface TestContext {
+  cwd?: string;
   modelRegistry: {
     getAll: () => { provider: string; id: string }[];
     getApiKeyForProvider?: (provider: string) => Promise<string | undefined>;
@@ -214,6 +215,26 @@ describe('Grok CLI status command', () => {
     expect(notify.mock.calls.at(-1)?.[0]).toContain('grok-build:\n    Cached:');
     expect(notify.mock.calls.at(-1)?.[0]).toContain('grok-composer-2.5-fast:\n    Cached:');
     expect(notify.mock.calls.at(-1)?.[0]).toContain('Requests: 179/180 remaining');
+  });
+
+  it('shows cached quotas for registered Grok models instead of hard-coded names', async () => {
+    delete process.env.GROK_CLI_OAUTH_TOKEN;
+    setupHome();
+    const extension = await setupExtension();
+    extension.providers
+      .get('grok-cli')
+      ?.streamSimple?.({ provider: 'grok-cli', id: 'custom' }, {}, {});
+    const notify = vi.fn();
+
+    await extension.commands.get('grok-cli-status')?.handler([], {
+      modelRegistry: {
+        getAll: () => [{ provider: 'grok-cli', id: 'custom' }],
+      },
+      ui: { notify },
+    });
+
+    expect(notify.mock.calls.at(-1)?.[0]).toContain('custom:\n    Cached:');
+    expect(notify.mock.calls.at(-1)?.[0]).not.toContain('grok-build:');
   });
 
   it('persists cached quotas to the global pi config directory', async () => {
@@ -400,6 +421,7 @@ describe('Grok CLI provider registration', () => {
         },
       },
       {
+        cwd: process.cwd(),
         model: { provider: 'grok-cli', id: 'grok-4.3' },
         modelRegistry: { getAll: () => [] },
         sessionManager: { getSessionId: () => 'session-123' },

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -30,6 +30,7 @@ describe('payload sanitization', () => {
       },
       'grok-4.3',
       'session-123',
+      process.cwd(),
     );
 
     expect(payload.instructions).toBe(
@@ -52,6 +53,8 @@ describe('payload sanitization', () => {
         response_format: { type: 'json_object' },
       },
       'grok-4.3',
+      undefined,
+      process.cwd(),
     );
 
     expect(payload.text).toEqual({ format: { type: 'text' } });
@@ -69,6 +72,7 @@ describe('payload sanitization', () => {
       },
       'grok-build',
       'new-session',
+      process.cwd(),
     );
 
     expect(payload.input).toBe('plain prompt');
@@ -106,6 +110,8 @@ describe('payload sanitization', () => {
         ],
       },
       'grok-composer-2.5-fast',
+      undefined,
+      process.cwd(),
     );
 
     expect(payload.input).toEqual([
@@ -163,6 +169,8 @@ describe('payload sanitization', () => {
           ],
         },
         'grok-4.3',
+        undefined,
+        dir,
       );
 
       expect(payload.input).toEqual([
@@ -194,7 +202,40 @@ describe('payload sanitization', () => {
           ],
         },
         'grok-4.3',
+        undefined,
+        process.cwd(),
       ),
     ).toThrow('Image file does not exist or is not a valid URL: missing.png');
+  });
+
+  it('rejects local image paths outside the workspace', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pi-grok-cli-test-'));
+    const workspace = join(dir, 'workspace');
+    const originalCwd = process.cwd();
+    writeFileSync(join(dir, 'secret.png'), Buffer.from('png image bytes'));
+    mkdirSync(workspace);
+
+    try {
+      process.chdir(workspace);
+
+      expect(() =>
+        sanitizePayload(
+          {
+            input: [
+              {
+                role: 'user',
+                content: [{ type: 'input_image', image_url: join('..', 'secret.png') }],
+              },
+            ],
+          },
+          'grok-4.3',
+          undefined,
+          process.cwd(),
+        ),
+      ).toThrow('Image path is outside the workspace');
+    } finally {
+      process.chdir(originalCwd);
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

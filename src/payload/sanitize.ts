@@ -19,8 +19,8 @@
  *   - Uses prompt_cache_key for session affinity
  */
 
-import { existsSync, readFileSync } from 'node:fs';
-import { extname, isAbsolute, resolve } from 'node:path';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { extname, isAbsolute, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { supportsReasoningEffort } from '../models/catalog.js';
 
@@ -73,25 +73,34 @@ function imageMimeTypeForPath(path: string): string {
   }
 }
 
-function resolveLocalImagePath(value: string): string | undefined {
+function ensurePathWithinWorkspace(cwd: string, filePath: string) {
+  const realCwd = realpathSync(cwd);
+  const realPath = realpathSync(filePath);
+  if (realPath !== realCwd && !realPath.startsWith(`${realCwd}${sep}`)) {
+    throw new Error('Image path is outside the workspace');
+  }
+  return realPath;
+}
+
+function resolveLocalImagePath(value: string, cwd: string): string | undefined {
   const cleaned = unescapeShellPath(value);
   if (!cleaned) return undefined;
 
   if (cleaned.startsWith('file://')) {
     try {
-      return fileURLToPath(cleaned);
+      const filePath = fileURLToPath(cleaned);
+      return existsSync(filePath) ? ensurePathWithinWorkspace(cwd, filePath) : undefined;
     } catch {
       return undefined;
     }
   }
 
-  const candidates = [cleaned];
-  if (!isAbsolute(cleaned)) candidates.push(resolve(process.cwd(), cleaned));
+  const candidate = isAbsolute(cleaned) ? cleaned : resolve(cwd, cleaned);
 
-  return candidates.find((candidate) => existsSync(candidate));
+  return existsSync(candidate) ? ensurePathWithinWorkspace(cwd, candidate) : undefined;
 }
 
-function normalizeImageInput(value: unknown): string | undefined {
+function normalizeImageInput(value: unknown, cwd: string): string | undefined {
   if (typeof value !== 'string' || !value.trim()) return undefined;
   const cleaned = stripShellQuotes(value);
 
@@ -99,7 +108,7 @@ function normalizeImageInput(value: unknown): string | undefined {
     return cleaned;
   }
 
-  const localPath = resolveLocalImagePath(cleaned);
+  const localPath = resolveLocalImagePath(cleaned, cwd);
   if (!localPath) {
     throw new Error(`Image file does not exist or is not a valid URL: ${cleaned}`);
   }
@@ -131,8 +140,8 @@ function getImageUrlAndDetail(obj: Record<string, unknown>): {
   return { imageUrl: obj.image_url, detail: obj.detail };
 }
 
-function normalizeImageParts(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(normalizeImageParts);
+function normalizeImageParts(value: unknown, cwd: string): unknown {
+  if (Array.isArray(value)) return value.map((item) => normalizeImageParts(item, cwd));
   if (!value || typeof value !== 'object') return value;
 
   const obj = { ...(value as Record<string, unknown>) };
@@ -154,14 +163,14 @@ function normalizeImageParts(value: unknown): unknown {
 
   if (obj.type === 'input_image') {
     const { imageUrl, detail } = getImageUrlAndDetail(obj);
-    const normalized = normalizeImageInput(imageUrl);
+    const normalized = normalizeImageInput(imageUrl, cwd);
     if (normalized) obj.image_url = normalized;
     if (typeof detail === 'string' && detail) obj.detail = detail;
     if (typeof obj.detail !== 'string' || !obj.detail) obj.detail = 'auto';
   }
 
-  if (Array.isArray(obj.content)) obj.content = normalizeImageParts(obj.content);
-  if (Array.isArray(obj.output)) obj.output = normalizeImageParts(obj.output);
+  if (Array.isArray(obj.content)) obj.content = normalizeImageParts(obj.content, cwd);
+  if (Array.isArray(obj.output)) obj.output = normalizeImageParts(obj.output, cwd);
   return obj;
 }
 
@@ -224,7 +233,8 @@ function rewriteFunctionCallOutput(input: Record<string, unknown>[]): Record<str
 export function sanitizePayload(
   params: Record<string, unknown>,
   modelId: string,
-  sessionId?: string,
+  sessionId: string | undefined,
+  cwd: string,
 ): Record<string, unknown> {
   const next = params;
 
@@ -263,7 +273,7 @@ export function sanitizePayload(
     }
 
     // Normalize image parts (resolve local paths, fix types)
-    input = normalizeImageParts(input) as Record<string, unknown>[];
+    input = normalizeImageParts(input, cwd) as Record<string, unknown>[];
 
     // Rewrite function_call_output with images
     input = rewriteFunctionCallOutput(input);

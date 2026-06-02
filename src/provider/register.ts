@@ -74,7 +74,7 @@ export default function registerGrokCli(pi: ExtensionAPI) {
 
     const modelId = ctx.model?.id ?? '';
     const sessionId = ctx.sessionManager?.getSessionId();
-    return sanitizePayload(event.payload as Record<string, unknown>, modelId, sessionId);
+    return sanitizePayload(event.payload as Record<string, unknown>, modelId, sessionId, ctx.cwd);
   });
 
   registerStatusCommand(pi);
