@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { statSync } from 'node:fs';
-import { relative, resolve } from 'node:path';
+import { basename, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { Type } from '@earendil-works/pi-ai';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
@@ -189,17 +189,17 @@ export function registerSearchTools(pi: ExtensionAPI) {
           );
           files = result.stdout.trim().split('\n').filter(Boolean);
         } else {
-          const matcher = globToRegExp(normalizePath(params.pattern));
+          const normalizedPattern = normalizePath(params.pattern);
+          const matcher = globToRegExp(normalizedPattern);
+          const matchesFile = normalizedPattern.includes('/')
+            ? (file: string) => matcher.test(normalizePath(relative(ctx.cwd, file)))
+            : (file: string) => matcher.test(basename(file));
           const result = await execFileAsync('find', [searchPath, '-type', 'f'], {
             cwd: ctx.cwd,
             maxBuffer: MAX_OUTPUT_BYTES,
             signal,
           });
-          files = result.stdout
-            .trim()
-            .split('\n')
-            .filter(Boolean)
-            .filter((file) => matcher.test(normalizePath(relative(ctx.cwd, file))));
+          files = result.stdout.trim().split('\n').filter(Boolean).filter(matchesFile);
         }
         files = sortByModifiedNewest(files);
 

@@ -13,8 +13,6 @@ import {
   tempDir,
 } from './toolTestHelpers.js';
 
-const originalPath = process.env.PATH;
-
 function setupProject() {
   const dir = tempDir('pi-grok-cli-search-');
   mkdirSync(join(dir, 'src'));
@@ -35,6 +33,22 @@ function expectGlobResult(cwd: string, result: ToolResult) {
   expect(firstText(result)).toContain(join(cwd, 'src', 'gamma.ts'));
   expect(firstText(result)).not.toContain('beta.md');
   expect(result.details).toEqual({ fileCount: 2 });
+}
+
+async function withFindFallbackTools(
+  run: (tools: ReturnType<typeof collectTools>) => Promise<void>,
+) {
+  const bin = tempDir('pi-grok-cli-search-bin-');
+  symlinkSync('/usr/bin/find', join(bin, 'find'));
+  const oldPath = process.env.PATH;
+  process.env.PATH = bin;
+  vi.resetModules();
+  try {
+    await run(collectTools((await import('../../src/tools/search.js')).registerSearchTools));
+  } finally {
+    process.env.PATH = oldPath;
+    vi.resetModules();
+  }
 }
 
 describe('search tools', () => {
@@ -107,7 +121,11 @@ describe('search tools', () => {
     );
 
     expect(firstText(result).startsWith('Grep error:')).toBe(true);
-    expect(result.details).toEqual({ matchCount: 0 });
+    expect(result.details).toEqual({
+      matchCount: 0,
+      failed: true,
+      error: expect.stringContaining('regex parse error'),
+    });
   });
 
   it('globs files under the requested path', async () => {
@@ -146,21 +164,20 @@ describe('search tools', () => {
 
   it('globs path-containing patterns through the find fallback', async () => {
     const cwd = setupProject();
-    const bin = tempDir('pi-grok-cli-search-bin-');
-    symlinkSync('/usr/bin/find', join(bin, 'find'));
-    process.env.PATH = bin;
-    vi.resetModules();
-    const fallbackTools = collectTools(
-      (await import('../../src/tools/search.js')).registerSearchTools,
-    );
-
-    try {
+    await withFindFallbackTools(async (fallbackTools) => {
       const result = await executeTool(fallbackTools.get('Glob'), { pattern: 'src/**/*.ts' }, cwd);
 
       expectGlobResult(cwd, result);
-    } finally {
-      process.env.PATH = originalPath;
-    }
+    });
+  });
+
+  it('globs basename-only patterns through the find fallback', async () => {
+    const cwd = setupProject();
+    await withFindFallbackTools(async (fallbackTools) => {
+      const result = await executeTool(fallbackTools.get('Glob'), { pattern: '*.ts' }, cwd);
+
+      expectGlobResult(cwd, result);
+    });
   });
 
   it('sorts glob results by modification time newest first', async () => {
