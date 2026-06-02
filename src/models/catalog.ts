@@ -106,23 +106,18 @@ const FALLBACK_MODELS: GrokCliModelConfig[] = [
   },
 ];
 
-// ─── Reasoning-effort allowlist ───────────────────────────────────────────────
-
-/**
- * Only these model prefixes support `reasoning.effort` in the Responses API.
- * Everything else gets the param stripped in the sanitizer.
- */
-const EFFORT_CAPABLE_PREFIXES = [
-  'grok-3-mini',
-  'grok-4.20-multi-agent',
-  'grok-4.3',
-  'grok-composer',
-];
+const EFFORT_CAPABLE_PREFIXES = ['grok-3-mini', 'grok-4.20-multi-agent', 'grok-4.3'];
 
 export function supportsReasoningEffort(modelId: string): boolean {
   const parts = modelId.split('/');
   const name = parts.at(-1) ?? modelId;
-  return EFFORT_CAPABLE_PREFIXES.some((p) => name.toLowerCase().startsWith(p));
+  const model = resolveModels().find((entry) => entry.id.toLowerCase() === name.toLowerCase());
+  if (!EFFORT_CAPABLE_PREFIXES.some((prefix) => name.toLowerCase().startsWith(prefix))) {
+    return false;
+  }
+  if (!model?.reasoning) return false;
+  if (!model.thinkingLevelMap) return true;
+  return Object.values(model.thinkingLevelMap).some((level) => level !== null && level !== 'none');
 }
 
 // ─── PI_GROK_CLI_MODELS env override ──────────────────────────────────────────

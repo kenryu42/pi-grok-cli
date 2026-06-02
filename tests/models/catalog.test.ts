@@ -10,7 +10,7 @@ afterEach(() => {
 describe('model catalog', () => {
   it('reports reasoning-effort support by normalized model name', () => {
     expect(supportsReasoningEffort('grok-4.3')).toBe(true);
-    expect(supportsReasoningEffort('grok-cli/GROK-COMPOSER-2.5-fast')).toBe(true);
+    expect(supportsReasoningEffort('grok-cli/GROK-COMPOSER-2.5-fast')).toBe(false);
     expect(supportsReasoningEffort('grok-4.20-0309-non-reasoning')).toBe(false);
   });
 
