@@ -60,13 +60,13 @@ export function registerSearchTools(pi: ExtensionAPI) {
       const searchPath = resolve(ctx.cwd, params.path ?? '.');
 
       try {
-        const rgArgs = ['-n', '--no-heading', '--color=never'];
+        const rgArgs = ['-n', '-H', '--no-heading', '--color=never'];
         if (params.include) rgArgs.push('--glob', params.include);
-        rgArgs.push(params.pattern, searchPath);
+        rgArgs.push('--', params.pattern, searchPath);
 
-        const grepArgs = ['-r', '-n', '--color=never'];
+        const grepArgs = ['-r', '-n', '-H', '--color=never'];
         if (params.include) grepArgs.push(`--include=${params.include}`);
-        grepArgs.push(params.pattern, searchPath);
+        grepArgs.push('--', params.pattern, searchPath);
 
         const stdout = await execWithRgFallback(rgArgs, grepArgs, {
           cwd: ctx.cwd,
@@ -176,6 +176,13 @@ export function registerSearchTools(pi: ExtensionAPI) {
           details: { fileCount: files.length },
         };
       } catch (error: unknown) {
+        const err = error as { code?: unknown; stderr?: string };
+        if (err.code === 1 && !err.stderr) {
+          return {
+            content: [{ type: 'text', text: 'No files found' }],
+            details: { fileCount: 0 },
+          };
+        }
         return toolError(error, 'Glob', { fileCount: 0 });
       }
     },

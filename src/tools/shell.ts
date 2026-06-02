@@ -4,8 +4,8 @@ import { promisify } from 'node:util';
 import { Type } from '@earendil-works/pi-ai';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import {
+  detailRecord,
   MAX_OUTPUT_CHARS,
-  numberDetail,
   renderResultText,
   renderRunning,
   text,
@@ -64,11 +64,12 @@ export function registerShellTool(pi: ExtensionAPI) {
         };
       } catch (error: unknown) {
         const err = error as {
-          code?: number;
+          code?: unknown;
           message?: string;
           stdout?: string;
           stderr?: string;
         };
+        const exitCode = typeof err.code === 'number' ? err.code : 1;
 
         let output = '';
         if (err.stdout) output += err.stdout;
@@ -86,7 +87,7 @@ export function registerShellTool(pi: ExtensionAPI) {
             },
           ],
           details: {
-            exitCode: err.code ?? 1,
+            exitCode,
             command: params.command,
           },
         };
@@ -101,12 +102,12 @@ export function registerShellTool(pi: ExtensionAPI) {
     renderResult(result, { expanded, isPartial }, theme) {
       const running = renderRunning(isPartial);
       if (running) return running;
+      const exitCode =
+        typeof detailRecord(result).exitCode === 'number' ? detailRecord(result).exitCode : 1;
       return renderResultText(
         result,
         expanded,
-        numberDetail(result, 'exitCode') === 0
-          ? theme.fg('muted', 'Exit 0')
-          : theme.fg('warning', `Exit ${numberDetail(result, 'exitCode')}`),
+        exitCode === 0 ? theme.fg('muted', 'Exit 0') : theme.fg('warning', `Exit ${exitCode}`),
       );
     },
   });

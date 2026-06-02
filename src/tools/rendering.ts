@@ -141,7 +141,7 @@ export function fileError<T extends FileDetails>(
 
 export function toolError<T>(error: unknown, toolName: string, emptyDetails: T): ToolResult<T> {
   const err = error as ToolError;
-  if (err.code === 1) {
+  if (toolName === 'Grep' && err.code === 1) {
     return {
       content: [{ type: 'text', text: 'No matches found' }],
       details: emptyDetails,

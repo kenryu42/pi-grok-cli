@@ -37,7 +37,7 @@ describe('payload sanitization', () => {
     expect(payload.input).toEqual([{ role: 'user', content: 'hello' }]);
     expect(payload.include).toEqual(['message.output_text']);
     expect(payload.prompt_cache_retention).toBeUndefined();
-    expect(payload.reasoning).toEqual({ effort: 'minimal' });
+    expect(payload.reasoning).toEqual({ effort: 'low' });
     expect(payload.text).toEqual({ format: { type: 'json_object' } });
     expect(payload.response_format).toBeUndefined();
     expect(payload.prompt_cache_key).toBe('session-123');

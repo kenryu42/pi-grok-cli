@@ -78,6 +78,12 @@ describe('tool rendering helpers', () => {
       content: [{ type: 'text', text: 'No matches found' }],
       details: { matchCount: 0 },
     });
+    expect(
+      toolError({ code: 1, message: 'find: missing: No such file' }, 'Glob', { fileCount: 0 }),
+    ).toEqual({
+      content: [{ type: 'text', text: 'Glob error: find: missing: No such file' }],
+      details: { fileCount: 0 },
+    });
     expect(toolError({}, 'Grep', { matchCount: 0 })).toEqual({
       content: [{ type: 'text', text: 'Grep error: Unknown error' }],
       details: { matchCount: 0 },

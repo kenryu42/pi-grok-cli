@@ -58,6 +58,32 @@ describe('search tools', () => {
     expectGrepResult(cwd, result);
   });
 
+  it('greps patterns that start with a dash', async () => {
+    const cwd = setupProject();
+    writeFileSync(join(cwd, 'src', 'dash.ts'), '-export const value = 1\n', 'utf-8');
+
+    const result = await executeTool(
+      collectTools(registerSearchTools).get('Grep'),
+      { pattern: '-export', path: 'src/dash.ts' },
+      cwd,
+    );
+
+    expect(firstText(result)).toBe(`${join(cwd, 'src', 'dash.ts')}:1:-export const value = 1`);
+    expect(result.details).toEqual({ matchCount: 1 });
+  });
+
+  it('includes file paths when grepping a single file', async () => {
+    const cwd = setupProject();
+    const result = await executeTool(
+      collectTools(registerSearchTools).get('Grep'),
+      { pattern: 'needle', path: 'src/alpha.ts' },
+      cwd,
+    );
+
+    expect(firstText(result)).toBe(`${join(cwd, 'src', 'alpha.ts')}:1:needle`);
+    expect(result.details).toEqual({ matchCount: 1 });
+  });
+
   it('reports no grep matches as an empty result', async () => {
     const cwd = setupProject();
     const result = await executeTool(
@@ -112,7 +138,7 @@ describe('search tools', () => {
       cwd,
     );
 
-    expect(firstText(result)).toBe('No matches found');
+    expect(firstText(result)).toBe('No files found');
     expect(result.details).toEqual({ fileCount: 0 });
   });
 

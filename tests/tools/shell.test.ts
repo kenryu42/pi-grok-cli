@@ -106,6 +106,12 @@ describe('shell tool', () => {
       }),
     ).toBe('Exit 0');
     expect(
+      renderToolResult(shell, {
+        content: [{ type: 'text', text: 'spawn failed' }],
+        details: { exitCode: 'ENOENT' },
+      }),
+    ).toBe('Exit 1');
+    expect(
       renderToolResult(
         shell,
         {

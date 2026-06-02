@@ -83,7 +83,9 @@ function applyEdits(content: string, edits: ReplacementEdit[]) {
       const count = result.content.split(edit.oldText).length - 1;
       return {
         content:
-          count === 0 ? result.content : result.content.replaceAll(edit.oldText, edit.newText),
+          count === 0
+            ? result.content
+            : result.content.replaceAll(edit.oldText, () => edit.newText),
         replacements: result.replacements + count,
       };
     },
@@ -383,6 +385,10 @@ export function registerFileTools(pi: ExtensionAPI) {
         }
 
         const content = readFileSync(filePath, 'utf-8');
+        if (params.old_str === '') {
+          return replacementResult('StrReplace error: old_str must not be empty', filePath);
+        }
+
         const count = content.split(params.old_str).length - 1;
 
         if (count === 0) {
@@ -392,7 +398,7 @@ export function registerFileTools(pi: ExtensionAPI) {
           );
         }
 
-        const newContent = content.replaceAll(params.old_str, params.new_str);
+        const newContent = content.replaceAll(params.old_str, () => params.new_str);
         writeFileSync(filePath, newContent, 'utf-8');
 
         return {
@@ -493,6 +499,9 @@ export function registerFileTools(pi: ExtensionAPI) {
             ],
             details: { path: filePath, replacements: 0 },
           };
+        }
+        if (params.edits.some((edit) => edit.oldText === '')) {
+          return replacementResult('Edit error: oldText must not be empty', filePath);
         }
 
         const result = applyEdits(readFileSync(filePath, 'utf-8'), params.edits);

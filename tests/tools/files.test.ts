@@ -163,6 +163,26 @@ describe('file tools', () => {
     expectStoryState(result, cwd, 2, 'green blue green');
   });
 
+  it('rejects empty replacement search strings without changing files', async () => {
+    const cwd = tempDir('pi-grok-cli-files-');
+    writeFileSync(join(cwd, 'story.txt'), 'red blue red', 'utf-8');
+
+    const result = await strReplace(cwd, '', 'green');
+
+    expect(firstText(result)).toBe('StrReplace error: old_str must not be empty');
+    expectStoryState(result, cwd, 0, 'red blue red');
+  });
+
+  it('treats replacement text as a literal string', async () => {
+    const cwd = tempDir('pi-grok-cli-files-');
+    writeFileSync(join(cwd, 'story.txt'), 'abc', 'utf-8');
+
+    const result = await strReplace(cwd, 'a', '$&');
+
+    expect(firstText(result)).toBe('Replaced 1 occurrence(s) in story.txt');
+    expectStoryState(result, cwd, 1, '$&bc');
+  });
+
   it('replaces string occurrences with Grok and Cursor argument variants', async () => {
     const oldStringCwd = tempDir('pi-grok-cli-files-');
     writeFileSync(join(oldStringCwd, 'story.txt'), 'red blue red', 'utf-8');
@@ -242,6 +262,34 @@ describe('file tools', () => {
 
     expect(firstText(stringifiedResult)).toBe('Applied 2 replacement(s) in story.txt');
     expectStoryState(stringifiedResult, stringifiedCwd, 2, 'green blue green');
+  });
+
+  it('edits files with literal replacement text', async () => {
+    const cwd = tempDir('pi-grok-cli-files-');
+    writeFileSync(join(cwd, 'story.txt'), 'abc', 'utf-8');
+
+    const result = await executePreparedTool(
+      collectTools(registerFileTools).get('Edit'),
+      { path: 'story.txt', oldText: 'a', newText: '$&' },
+      cwd,
+    );
+
+    expect(firstText(result)).toBe('Applied 1 replacement(s) in story.txt');
+    expectStoryState(result, cwd, 1, '$&bc');
+  });
+
+  it('rejects empty edit search strings without changing files', async () => {
+    const cwd = tempDir('pi-grok-cli-files-');
+    writeFileSync(join(cwd, 'story.txt'), 'red blue red', 'utf-8');
+
+    const result = await executePreparedTool(
+      collectTools(registerFileTools).get('Edit'),
+      { path: 'story.txt', oldText: '', newText: 'green' },
+      cwd,
+    );
+
+    expect(firstText(result)).toBe('Edit error: oldText must not be empty');
+    expectStoryState(result, cwd, 0, 'red blue red');
   });
 
   it('reports unsupported edit strategies without changing files', async () => {

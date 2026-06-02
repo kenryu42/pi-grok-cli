@@ -284,11 +284,9 @@ export function sanitizePayload(
   // ── Reasoning effort ──────────────────────────────────────────────────
   if (supportsReasoningEffort(modelId)) {
     const reasoning = next.reasoning as Record<string, unknown> | undefined;
-    if (reasoning && reasoning.effort === 'minimal') {
-      next.reasoning = { ...reasoning, effort: 'low' };
-    }
-    if (reasoning && reasoning.summary !== undefined) {
-      next.reasoning = { effort: reasoning.effort };
+    if (reasoning) {
+      const effort = reasoning.effort === 'minimal' ? 'low' : reasoning.effort;
+      next.reasoning = reasoning.summary !== undefined ? { effort } : { ...reasoning, effort };
     }
   } else {
     delete next.reasoning;
