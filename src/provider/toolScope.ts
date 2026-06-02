@@ -1,16 +1,5 @@
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
-
-export const GROK_TOOL_NAMES = [
-  'Grep',
-  'Glob',
-  'LS',
-  'Read',
-  'Write',
-  'StrReplace',
-  'Edit',
-  'Delete',
-  'Shell',
-];
+import { GROK_TOOL_NAMES } from '../tools/register.js';
 
 export function syncGrokTools(
   pi: Pick<ExtensionAPI, 'getActiveTools' | 'setActiveTools'>,

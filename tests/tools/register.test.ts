@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { describe, expect, it } from 'vitest';
-import { registerGrokTools } from '../../src/tools/register.js';
+import { GROK_TOOL_NAMES, registerGrokTools } from '../../src/tools/register.js';
 
 describe('Grok tool registration', () => {
   it('registers all Grok/Cursor-native tool shims with renderers', () => {
@@ -14,16 +14,6 @@ describe('Grok tool registration', () => {
       },
     } as unknown as ExtensionAPI);
 
-    expect(toolNames.sort()).toEqual([
-      'Delete',
-      'Edit',
-      'Glob',
-      'Grep',
-      'LS',
-      'Read',
-      'Shell',
-      'StrReplace',
-      'Write',
-    ]);
+    expect(toolNames.sort()).toEqual([...GROK_TOOL_NAMES].sort());
   });
 });
