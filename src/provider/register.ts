@@ -5,6 +5,11 @@ import { getBaseUrl, type XaiOAuthCredentials } from '../auth/oauth.js';
 import { type GrokCliModelConfig, resolveModels } from '../models/catalog.js';
 import { sanitizePayload } from '../payload/sanitize.js';
 import { registerGrokTools } from '../tools/register.js';
+import {
+  bindLivePiWebAccess,
+  ensureWebSearchDelegate,
+  isPiWebAccessInstalled,
+} from '../tools/webSearchDelegate.js';
 import { loadQuotaCache } from './quota.js';
 import { registerStatusCommand } from './status.js';
 import { streamGrokCli } from './stream.js';
@@ -69,6 +74,20 @@ export default function registerGrokCli(pi: ExtensionAPI) {
 
   registerGrokTools(pi);
 
+  pi.on('session_start', async (_event, ctx) => {
+    if (process.env.GROK_CLI_OAUTH_TOKEN) {
+      ctx.ui.notify(
+        '[pi-grok-cli] Using GROK_CLI_OAUTH_TOKEN bypass — no auto-refresh, no model discovery',
+        'warning',
+      );
+    }
+
+    if (!isPiWebAccessInstalled()) return;
+
+    bindLivePiWebAccess(pi);
+    await ensureWebSearchDelegate(pi);
+  });
+
   pi.on('before_provider_request', (event, ctx) => {
     if (ctx.model?.provider !== 'grok-cli') return;
 
@@ -78,13 +97,4 @@ export default function registerGrokCli(pi: ExtensionAPI) {
   });
 
   registerStatusCommand(pi);
-
-  if (process.env.GROK_CLI_OAUTH_TOKEN) {
-    pi.on('session_start', async (_event, ctx) => {
-      ctx.ui.notify(
-        '[pi-grok-cli] Using GROK_CLI_OAUTH_TOKEN bypass — no auto-refresh, no model discovery',
-        'warning',
-      );
-    });
-  }
 }

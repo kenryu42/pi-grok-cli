@@ -52,7 +52,13 @@
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",
-    "@earendil-works/pi-tui": "*"
+    "@earendil-works/pi-tui": "*",
+    "pi-web-access": "*"
+  },
+  "peerDependenciesMeta": {
+    "pi-web-access": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.16",
