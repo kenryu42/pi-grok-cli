@@ -102,6 +102,19 @@ describe('shell tool', () => {
     expect(firstText(result).endsWith('[Output truncated at 50KB]')).toBe(true);
   });
 
+  it('kills commands that exceed the timeout', async () => {
+    const cwd = tempDir('pi-grok-cli-shell-');
+    const result = await executeTool(
+      collectTools(registerShellTool).get('Shell'),
+      { command: 'sleep 10', timeout: 100 },
+      cwd,
+    );
+
+    expect(firstText(result)).toContain('Shell error');
+    expect(result.details).toMatchObject({ command: 'sleep 10' });
+    expect(result.details.exitCode).toBeDefined();
+  });
+
   it('renders shell calls and result states', () => {
     const shell = collectTools(registerShellTool).get('Shell');
 

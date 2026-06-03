@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import * as delegateModule from '../../src/tools/webSearchDelegate.js';
 import {
+  bindLivePiWebAccess,
   clearWebSearchDelegateForTests,
+  ensureWebSearchDelegate,
   getWebSearchDelegate,
+  getWebSearchLoadError,
   isPiWebAccessInstalled,
   setWebSearchDelegateForTests,
 } from '../../src/tools/webSearchDelegate.js';
@@ -31,5 +35,34 @@ describe('webSearchDelegate', () => {
   it('isPiWebAccessInstalled reflects agent install path', () => {
     const installed = isPiWebAccessInstalled();
     expect(typeof installed).toBe('boolean');
+  });
+
+  it('bindLivePiWebAccess resets delegate state', () => {
+    setWebSearchDelegateForTests(async () => ({
+      content: [{ type: 'text', text: 'ok' }],
+      details: {},
+    }));
+    expect(getWebSearchDelegate()).toBeTypeOf('function');
+
+    bindLivePiWebAccess({} as Parameters<typeof bindLivePiWebAccess>[0]);
+
+    expect(getWebSearchDelegate()).toBeUndefined();
+  });
+
+  it('ensureWebSearchDelegate returns undefined when pi-web-access is not installed', async () => {
+    vi.spyOn(delegateModule, 'isPiWebAccessInstalled').mockReturnValue(false);
+
+    const result = await ensureWebSearchDelegate();
+    expect(result).toBeUndefined();
+    expect(getWebSearchDelegate()).toBeUndefined();
+
+    vi.restoreAllMocks();
+  });
+
+  it('getWebSearchLoadError returns last error string', () => {
+    clearWebSearchDelegateForTests();
+    // After clear, no error is set; the function should return undefined
+    const error = getWebSearchLoadError();
+    expect(error).toBeUndefined();
   });
 });

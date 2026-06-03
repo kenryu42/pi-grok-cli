@@ -190,6 +190,161 @@ describe('payload sanitization', () => {
     }
   });
 
+  it('resolves .jpg and .jpeg image paths to data URLs', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pi-grok-cli-test-'));
+    const jpgPath = join(dir, 'photo.jpg');
+    const jpegPath = join(dir, 'photo.jpeg');
+    writeFileSync(jpgPath, Buffer.from('jpg bytes'));
+    writeFileSync(jpegPath, Buffer.from('jpeg bytes'));
+
+    try {
+      const jpgResult = sanitizePayload(
+        {
+          input: [
+            {
+              role: 'user',
+              content: [{ type: 'input_image', image_url: jpgPath }],
+            },
+          ],
+        },
+        'grok-4.3',
+        undefined,
+        dir,
+      );
+      expect((jpgResult.input as Array<Record<string, unknown>>)[0].content).toEqual([
+        {
+          type: 'input_image',
+          image_url: `data:image/jpeg;base64,${Buffer.from('jpg bytes').toString('base64')}`,
+          detail: 'auto',
+        },
+      ]);
+
+      const jpegResult = sanitizePayload(
+        {
+          input: [
+            {
+              role: 'user',
+              content: [{ type: 'input_image', image_url: jpegPath }],
+            },
+          ],
+        },
+        'grok-4.3',
+        undefined,
+        dir,
+      );
+      expect((jpegResult.input as Array<Record<string, unknown>>)[0].content).toEqual([
+        {
+          type: 'input_image',
+          image_url: `data:image/jpeg;base64,${Buffer.from('jpeg bytes').toString('base64')}`,
+          detail: 'auto',
+        },
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects unsupported local image extensions', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pi-grok-cli-test-'));
+    const gifPath = join(dir, 'animation.gif');
+    writeFileSync(gifPath, Buffer.from('gif bytes'));
+
+    try {
+      expect(() =>
+        sanitizePayload(
+          {
+            input: [
+              {
+                role: 'user',
+                content: [{ type: 'input_image', image_url: gifPath }],
+              },
+            ],
+          },
+          'grok-4.3',
+          undefined,
+          dir,
+        ),
+      ).toThrow(/xAI image understanding supports local .jpg, .jpeg, and .png files only/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('resolves file:// protocol image paths', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pi-grok-cli-test-'));
+    const imagePath = join(dir, 'file-ref.png');
+    writeFileSync(imagePath, Buffer.from('file ref png'));
+
+    try {
+      const payload = sanitizePayload(
+        {
+          input: [
+            {
+              role: 'user',
+              content: [{ type: 'input_image', image_url: `file://${imagePath}` }],
+            },
+          ],
+        },
+        'grok-4.3',
+        undefined,
+        dir,
+      );
+
+      expect((payload.input as Array<Record<string, unknown>>)[0].content).toEqual([
+        {
+          type: 'input_image',
+          image_url: `data:image/png;base64,${Buffer.from('file ref png').toString('base64')}`,
+          detail: 'auto',
+        },
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects invalid file:// URLs gracefully', () => {
+    expect(() =>
+      sanitizePayload(
+        {
+          input: [
+            {
+              role: 'user',
+              content: [{ type: 'input_image', image_url: 'file://invalid-url' }],
+            },
+          ],
+        },
+        'grok-4.3',
+        undefined,
+        process.cwd(),
+      ),
+    ).toThrow('Image file does not exist or is not a valid URL: file://invalid-url');
+  });
+
+  it('rewrites function_call_output with plain string parts', () => {
+    const payload = sanitizePayload(
+      {
+        input: [
+          {
+            type: 'function_call_output',
+            call_id: 'call_s',
+            output: ['plain string output', { type: 'input_text', text: 'object output' }],
+          },
+        ],
+      },
+      'grok-4.3',
+      undefined,
+      process.cwd(),
+    );
+
+    expect(payload.input).toEqual([
+      {
+        type: 'function_call_output',
+        call_id: 'call_s',
+        output: 'plain string output\nobject output',
+      },
+    ]);
+  });
+
   it('rejects missing or unsupported local images', () => {
     expect(() =>
       sanitizePayload(

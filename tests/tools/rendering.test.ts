@@ -4,6 +4,7 @@ import {
   detailRecord,
   fileError,
   fileNotFound,
+  globToRegExp,
   MAX_LINES,
   MAX_OUTPUT_CHARS,
   numberDetail,
@@ -63,6 +64,15 @@ describe('tool rendering helpers', () => {
     expect(stringDetail(result, 'count')).toBe('');
     expect(booleanDetail(result, 'deleted')).toBe(true);
     expect(booleanDetail(result, 'invalid')).toBe(false);
+  });
+
+  it('converts glob patterns to regular expressions', () => {
+    expect(globToRegExp('a**b').test('aXYb')).toBe(true);
+    expect(globToRegExp('a**b').test('a/b')).toBe(true);
+    expect(globToRegExp('a?b').test('aXb')).toBe(true);
+    expect(globToRegExp('a?b').test('a/b')).toBe(false);
+    expect(globToRegExp('a**/b').test('a/x/y/b')).toBe(true);
+    expect(globToRegExp('a**/b').test('a/x/y/z/b')).toBe(true);
   });
 
   it('formats file and command errors with stable empty details', () => {
