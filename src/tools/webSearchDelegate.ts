@@ -1,11 +1,15 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { AgentToolResult, AgentToolUpdateCallback } from '@earendil-works/pi-agent-core';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
-import { createEventBus, getAgentDir } from '@earendil-works/pi-coding-agent';
+import {
+  createEventBus,
+  createExtensionRuntime,
+  getAgentDir,
+} from '@earendil-works/pi-coding-agent';
 import { createJiti } from 'jiti/static';
 
 export const PI_WEB_SEARCH_TOOL = 'web_search';
@@ -27,23 +31,60 @@ export function getWebSearchLoadError() {
   return lastLoadError;
 }
 
-function resolvePiCodingAgentRoot() {
-  const mainEntry = fileURLToPath(import.meta.resolve('@earendil-works/pi-coding-agent'));
-  return join(dirname(mainEntry), '..');
+function resolvePiCodingAgentRoot(dir: string): string {
+  const packageJson = join(dir, 'package.json');
+  if (
+    existsSync(packageJson) &&
+    JSON.parse(readFileSync(packageJson, 'utf8')).name === '@earendil-works/pi-coding-agent'
+  ) {
+    return dir;
+  }
+
+  const parent = dirname(dir);
+  if (parent === dir) {
+    throw new Error(`Could not find @earendil-works/pi-coding-agent package root from ${dir}`);
+  }
+  return resolvePiCodingAgentRoot(parent);
+}
+
+export function resolvePiExtensionLoaderPaths(mainEntry: string) {
+  const root = resolvePiCodingAgentRoot(dirname(mainEntry));
+  return [
+    join(root, 'dist/core/extensions/index.js'),
+    join(root, 'dist/core/extensions/loader.js'),
+  ];
 }
 
 async function importPiExtensionLoader() {
-  return import(join(resolvePiCodingAgentRoot(), 'dist/core/extensions/loader.js')) as Promise<{
-    createExtensionRuntime: () => Record<string, unknown>;
-    loadExtensionFromFactory: (
-      factory: (api: ExtensionAPI) => void | Promise<void>,
-      cwd: string,
-      eventBus: ReturnType<typeof createEventBus>,
-      runtime: Record<string, unknown>,
-      extensionPath?: string,
-    ) => Promise<{ tools: Map<string, { definition: { execute: WebSearchExecute } }> }>;
-  }>;
+  const publicModule = (await import('@earendil-works/pi-coding-agent')) as Record<string, unknown>;
+  if (
+    'loadExtensionFromFactory' in publicModule &&
+    typeof publicModule.loadExtensionFromFactory === 'function'
+  ) {
+    return publicModule.loadExtensionFromFactory as LoadExtensionFromFactory;
+  }
+
+  const mainEntry = fileURLToPath(import.meta.resolve('@earendil-works/pi-coding-agent'));
+  const paths = resolvePiExtensionLoaderPaths(mainEntry);
+  const loaderPath = paths.find((path) => existsSync(path));
+  if (!loaderPath) {
+    throw new Error(`Could not find pi extension loader. Attempted: ${paths.join(', ')}`);
+  }
+
+  const loader = (await import(pathToFileURL(loaderPath).href)) as Record<string, unknown>;
+  if (typeof loader.loadExtensionFromFactory !== 'function') {
+    throw new Error(`Pi extension loader does not export loadExtensionFromFactory: ${loaderPath}`);
+  }
+  return loader.loadExtensionFromFactory as LoadExtensionFromFactory;
 }
+
+type LoadExtensionFromFactory = (
+  factory: (api: ExtensionAPI) => void | Promise<void>,
+  cwd: string,
+  eventBus: ReturnType<typeof createEventBus>,
+  runtime: Record<string, unknown>,
+  extensionPath?: string,
+) => Promise<{ tools: Map<string, { definition: { execute: WebSearchExecute } }> }>;
 
 export function isPiWebAccessInstalled() {
   return resolvePiWebAccessEntry() !== undefined;
@@ -142,16 +183,16 @@ async function captureWebSearchFromLivePi(pi: ExtensionAPI) {
   const entry = resolvePiWebAccessEntry();
   if (!entry) return;
 
-  const { createExtensionRuntime, loadExtensionFromFactory } = await importPiExtensionLoader();
+  const loadExtensionFromFactory = await importPiExtensionLoader();
   const runtime = createExtensionRuntime();
-  wireRuntimeToLivePi(runtime, pi);
+  wireRuntimeToLivePi(runtime as unknown as Record<string, unknown>, pi);
 
   const factory = await importPiWebAccessFactory(entry);
   const extension = await loadExtensionFromFactory(
     factory,
     process.cwd(),
     createEventBus(),
-    runtime,
+    runtime as unknown as Record<string, unknown>,
     entry,
   );
 
@@ -181,6 +222,8 @@ export async function ensureWebSearchDelegate(pi?: ExtensionAPI) {
     } catch (err) {
       lastLoadError = err instanceof Error ? err.message : String(err);
       webSearchExecute = undefined;
+    } finally {
+      loadPromise = undefined;
     }
   })();
 

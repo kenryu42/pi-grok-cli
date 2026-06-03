@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as delegateModule from '../../src/tools/webSearchDelegate.js';
 import {
@@ -7,6 +10,7 @@ import {
   getWebSearchDelegate,
   getWebSearchLoadError,
   isPiWebAccessInstalled,
+  resolvePiExtensionLoaderPaths,
   setWebSearchDelegateForTests,
 } from '../../src/tools/webSearchDelegate.js';
 
@@ -64,5 +68,21 @@ describe('webSearchDelegate', () => {
     // After clear, no error is set; the function should return undefined
     const error = getWebSearchLoadError();
     expect(error).toBeUndefined();
+  });
+
+  it('resolves extension loader paths from a nested package main entry', () => {
+    const packageRoot = join(mkdtempSync(join(tmpdir(), 'pi-grok-cli-')), 'pi-coding-agent');
+    const mainEntry = join(packageRoot, 'dist', 'esm', 'index.js');
+    mkdirSync(join(packageRoot, 'dist', 'core', 'extensions'), { recursive: true });
+    mkdirSync(join(packageRoot, 'dist', 'esm'), { recursive: true });
+    writeFileSync(
+      join(packageRoot, 'package.json'),
+      JSON.stringify({ name: '@earendil-works/pi-coding-agent' }),
+    );
+
+    expect(resolvePiExtensionLoaderPaths(mainEntry)).toEqual([
+      join(packageRoot, 'dist', 'core', 'extensions', 'index.js'),
+      join(packageRoot, 'dist', 'core', 'extensions', 'loader.js'),
+    ]);
   });
 });
