@@ -1,0 +1,262 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { homedir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import type { AgentToolResult, AgentToolUpdateCallback } from '@earendil-works/pi-agent-core';
+import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
+import {
+  createEventBus,
+  createExtensionRuntime,
+  getAgentDir,
+} from '@earendil-works/pi-coding-agent';
+import { createJiti } from 'jiti/static';
+
+export const PI_WEB_SEARCH_TOOL = 'web_search';
+
+export type WebSearchExecute = (
+  toolCallId: string,
+  params: Record<string, unknown>,
+  signal: AbortSignal | undefined,
+  onUpdate: AgentToolUpdateCallback | undefined,
+  ctx: import('@earendil-works/pi-coding-agent').ExtensionContext,
+) => Promise<AgentToolResult<unknown>>;
+
+let webSearchExecute: WebSearchExecute | undefined;
+let loadPromise: Promise<void> | undefined;
+let lastLoadError: string | undefined;
+let boundLivePi: ExtensionAPI | undefined;
+let bindGeneration = 0;
+
+export function getWebSearchLoadError() {
+  return lastLoadError;
+}
+
+function isCurrentBinding(pi: ExtensionAPI, generation: number) {
+  return bindGeneration === generation && (!boundLivePi || boundLivePi === pi);
+}
+
+function resolvePiCodingAgentRoot(dir: string): string {
+  const packageJson = join(dir, 'package.json');
+  if (
+    existsSync(packageJson) &&
+    JSON.parse(readFileSync(packageJson, 'utf8')).name === '@earendil-works/pi-coding-agent'
+  ) {
+    return dir;
+  }
+
+  const parent = dirname(dir);
+  if (parent === dir) {
+    throw new Error(`Could not find @earendil-works/pi-coding-agent package root from ${dir}`);
+  }
+  return resolvePiCodingAgentRoot(parent);
+}
+
+export function resolvePiExtensionLoaderPaths(mainEntry: string) {
+  const root = resolvePiCodingAgentRoot(dirname(mainEntry));
+  return [
+    join(root, 'dist/core/extensions/index.js'),
+    join(root, 'dist/core/extensions/loader.js'),
+  ];
+}
+
+async function importPiExtensionLoader() {
+  const publicModule = (await import('@earendil-works/pi-coding-agent')) as Record<string, unknown>;
+  if (
+    'loadExtensionFromFactory' in publicModule &&
+    typeof publicModule.loadExtensionFromFactory === 'function'
+  ) {
+    return publicModule.loadExtensionFromFactory as LoadExtensionFromFactory;
+  }
+
+  const mainEntry = fileURLToPath(import.meta.resolve('@earendil-works/pi-coding-agent'));
+  const paths = resolvePiExtensionLoaderPaths(mainEntry);
+  const loaderPath = paths.find((path) => existsSync(path));
+  if (!loaderPath) {
+    throw new Error(`Could not find pi extension loader. Attempted: ${paths.join(', ')}`);
+  }
+
+  const loader = (await import(pathToFileURL(loaderPath).href)) as Record<string, unknown>;
+  if (typeof loader.loadExtensionFromFactory !== 'function') {
+    throw new Error(`Pi extension loader does not export loadExtensionFromFactory: ${loaderPath}`);
+  }
+  return loader.loadExtensionFromFactory as LoadExtensionFromFactory;
+}
+
+type LoadExtensionFromFactory = (
+  factory: (api: ExtensionAPI) => void | Promise<void>,
+  cwd: string,
+  eventBus: ReturnType<typeof createEventBus>,
+  runtime: Record<string, unknown>,
+  extensionPath?: string,
+) => Promise<{ tools: Map<string, { definition: { execute: WebSearchExecute } }> }>;
+
+export function isPiWebAccessInstalled() {
+  return resolvePiWebAccessEntry() !== undefined;
+}
+
+function resolvePiWebAccessEntry(): string | undefined {
+  const fileNames = ['index.ts', 'index.js'];
+  const dirs = [
+    join(getAgentDir(), 'npm', 'node_modules', 'pi-web-access'),
+    join(homedir(), '.pi', 'agent', 'npm', 'node_modules', 'pi-web-access'),
+  ];
+
+  for (const dir of dirs) {
+    for (const file of fileNames) {
+      const entry = join(dir, file);
+      if (existsSync(entry)) return entry;
+    }
+  }
+
+  return undefined;
+}
+
+function createJitiAliases() {
+  const require = createRequire(import.meta.url);
+  const codingAgent = fileURLToPath(import.meta.resolve('@earendil-works/pi-coding-agent'));
+  const agentCore = fileURLToPath(import.meta.resolve('@earendil-works/pi-agent-core'));
+  const tui = fileURLToPath(import.meta.resolve('@earendil-works/pi-tui'));
+  const ai = fileURLToPath(import.meta.resolve('@earendil-works/pi-ai'));
+  const typeboxEntry = require.resolve('typebox');
+  const typeboxCompileEntry = require.resolve('typebox/compile');
+  const typeboxValueEntry = require.resolve('typebox/value');
+
+  return {
+    '@earendil-works/pi-coding-agent': codingAgent,
+    '@earendil-works/pi-agent-core': agentCore,
+    '@earendil-works/pi-tui': tui,
+    '@earendil-works/pi-ai': ai,
+    '@mariozechner/pi-coding-agent': codingAgent,
+    '@mariozechner/pi-agent-core': agentCore,
+    '@mariozechner/pi-tui': tui,
+    '@mariozechner/pi-ai': ai,
+    typebox: typeboxEntry,
+    'typebox/compile': typeboxCompileEntry,
+    'typebox/value': typeboxValueEntry,
+    '@sinclair/typebox': typeboxEntry,
+    '@sinclair/typebox/compile': typeboxCompileEntry,
+    '@sinclair/typebox/value': typeboxValueEntry,
+  };
+}
+
+async function importPiWebAccessFactory(entry: string) {
+  const jiti = createJiti(import.meta.url, { alias: createJitiAliases(), moduleCache: false });
+  const module = await jiti.import(entry, { default: true });
+  if (typeof module !== 'function') {
+    throw new Error('pi-web-access does not export a default factory function');
+  }
+  return module as (api: ExtensionAPI) => void | Promise<void>;
+}
+
+function wireRuntimeToLivePi(runtime: Record<string, unknown>, pi: ExtensionAPI) {
+  runtime.assertActive = () => {};
+  runtime.refreshTools = () => {};
+  runtime.appendEntry = (customType: string, data: unknown) => pi.appendEntry(customType, data);
+  runtime.sendMessage = (message: unknown, options?: unknown) =>
+    pi.sendMessage(
+      message as Parameters<ExtensionAPI['sendMessage']>[0],
+      options as Parameters<ExtensionAPI['sendMessage']>[1],
+    );
+  runtime.sendUserMessage = (content: unknown, options?: unknown) =>
+    pi.sendUserMessage(
+      content as Parameters<ExtensionAPI['sendUserMessage']>[0],
+      options as Parameters<ExtensionAPI['sendUserMessage']>[1],
+    );
+  runtime.setSessionName = (name: string) => pi.setSessionName(name);
+  runtime.getSessionName = () => pi.getSessionName();
+  runtime.setLabel = (entryId: string, label: string) => pi.setLabel(entryId, label);
+  runtime.getActiveTools = () => pi.getActiveTools();
+  runtime.getAllTools = () => pi.getAllTools();
+  runtime.setActiveTools = (names: string[]) => pi.setActiveTools(names);
+  runtime.getCommands = () => pi.getCommands();
+  runtime.setModel = (model: unknown) =>
+    pi.setModel(model as Parameters<ExtensionAPI['setModel']>[0]);
+  runtime.getThinkingLevel = () => pi.getThinkingLevel();
+  runtime.setThinkingLevel = (level: unknown) =>
+    pi.setThinkingLevel(level as Parameters<ExtensionAPI['setThinkingLevel']>[0]);
+}
+
+/** Remember the live session ExtensionAPI (bound after session_start). */
+export function bindLivePiWebAccess(pi: ExtensionAPI) {
+  bindGeneration += 1;
+  boundLivePi = pi;
+  webSearchExecute = undefined;
+  loadPromise = undefined;
+}
+
+async function captureWebSearchFromLivePi(pi: ExtensionAPI, generation: number) {
+  const entry = resolvePiWebAccessEntry();
+  if (!entry) return;
+
+  const loadExtensionFromFactory = await importPiExtensionLoader();
+  const runtime = createExtensionRuntime();
+  wireRuntimeToLivePi(runtime as unknown as Record<string, unknown>, pi);
+
+  const factory = await importPiWebAccessFactory(entry);
+  const extension = await loadExtensionFromFactory(
+    factory,
+    process.cwd(),
+    createEventBus(),
+    runtime as unknown as Record<string, unknown>,
+    entry,
+  );
+
+  const registered = extension.tools.get(PI_WEB_SEARCH_TOOL);
+  if (!registered) {
+    if (!isCurrentBinding(pi, generation)) return;
+    lastLoadError = 'pi-web-access loaded but did not register web_search. Update pi-web-access.';
+    return;
+  }
+
+  if (!isCurrentBinding(pi, generation)) return;
+  webSearchExecute = registered.definition.execute.bind(registered.definition) as WebSearchExecute;
+  lastLoadError = undefined;
+}
+
+export async function ensureWebSearchDelegate(
+  pi?: ExtensionAPI,
+  isInstalled: () => boolean = isPiWebAccessInstalled,
+) {
+  if (!isInstalled()) return;
+
+  const livePi = pi ?? boundLivePi;
+  if (!livePi) return;
+
+  const generation = bindGeneration;
+  if (!isCurrentBinding(livePi, generation)) return;
+  if (webSearchExecute) return;
+  if (loadPromise) return loadPromise;
+
+  loadPromise = (async () => {
+    if (isCurrentBinding(livePi, generation)) lastLoadError = undefined;
+    try {
+      await captureWebSearchFromLivePi(livePi, generation);
+    } catch (err) {
+      if (!isCurrentBinding(livePi, generation)) return;
+      lastLoadError = err instanceof Error ? err.message : String(err);
+      webSearchExecute = undefined;
+    } finally {
+      if (isCurrentBinding(livePi, generation)) loadPromise = undefined;
+    }
+  })();
+
+  return loadPromise;
+}
+
+export function getWebSearchDelegate() {
+  return webSearchExecute;
+}
+
+export function clearWebSearchDelegateForTests() {
+  bindGeneration += 1;
+  webSearchExecute = undefined;
+  loadPromise = undefined;
+  lastLoadError = undefined;
+  boundLivePi = undefined;
+}
+
+export function setWebSearchDelegateForTests(execute: WebSearchExecute) {
+  webSearchExecute = execute;
+  lastLoadError = undefined;
+}

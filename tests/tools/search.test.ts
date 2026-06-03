@@ -216,6 +216,19 @@ describe('search tools', () => {
     });
   });
 
+  it('greps with path-containing include patterns through the fallback', async () => {
+    const cwd = setupProject();
+    await withNoSearchBinaries(async (fallbackTools) => {
+      const result = await executeTool(
+        fallbackTools.get('Grep'),
+        { pattern: 'needle', path: 'src', include: 'src/**/*.ts' },
+        cwd,
+      );
+
+      expectGrepResult(cwd, result);
+    });
+  });
+
   it('sorts glob results by modification time newest first', async () => {
     const cwd = setupProject();
     const oldTime = new Date('2024-01-01T00:00:00.000Z');
@@ -244,6 +257,17 @@ describe('search tools', () => {
       join(cwd, 'src', 'alpha.ts'),
       deleted,
     ]);
+  });
+
+  it('breaks modification time ties with alphabetical ordering', () => {
+    const cwd = setupProject();
+    const sameTime = new Date('2024-06-01T00:00:00.000Z');
+    utimesSync(join(cwd, 'src', 'gamma.ts'), sameTime, sameTime);
+    utimesSync(join(cwd, 'src', 'alpha.ts'), sameTime, sameTime);
+
+    expect(
+      sortByModifiedNewest([join(cwd, 'src', 'gamma.ts'), join(cwd, 'src', 'alpha.ts')]),
+    ).toEqual([join(cwd, 'src', 'alpha.ts'), join(cwd, 'src', 'gamma.ts')]);
   });
 
   it('renders grep calls and result states', () => {

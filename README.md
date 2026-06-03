@@ -21,7 +21,10 @@ Grok CLI models are trained to use Cursor-style coding tools. This extension inc
 
 - File tools: `Read`, `Write`, `StrReplace`, `Edit`, `Delete`, and `LS`
 - Search tools: `Grep` and `Glob`
+- Web search: `WebSearch` only when [pi-web-access](https://www.npmjs.com/package/pi-web-access) is installed (`pi install npm:pi-web-access`); it delegates to that extension’s `web_search`
 - Terminal tool: `Shell`
+
+When the active model is **grok-cli** and pi-web-access is installed, `web_search` is removed from the active tool set and blocked if invoked; use `WebSearch` instead. If pi-web-access is not installed, `WebSearch` is not registered and nothing changes for web search. Other providers keep using `web_search` from pi-web-access when that extension is installed.
 
 The shims also normalize common Cursor/Grok argument shapes, such as `contents` for writes, `glob_pattern` for file search, `glob_filter` for grep filters, and `old_string`/`new_string` or `oldText`/`newText` for exact replacements. This keeps agentic coding workflows moving instead of failing on tool schema mismatches.
 

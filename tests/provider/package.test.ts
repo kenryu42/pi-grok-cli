@@ -49,6 +49,8 @@ describe('repository layout', () => {
       'src/tools/rendering.ts',
       'src/tools/search.ts',
       'src/tools/shell.ts',
+      'src/tools/webSearch.ts',
+      'src/tools/webSearchDelegate.ts',
     ]);
   });
 

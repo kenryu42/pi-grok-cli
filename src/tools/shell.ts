@@ -109,6 +109,7 @@ export function registerShellTool(pi: ExtensionAPI) {
         const err = error as {
           code?: unknown;
           message?: string;
+          signal?: unknown;
           stdout?: string;
           stderr?: string;
         };
@@ -132,6 +133,7 @@ export function registerShellTool(pi: ExtensionAPI) {
           details: {
             exitCode,
             command: params.command,
+            ...(typeof err.signal === 'string' ? { signal: err.signal } : {}),
           },
         };
       }
