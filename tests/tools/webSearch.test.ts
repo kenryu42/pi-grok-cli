@@ -47,6 +47,31 @@ describe('WebSearch tool', () => {
     expect(result.details).toEqual({ delegated: true });
   });
 
+  it('normalizes delegated queries', async () => {
+    setWebSearchDelegateForTests(async (_id, params) => ({
+      content: [{ type: 'text', text: JSON.stringify(params) }],
+      details: {},
+    }));
+
+    const tools = collectTools(registerWebSearchTool);
+    const result = await executeTool(
+      tools.get('WebSearch'),
+      {
+        query: '   ',
+        queries: [' first query ', ' ', 'second query'],
+        numResults: 3,
+      },
+      '/tmp',
+    );
+
+    expect(firstText(result)).toBe(
+      JSON.stringify({
+        queries: ['first query', 'second query'],
+        numResults: 3,
+      }),
+    );
+  });
+
   it('reports missing pi-web-access when delegate was never captured', async () => {
     vi.spyOn(webSearchDelegate, 'ensureWebSearchDelegate').mockResolvedValue(undefined);
     vi.spyOn(webSearchDelegate, 'getWebSearchDelegate').mockReturnValue(undefined);

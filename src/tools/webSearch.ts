@@ -94,7 +94,16 @@ export function registerWebSearchTool(pi: ExtensionAPI) {
       await ensureWebSearchDelegate(pi);
       const delegate = getWebSearchDelegate();
       if (!delegate) return missingDelegateMessage();
-      return delegate(toolCallId, params as Record<string, unknown>, signal, onUpdate, ctx);
+      const normalizedParams = { ...(params as Record<string, unknown>) };
+      if (Array.isArray(normalizedParams.queries)) {
+        normalizedParams.queries = normalizeQueryList(normalizedParams.queries);
+      }
+      if (typeof normalizedParams.query === 'string') {
+        const query = normalizedParams.query.trim();
+        if (query) normalizedParams.query = query;
+        if (!query) delete normalizedParams.query;
+      }
+      return delegate(toolCallId, normalizedParams, signal, onUpdate, ctx);
     },
 
     renderCall(args, theme) {
