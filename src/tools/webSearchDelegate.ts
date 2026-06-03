@@ -26,9 +26,14 @@ let webSearchExecute: WebSearchExecute | undefined;
 let loadPromise: Promise<void> | undefined;
 let lastLoadError: string | undefined;
 let boundLivePi: ExtensionAPI | undefined;
+let bindGeneration = 0;
 
 export function getWebSearchLoadError() {
   return lastLoadError;
+}
+
+function isCurrentBinding(pi: ExtensionAPI, generation: number) {
+  return bindGeneration === generation && (!boundLivePi || boundLivePi === pi);
 }
 
 function resolvePiCodingAgentRoot(dir: string): string {
@@ -174,12 +179,13 @@ function wireRuntimeToLivePi(runtime: Record<string, unknown>, pi: ExtensionAPI)
 
 /** Remember the live session ExtensionAPI (bound after session_start). */
 export function bindLivePiWebAccess(pi: ExtensionAPI) {
+  bindGeneration += 1;
   boundLivePi = pi;
   webSearchExecute = undefined;
   loadPromise = undefined;
 }
 
-async function captureWebSearchFromLivePi(pi: ExtensionAPI) {
+async function captureWebSearchFromLivePi(pi: ExtensionAPI, generation: number) {
   const entry = resolvePiWebAccessEntry();
   if (!entry) return;
 
@@ -198,32 +204,40 @@ async function captureWebSearchFromLivePi(pi: ExtensionAPI) {
 
   const registered = extension.tools.get(PI_WEB_SEARCH_TOOL);
   if (!registered) {
+    if (!isCurrentBinding(pi, generation)) return;
     lastLoadError = 'pi-web-access loaded but did not register web_search. Update pi-web-access.';
     return;
   }
 
+  if (!isCurrentBinding(pi, generation)) return;
   webSearchExecute = registered.definition.execute.bind(registered.definition) as WebSearchExecute;
   lastLoadError = undefined;
 }
 
-export async function ensureWebSearchDelegate(pi?: ExtensionAPI) {
-  if (!isPiWebAccessInstalled()) return;
+export async function ensureWebSearchDelegate(
+  pi?: ExtensionAPI,
+  isInstalled: () => boolean = isPiWebAccessInstalled,
+) {
+  if (!isInstalled()) return;
 
   const livePi = pi ?? boundLivePi;
   if (!livePi) return;
 
+  const generation = bindGeneration;
+  if (!isCurrentBinding(livePi, generation)) return;
   if (webSearchExecute) return;
   if (loadPromise) return loadPromise;
 
   loadPromise = (async () => {
-    lastLoadError = undefined;
+    if (isCurrentBinding(livePi, generation)) lastLoadError = undefined;
     try {
-      await captureWebSearchFromLivePi(livePi);
+      await captureWebSearchFromLivePi(livePi, generation);
     } catch (err) {
+      if (!isCurrentBinding(livePi, generation)) return;
       lastLoadError = err instanceof Error ? err.message : String(err);
       webSearchExecute = undefined;
     } finally {
-      loadPromise = undefined;
+      if (isCurrentBinding(livePi, generation)) loadPromise = undefined;
     }
   })();
 
@@ -235,6 +249,7 @@ export function getWebSearchDelegate() {
 }
 
 export function clearWebSearchDelegateForTests() {
+  bindGeneration += 1;
   webSearchExecute = undefined;
   loadPromise = undefined;
   lastLoadError = undefined;

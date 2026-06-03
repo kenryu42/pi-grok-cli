@@ -2,7 +2,6 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import * as delegateModule from '../../src/tools/webSearchDelegate.js';
 import {
   bindLivePiWebAccess,
   clearWebSearchDelegateForTests,
@@ -54,13 +53,11 @@ describe('webSearchDelegate', () => {
   });
 
   it('ensureWebSearchDelegate returns undefined when pi-web-access is not installed', async () => {
-    vi.spyOn(delegateModule, 'isPiWebAccessInstalled').mockReturnValue(false);
-
-    const result = await ensureWebSearchDelegate();
+    const isInstalled = vi.fn(() => false);
+    const result = await ensureWebSearchDelegate(undefined, isInstalled);
+    expect(isInstalled).toHaveBeenCalledOnce();
     expect(result).toBeUndefined();
     expect(getWebSearchDelegate()).toBeUndefined();
-
-    vi.restoreAllMocks();
   });
 
   it('getWebSearchLoadError returns last error string', () => {

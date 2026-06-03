@@ -11,6 +11,7 @@ vi.mock('@earendil-works/pi-coding-agent', async (importOriginal) => ({
 }));
 
 import {
+  bindLivePiWebAccess,
   clearWebSearchDelegateForTests,
   ensureWebSearchDelegate,
   getWebSearchDelegate,
@@ -49,5 +50,51 @@ export default function (pi) {
     await ensureWebSearchDelegate(pi);
     expect(getWebSearchDelegate()).toBeTypeOf('function');
     expect(getWebSearchLoadError()).toBeUndefined();
+  });
+
+  it('does not let a stale load replace the delegate for a newer binding', async () => {
+    const extensionDir = join(testAgentDir, 'npm', 'node_modules', 'pi-web-access');
+    mkdirSync(extensionDir, { recursive: true });
+    writeFileSync(
+      join(extensionDir, 'index.js'),
+      `
+export default async function (pi) {
+  const load = globalThis.webSearchDelegateLoads.shift()
+  load.started()
+  await load.wait
+  pi.registerTool({
+    name: 'web_search',
+    execute: async () => ({ content: [{ type: 'text', text: load.name }], details: {} }),
+  })
+}
+`,
+    );
+    let startFirstLoad = () => {};
+    const firstLoadStarted = new Promise<void>((resolve) => {
+      startFirstLoad = resolve;
+    });
+    let finishFirstLoad = () => {};
+    const firstLoadWait = new Promise<void>((resolve) => {
+      finishFirstLoad = resolve;
+    });
+    vi.stubGlobal('webSearchDelegateLoads', [
+      { name: 'first', started: startFirstLoad, wait: firstLoadWait },
+      { name: 'second', started: () => {}, wait: Promise.resolve() },
+    ]);
+    const firstPi = {} as Parameters<typeof bindLivePiWebAccess>[0];
+    const secondPi = {} as Parameters<typeof bindLivePiWebAccess>[0];
+
+    bindLivePiWebAccess(firstPi);
+    const firstLoad = ensureWebSearchDelegate();
+    await firstLoadStarted;
+
+    bindLivePiWebAccess(secondPi);
+    await ensureWebSearchDelegate();
+    const secondDelegate = getWebSearchDelegate();
+    expect(secondDelegate).toBeTypeOf('function');
+
+    finishFirstLoad();
+    await firstLoad;
+    expect(getWebSearchDelegate()).toBe(secondDelegate);
   });
 });
