@@ -15,6 +15,8 @@ export type ToolResult = {
   details: Record<string, unknown>;
 };
 
+type ExtensionHandler = (event: unknown) => unknown;
+
 type Renderable = { render: (width: number) => string[] };
 
 type ToolTheme = {
@@ -43,9 +45,13 @@ type RegisteredTool = {
 
 export function collectTools(registerTools: (pi: ExtensionAPI) => void) {
   const tools = new Map<string, RegisteredTool>();
+  const handlers = new Map<string, ExtensionHandler>();
   registerTools({
     registerTool(tool: RegisteredTool) {
       tools.set(tool.name, tool);
+    },
+    on(event: string, handler: ExtensionHandler) {
+      handlers.set(event, handler);
     },
   } as unknown as ExtensionAPI);
   return tools;

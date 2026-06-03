@@ -3,33 +3,48 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ExtensionAPI, ProviderConfig } from '@earendil-works/pi-coding-agent';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { GROK_SHIM_TOOL_NAMES, grokToolsToActivate } from '../../src/tools/register.js';
+import * as webSearchDelegate from '../../src/tools/webSearchDelegate.js';
 
-const streamSimpleOpenAIResponses = vi.fn(
-  (
-    _model: unknown,
-    _context: unknown,
-    options?: {
-      onResponse?: (response: { headers: Record<string, string> }) => void;
-    },
-  ) => {
-    options?.onResponse?.({
-      headers: {
-        'x-ratelimit-remaining-requests': '179',
-        'x-ratelimit-limit-requests': '180',
-        'x-ratelimit-remaining-tokens': '7500000',
-        'x-ratelimit-limit-tokens': '7500000',
-        'x-grok-context-window': '512000',
-        'x-zero-data-retention': 'true',
+const { streamSimpleOpenAIResponses, mockPiWebAccessInstalled } = vi.hoisted(() => ({
+  mockPiWebAccessInstalled: vi.fn(() => true),
+  streamSimpleOpenAIResponses: vi.fn(
+    (
+      _model: unknown,
+      _context: unknown,
+      options?: {
+        onResponse?: (response: { headers: Record<string, string> }) => void;
       },
-    });
-    return {};
-  },
-);
+    ) => {
+      options?.onResponse?.({
+        headers: {
+          'x-ratelimit-remaining-requests': '179',
+          'x-ratelimit-limit-requests': '180',
+          'x-ratelimit-remaining-tokens': '7500000',
+          'x-ratelimit-limit-tokens': '7500000',
+          'x-grok-context-window': '512000',
+          'x-zero-data-retention': 'true',
+        },
+      });
+      return {};
+    },
+  ),
+}));
 
 vi.mock('@earendil-works/pi-ai', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@earendil-works/pi-ai')>()),
   streamSimpleOpenAIResponses,
 }));
+
+vi.mock('../../src/tools/webSearchDelegate.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/tools/webSearchDelegate.js')>();
+  return {
+    ...actual,
+    isPiWebAccessInstalled: () => mockPiWebAccessInstalled(),
+    bindLivePiWebAccess: vi.fn(),
+    ensureWebSearchDelegate: vi.fn(async () => undefined),
+  };
+});
 
 interface CommandConfig {
   handler: (args: string[], ctx: TestContext) => Promise<void>;
@@ -62,18 +77,6 @@ interface TestContext {
 
 type ExtensionHandler = (event: unknown, ctx: TestContext) => unknown;
 
-const grokToolNames = [
-  'Grep',
-  'Glob',
-  'LS',
-  'Read',
-  'Write',
-  'StrReplace',
-  'Edit',
-  'Delete',
-  'Shell',
-];
-
 const originalFetch = globalThis.fetch;
 const originalHome = process.env.HOME;
 const originalToken = process.env.GROK_CLI_OAUTH_TOKEN;
@@ -96,7 +99,8 @@ afterEach(() => {
   for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true });
 });
 
-async function setupExtension(initialActiveTools = ['read', 'bash']) {
+async function setupExtension(initialActiveTools = ['read', 'bash'], piWebAccessInstalled = true) {
+  vi.spyOn(webSearchDelegate, 'isPiWebAccessInstalled').mockReturnValue(piWebAccessInstalled);
   const commands = new Map<string, CommandConfig>();
   const providers = new Map<string, ProviderConfig>();
   const tools = new Map<string, RegisteredTool>();
@@ -477,22 +481,27 @@ describe('Grok CLI tool scoping', () => {
   it('registers the Grok/Cursor-native tool shims', async () => {
     const extension = await setupExtension();
 
-    expect([...extension.tools.keys()].sort()).toEqual([...grokToolNames].sort());
+    expect([...extension.tools.keys()].sort()).toEqual([...grokToolsToActivate()].sort());
+  });
+
+  it('does not register WebSearch when pi-web-access is not installed', async () => {
+    const extension = await setupExtension(['read', 'bash'], false);
+
+    expect([...extension.tools.keys()].sort()).toEqual([...GROK_SHIM_TOOL_NAMES].sort());
+    expect(extension.tools.has('WebSearch')).toBe(false);
   });
 
   it('enables Grok tools for Grok models while preserving other active tools', async () => {
-    const extension = await setupExtension(['read', 'custom_tool']);
+    const extension = await setupExtension(['read', 'custom_tool', 'web_search']);
 
     await extension.handlers.get('model_select')?.(
       { model: { provider: 'grok-cli', id: 'grok-build' } },
       contextForModel('grok-cli'),
     );
 
-    expect(extension.setActiveTools).toHaveBeenLastCalledWith([
-      'read',
-      'custom_tool',
-      ...grokToolNames,
-    ]);
+    const next = extension.setActiveTools.mock.calls.at(-1)?.[0] as string[];
+    expect(next).not.toContain('web_search');
+    expect(next).toEqual(['read', 'custom_tool', ...grokToolsToActivate()]);
   });
 
   it('removes Grok tools for non-Grok models while preserving other active tools', async () => {
@@ -511,11 +520,11 @@ describe('Grok CLI tool scoping', () => {
 
     await extension.handlers.get('before_agent_start')?.({}, contextForModel('grok-cli'));
 
-    expect(extension.setActiveTools).toHaveBeenLastCalledWith(['read', ...grokToolNames]);
+    expect(extension.setActiveTools).toHaveBeenLastCalledWith(['read', ...grokToolsToActivate()]);
   });
 
   it('does not update active tools when the selection is already correct', async () => {
-    const extension = await setupExtension(['read', ...grokToolNames]);
+    const extension = await setupExtension(['read', ...grokToolsToActivate()]);
 
     await extension.handlers.get('before_agent_start')?.({}, contextForModel('grok-cli'));
 
@@ -527,7 +536,7 @@ describe('Grok CLI tool rendering', () => {
   it('adds renderers to every Grok tool shim', async () => {
     const extension = await setupExtension();
 
-    for (const name of grokToolNames) {
+    for (const name of grokToolsToActivate()) {
       expect(extension.tools.get(name)?.renderCall).toBeTypeOf('function');
       expect(extension.tools.get(name)?.renderResult).toBeTypeOf('function');
     }
