@@ -60,6 +60,10 @@
       "optional": true
     }
   },
+  "dependencies": {
+    "jiti": "^2.7.0",
+    "typebox": "1.1.38"
+  },
   "devDependencies": {
     "@biomejs/biome": "2.4.16",
     "@earendil-works/pi-ai": "^0.78.0",

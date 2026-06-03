@@ -21,9 +21,15 @@ describe('npm package manifest', () => {
     expect(packageJson.scripts?.prepack).toBe(
       'bun run test && bun run coverage && bun run typecheck',
     );
+    expect(packageJson.scripts?.knip).toBe('knip --production');
     expect(packageJson.devDependencies?.vitest).toBeDefined();
     expect(packageJson.devDependencies?.['@vitest/coverage-v8']).toBeDefined();
     expect(existsSync(new URL('../../vitest.config.ts', import.meta.url))).toBe(true);
+  });
+
+  it('declares direct runtime dependencies needed by the source entrypoint', () => {
+    expect(packageJson.dependencies?.jiti).toBeDefined();
+    expect(packageJson.dependencies?.typebox).toBeDefined();
   });
 });
 

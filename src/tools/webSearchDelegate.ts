@@ -10,7 +10,7 @@ import {
   createExtensionRuntime,
   getAgentDir,
 } from '@earendil-works/pi-coding-agent';
-import { createJiti } from 'jiti/static';
+import { createJiti } from 'jiti';
 
 export const PI_WEB_SEARCH_TOOL = 'web_search';
 
