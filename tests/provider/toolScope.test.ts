@@ -46,4 +46,23 @@ describe('syncGrokTools', () => {
 
     expect(setActiveTools).toHaveBeenCalledWith(['read', 'web_search']);
   });
+
+  it('restores suppressed tools after a provider round-trip', () => {
+    vi.spyOn(webSearchDelegate, 'isPiWebAccessInstalled').mockReturnValue(true);
+    const activeTools = ['read', 'web_search', 'bash'];
+    const pi = {
+      getActiveTools: () => activeTools,
+      setActiveTools(nextTools: string[]) {
+        activeTools.splice(0, activeTools.length, ...nextTools);
+      },
+    };
+
+    syncGrokTools(pi, 'grok-cli');
+    expect(activeTools).not.toContain('web_search');
+    expect(activeTools).toContain('WebSearch');
+
+    syncGrokTools(pi, 'openai');
+    expect(activeTools).toContain('web_search');
+    expect(activeTools).not.toContain('WebSearch');
+  });
 });
