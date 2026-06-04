@@ -1,10 +1,10 @@
 import type { Api, Model } from '@earendil-works/pi-ai';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { XaiOAuthError } from '../shared/errors.js';
-import { formatQuota, getCachedRateLimit } from './quota.js';
+import { fetchBillingUsage, formatQuota } from './quota.js';
 
 export function registerStatusCommand(pi: Pick<ExtensionAPI, 'registerCommand'>) {
-  pi.registerCommand('grok-cli-status', {
+  pi.registerCommand('grok-cli-usage', {
     description: 'Show Grok CLI provider status, quota, and token health',
     handler: async (_args, ctx) => {
       const token = process.env.GROK_CLI_OAUTH_TOKEN;
@@ -33,14 +33,21 @@ export function registerStatusCommand(pi: Pick<ExtensionAPI, 'registerCommand'>)
           'info',
         );
 
-        const lines = [
-          '  Quota:',
-          ...grokModels.flatMap((model: Model<Api>) => [
-            '',
-            ...formatQuota(model.id, getCachedRateLimit(model.id)),
-          ]),
-        ];
-        ctx.ui.notify(lines.join('\n'), 'info');
+        const apiKey = token ?? (await registry.getApiKeyForProvider?.('grok-cli'));
+        if (!apiKey) {
+          ctx.ui.notify(formatQuota(undefined).join('\n'), 'info');
+          return;
+        }
+
+        try {
+          ctx.ui.notify(formatQuota(await fetchBillingUsage(apiKey)).join('\n'), 'info');
+        } catch (err) {
+          ctx.ui.notify(
+            `Grok CLI billing refresh failed: ${err instanceof Error ? err.message : String(err)}`,
+            'warning',
+          );
+          ctx.ui.notify(formatQuota(undefined).join('\n'), 'info');
+        }
       } catch (err) {
         const msg =
           err instanceof XaiOAuthError

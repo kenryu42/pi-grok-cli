@@ -10,13 +10,11 @@ import {
   ensureWebSearchDelegate,
   isPiWebAccessInstalled,
 } from '../tools/webSearchDelegate.js';
-import { loadQuotaCache } from './quota.js';
 import { registerStatusCommand } from './status.js';
 import { streamGrokCli } from './stream.js';
 import { syncGrokTools } from './toolScope.js';
 
 export default function registerGrokCli(pi: ExtensionAPI) {
-  loadQuotaCache();
   const baseUrl = getBaseUrl();
   const models = resolveModels();
 

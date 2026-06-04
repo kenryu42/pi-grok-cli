@@ -6,7 +6,6 @@ import {
   type SimpleStreamOptions,
   streamSimpleOpenAIResponses,
 } from '@earendil-works/pi-ai';
-import { captureRateLimit } from './quota.js';
 
 const GROK_CLI_VERSION = '0.2.16';
 
@@ -42,7 +41,6 @@ export function streamGrokCli(
     ...options,
     headers,
     onResponse(response) {
-      captureRateLimit(model.id, response.headers);
       options?.onResponse?.(response, model);
     },
   });

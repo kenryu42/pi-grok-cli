@@ -1,127 +1,57 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { getBaseUrl } from '../auth/oauth.js';
 
-const QUOTA_CACHE_FILE = 'grok-cli-quota.json';
-
-// ─── Rate limit cache (piggybacks on onResponse from normal traffic) ──────────
-
-interface RateLimitInfo {
-  remainingRequests: number;
-  limitRequests: number;
-  remainingTokens: number;
-  limitTokens: number;
-  contextWindow: number;
-  zeroDataRetention: boolean;
-  capturedAt: number;
+interface BillingUsage {
+  monthlyLimit: number;
+  used: number;
+  billingPeriodEnd: string;
 }
 
-const cachedRateLimits = new Map<string, RateLimitInfo>();
-
-function quotaCachePath() {
-  return join(homedir(), '.pi', QUOTA_CACHE_FILE);
-}
-
-function isRateLimitInfo(value: unknown): value is RateLimitInfo {
-  if (!value || typeof value !== 'object') return false;
-  const info = value as Record<string, unknown>;
-  return (
-    typeof info.remainingRequests === 'number' &&
-    typeof info.limitRequests === 'number' &&
-    typeof info.remainingTokens === 'number' &&
-    typeof info.limitTokens === 'number' &&
-    typeof info.contextWindow === 'number' &&
-    typeof info.zeroDataRetention === 'boolean' &&
-    typeof info.capturedAt === 'number'
-  );
-}
-
-export function loadQuotaCache() {
-  cachedRateLimits.clear();
-  if (!existsSync(quotaCachePath())) return;
-
-  try {
-    const payload = JSON.parse(readFileSync(quotaCachePath(), 'utf8')) as Record<string, unknown>;
-    const models = payload.models;
-    if (!models || typeof models !== 'object') return;
-
-    Object.entries(models).forEach(([model, rateLimit]) => {
-      if (isRateLimitInfo(rateLimit)) cachedRateLimits.set(model, rateLimit);
-    });
-  } catch {
-    cachedRateLimits.clear();
-  }
-}
-
-function persistQuotaCache() {
-  try {
-    mkdirSync(dirname(quotaCachePath()), { recursive: true });
-    writeFileSync(
-      quotaCachePath(),
-      JSON.stringify({ version: 1, models: Object.fromEntries(cachedRateLimits) }, null, '\t'),
-    );
-  } catch {
-    // Status remains cache-only; persistence failures should not break requests.
-  }
-}
-
-/**
- * Extract rate limit info from response headers.
- * Returns undefined if no rate limit headers are present.
- */
-function extractRateLimit(h: Record<string, string>): RateLimitInfo | undefined {
-  const remainingReqs = Number(h['x-ratelimit-remaining-requests']);
-  const limitReqs = Number(h['x-ratelimit-limit-requests']);
-  const remainingTokens = Number(h['x-ratelimit-remaining-tokens']);
-  const limitTokens = Number(h['x-ratelimit-limit-tokens']);
-  const contextWindow = Number(h['x-grok-context-window']);
-
+function parseBillingUsage(payload: unknown): BillingUsage {
+  if (!payload || typeof payload !== 'object') throw new Error('invalid billing payload');
+  const config = (payload as Record<string, unknown>).config;
+  if (!config || typeof config !== 'object') throw new Error('invalid billing payload');
+  const monthlyLimit = ((config as Record<string, unknown>).monthlyLimit as Record<string, unknown>)
+    ?.val;
+  const used = ((config as Record<string, unknown>).used as Record<string, unknown>)?.val;
+  const billingPeriodEnd = (config as Record<string, unknown>).billingPeriodEnd;
   if (
-    [remainingReqs, limitReqs, remainingTokens, limitTokens].some(
-      (value) => !Number.isFinite(value),
-    )
+    typeof monthlyLimit !== 'number' ||
+    !Number.isFinite(monthlyLimit) ||
+    typeof used !== 'number' ||
+    !Number.isFinite(used) ||
+    typeof billingPeriodEnd !== 'string' ||
+    !Number.isFinite(new Date(billingPeriodEnd).getTime())
   ) {
-    return undefined;
+    throw new Error('invalid billing payload');
   }
-
-  return {
-    remainingRequests: remainingReqs,
-    limitRequests: limitReqs,
-    remainingTokens,
-    limitTokens,
-    contextWindow: contextWindow || 512_000,
-    zeroDataRetention: h['x-zero-data-retention'] === 'true',
-    capturedAt: Date.now(),
-  };
+  return { monthlyLimit, used, billingPeriodEnd };
 }
 
-export function formatQuota(name: string, rateLimit: RateLimitInfo | undefined) {
-  if (!rateLimit) {
-    return [`  ${name}:`, '    no cached quota data — make a request with this model first'];
-  }
-
-  const ageSec = Math.round((Date.now() - rateLimit.capturedAt) / 1000);
-  const ageStr = ageSec < 60 ? `${ageSec}s ago` : `${Math.round(ageSec / 60)}m ago`;
-  const lines = [`  ${name}:`];
-  lines.push(`    Cached: ${ageStr}`);
-  lines.push(`    Requests: ${rateLimit.remainingRequests}/${rateLimit.limitRequests} remaining`);
-  lines.push(
-    `    Tokens:   ${rateLimit.remainingTokens.toLocaleString()}/${rateLimit.limitTokens.toLocaleString()} remaining`,
-  );
-  lines.push(`    Context Limit: ${rateLimit.contextWindow.toLocaleString()} tokens`);
-  if (rateLimit.zeroDataRetention) {
-    lines.push('    Data:     Zero retention ✓');
-  }
-  return lines;
+export async function fetchBillingUsage(token: string): Promise<BillingUsage> {
+  const response = await fetch(`${getBaseUrl()}/billing`, {
+    headers: {
+      authorization: `Bearer ${token}`,
+      'x-xai-token-auth': 'xai-grok-cli',
+      accept: 'application/json',
+    },
+  });
+  if (!response.ok) throw new Error(`billing endpoint returned ${response.status}`);
+  return parseBillingUsage(await response.json());
 }
 
-export function captureRateLimit(modelId: string, headers: Record<string, string>) {
-  const rateLimit = extractRateLimit(headers);
-  if (!rateLimit) return;
-  cachedRateLimits.set(modelId, rateLimit);
-  persistQuotaCache();
-}
+export function formatQuota(usage: BillingUsage | undefined) {
+  if (!usage) {
+    return [
+      '  Usage:',
+      '    no billing data available — run /login grok-cli or set GROK_CLI_OAUTH_TOKEN',
+    ];
+  }
 
-export function getCachedRateLimit(modelId: string): RateLimitInfo | undefined {
-  return cachedRateLimits.get(modelId);
+  const resetDate = new Date(new Date(usage.billingPeriodEnd).getTime() - 8 * 60 * 60 * 1000);
+  return [
+    '  Usage:',
+    `    ${usage.used.toLocaleString()} / ${usage.monthlyLimit.toLocaleString()} credits used (${Math.round((usage.used / usage.monthlyLimit) * 100)}%)`,
+    `    ${(usage.monthlyLimit - usage.used).toLocaleString()} credits remaining`,
+    `    Resets at ${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][resetDate.getUTCMonth()]} ${resetDate.getUTCDate()} ${resetDate.getUTCHours().toString().padStart(2, '0')}:${resetDate.getUTCMinutes().toString().padStart(2, '0')} PT`,
+  ];
 }

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ExtensionAPI, ProviderConfig } from '@earendil-works/pi-coding-agent';
@@ -178,14 +178,76 @@ function setupHome() {
   return dir;
 }
 
+function billingResponse(monthlyLimit: unknown, used: unknown, billingPeriodEnd: unknown) {
+  return Response.json({
+    config: {
+      monthlyLimit: { val: monthlyLimit },
+      used: { val: used },
+      billingPeriodEnd,
+    },
+  });
+}
+
 async function runStatus(extension: Awaited<ReturnType<typeof setupExtension>>) {
   const notify = vi.fn();
-  await extension.commands.get('grok-cli-status')?.handler([], statusContext(notify));
+  await extension.commands.get('grok-cli-usage')?.handler([], statusContext(notify));
   return notify;
 }
 
 describe('Grok CLI status command', () => {
-  it('uses only cached quota data and tells users to make requests first', async () => {
+  it('fetches unified billing usage with the env token and no user id header', async () => {
+    process.env.GROK_CLI_OAUTH_TOKEN = 'env-token';
+    setupHome();
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      billingResponse(4000, 1421, '2026-07-01T00:00:00+00:00'),
+    );
+    globalThis.fetch = fetchMock;
+    const extension = await setupExtension();
+    const notify = await runStatus(extension);
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://cli-chat-proxy.grok.com/v1/billing');
+    expect(fetchMock.mock.calls[0]?.[1]?.headers).toMatchObject({
+      authorization: 'Bearer env-token',
+      'x-xai-token-auth': 'xai-grok-cli',
+      accept: 'application/json',
+    });
+    expect(fetchMock.mock.calls[0]?.[1]?.headers).not.toHaveProperty('x-userid');
+    expect(notify.mock.calls.at(-1)?.[0]).toBe(
+      [
+        '  Usage:',
+        '    1,421 / 4,000 credits used (36%)',
+        '    2,579 credits remaining',
+        '    Resets at Jun 30 16:00 PT',
+      ].join('\n'),
+    );
+  });
+
+  it('uses the registered provider token when no env token is set', async () => {
+    delete process.env.GROK_CLI_OAUTH_TOKEN;
+    setupHome();
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      billingResponse(4000, 100, '2026-07-01T00:00:00+00:00'),
+    );
+    globalThis.fetch = fetchMock;
+    const extension = await setupExtension();
+    const notify = vi.fn();
+
+    await extension.commands.get('grok-cli-usage')?.handler([], {
+      ...statusContext(notify),
+      modelRegistry: {
+        ...statusContext(notify).modelRegistry,
+        getApiKeyForProvider: async () => 'provider-token',
+      },
+    });
+
+    expect(fetchMock.mock.calls[0]?.[1]?.headers).toMatchObject({
+      authorization: 'Bearer provider-token',
+    });
+    expect(notify.mock.calls.at(-1)?.[0]).toContain('100 / 4,000 credits used (3%)');
+  });
+
+  it('does not fetch billing when no token is available', async () => {
     delete process.env.GROK_CLI_OAUTH_TOKEN;
     setupHome();
     const fetchMock = vi.fn<typeof fetch>();
@@ -196,122 +258,94 @@ describe('Grok CLI status command', () => {
     expect(fetchMock).not.toHaveBeenCalled();
     expect(notify.mock.calls.at(-1)?.[0]).toBe(
       [
-        '  Quota:',
-        '',
-        '  grok-build:',
-        '    no cached quota data — make a request with this model first',
-        '',
-        '  grok-composer-2.5-fast:',
-        '    no cached quota data — make a request with this model first',
+        '  Usage:',
+        '    no billing data available — run /login grok-cli or set GROK_CLI_OAUTH_TOKEN',
       ].join('\n'),
     );
   });
 
-  it('shows separate cached quotas for build and composer', async () => {
-    delete process.env.GROK_CLI_OAUTH_TOKEN;
-    setupHome();
-    const extension = await setupExtension();
-    const provider = extension.providers.get('grok-cli');
-    provider?.streamSimple?.({ provider: 'grok-cli', id: 'grok-build' }, {}, {});
-    provider?.streamSimple?.({ provider: 'grok-cli', id: 'grok-composer-2.5-fast' }, {}, {});
-    const notify = await runStatus(extension);
-
-    expect(notify.mock.calls.at(-1)?.[0]).toContain('grok-build:\n    Cached:');
-    expect(notify.mock.calls.at(-1)?.[0]).toContain('grok-composer-2.5-fast:\n    Cached:');
-    expect(notify.mock.calls.at(-1)?.[0]).toContain('Requests: 179/180 remaining');
-  });
-
-  it('shows cached quotas for registered Grok models instead of hard-coded names', async () => {
-    delete process.env.GROK_CLI_OAUTH_TOKEN;
-    setupHome();
-    const extension = await setupExtension();
-    extension.providers
-      .get('grok-cli')
-      ?.streamSimple?.({ provider: 'grok-cli', id: 'custom' }, {}, {});
-    const notify = vi.fn();
-
-    await extension.commands.get('grok-cli-status')?.handler([], {
-      modelRegistry: {
-        getAll: () => [{ provider: 'grok-cli', id: 'custom' }],
-      },
-      ui: { notify },
-    });
-
-    expect(notify.mock.calls.at(-1)?.[0]).toContain('custom:\n    Cached:');
-    expect(notify.mock.calls.at(-1)?.[0]).not.toContain('grok-build:');
-  });
-
-  it('persists cached quotas to the global pi config directory', async () => {
-    delete process.env.GROK_CLI_OAUTH_TOKEN;
+  it('does not persist billing usage to the global pi config directory', async () => {
+    process.env.GROK_CLI_OAUTH_TOKEN = 'env-token';
     const home = setupHome();
+    globalThis.fetch = vi.fn<typeof fetch>(async () =>
+      billingResponse(4000, 1421, '2026-07-01T00:00:00+00:00'),
+    );
     const extension = await setupExtension();
-    extension.providers
-      .get('grok-cli')
-      ?.streamSimple?.({ provider: 'grok-cli', id: 'grok-build' }, {}, {});
+    await runStatus(extension);
 
-    expect(
-      JSON.parse(readFileSync(join(home, '.pi', 'grok-cli-quota.json'), 'utf8')).models[
-        'grok-build'
-      ].remainingRequests,
-    ).toBe(179);
+    expect(existsSync(join(home, '.pi', 'grok-cli-quota.json'))).toBe(false);
   });
 
-  it('ignores incomplete quota headers instead of caching NaN values', async () => {
-    delete process.env.GROK_CLI_OAUTH_TOKEN;
+  it('rejects invalid billing payloads instead of caching NaN values', async () => {
+    process.env.GROK_CLI_OAUTH_TOKEN = 'env-token';
     const home = setupHome();
-    streamSimpleOpenAIResponses.mockImplementationOnce((_model, _context, options) => {
-      options?.onResponse?.({
-        headers: {
-          'x-ratelimit-remaining-tokens': '7500000',
-          'x-ratelimit-limit-tokens': '7500000',
-        },
-      });
-      return {};
-    });
+    globalThis.fetch = vi.fn<typeof fetch>(async () =>
+      billingResponse('4000', 1421, '2026-07-01T00:00:00+00:00'),
+    );
     const extension = await setupExtension();
-    extension.providers
-      .get('grok-cli')
-      ?.streamSimple?.({ provider: 'grok-cli', id: 'grok-build' }, {}, {});
     const notify = await runStatus(extension);
 
     expect(existsSync(join(home, '.pi', 'grok-cli-quota.json'))).toBe(false);
-    expect(notify.mock.calls.at(-1)?.[0]).not.toContain('NaN');
-    expect(notify.mock.calls.at(-1)?.[0]).toContain(
-      'no cached quota data — make a request with this model first',
+    expect(notify.mock.calls.at(-1)?.[0]).toBe(
+      [
+        '  Usage:',
+        '    no billing data available — run /login grok-cli or set GROK_CLI_OAUTH_TOKEN',
+      ].join('\n'),
+    );
+    expect(notify).toHaveBeenCalledWith(
+      'Grok CLI billing refresh failed: invalid billing payload',
+      'warning',
     );
   });
 
-  it('loads cached quotas from the global pi config directory', async () => {
-    delete process.env.GROK_CLI_OAUTH_TOKEN;
-    const home = setupHome();
-    writeFileSync(
-      join(home, '.pi', 'grok-cli-quota.json'),
-      JSON.stringify({
-        version: 1,
-        models: {
-          'grok-build': {
-            remainingRequests: 42,
-            limitRequests: 180,
-            remainingTokens: 1_000,
-            limitTokens: 2_000,
-            contextWindow: 512_000,
-            zeroDataRetention: true,
-            capturedAt: Date.now(),
-          },
-        },
-      }),
-    );
+  it('rejects invalid billing reset timestamps', async () => {
+    process.env.GROK_CLI_OAUTH_TOKEN = 'env-token';
+    setupHome();
+    globalThis.fetch = vi.fn<typeof fetch>(async () => billingResponse(4000, 1421, 'not-a-date'));
     const extension = await setupExtension();
     const notify = await runStatus(extension);
 
-    expect(notify.mock.calls.at(-1)?.[0]).toContain('Requests: 42/180 remaining');
+    expect(notify).toHaveBeenCalledWith(
+      'Grok CLI billing refresh failed: invalid billing payload',
+      'warning',
+    );
+    expect(notify.mock.calls.at(-1)?.[0]).toContain(
+      'no billing data available — run /login grok-cli or set GROK_CLI_OAUTH_TOKEN',
+    );
+  });
+
+  it('shows no billing data when refresh fails', async () => {
+    process.env.GROK_CLI_OAUTH_TOKEN = 'env-token';
+    setupHome();
+    globalThis.fetch = vi.fn<typeof fetch>(async () => new Response('nope', { status: 500 }));
+    const extension = await setupExtension();
+    const notify = await runStatus(extension);
+
+    expect(notify).toHaveBeenCalledWith(
+      'Grok CLI billing refresh failed: billing endpoint returned 500',
+      'warning',
+    );
+    expect(notify.mock.calls.at(-1)?.[0]).toContain(
+      'no billing data available — run /login grok-cli or set GROK_CLI_OAUTH_TOKEN',
+    );
+  });
+
+  it('does not cache stream response rate-limit headers as quota', async () => {
+    delete process.env.GROK_CLI_OAUTH_TOKEN;
+    const home = setupHome();
+    const extension = await setupExtension();
+    extension.providers
+      .get('grok-cli')
+      ?.streamSimple?.({ provider: 'grok-cli', id: 'grok-build' }, {}, {});
+
+    expect(existsSync(join(home, '.pi', 'grok-cli-quota.json'))).toBe(false);
   });
 
   it('warns when no Grok models are registered', async () => {
     const extension = await setupExtension();
     const notify = vi.fn();
 
-    await extension.commands.get('grok-cli-status')?.handler([], emptyStatusContext(notify));
+    await extension.commands.get('grok-cli-usage')?.handler([], emptyStatusContext(notify));
 
     expect(notify).toHaveBeenCalledOnce();
     expect(notify).toHaveBeenCalledWith(
@@ -325,7 +359,7 @@ describe('Grok CLI status command', () => {
     const extension = await setupExtension();
     const notify = vi.fn();
 
-    await extension.commands.get('grok-cli-status')?.handler([], {
+    await extension.commands.get('grok-cli-usage')?.handler([], {
       modelRegistry: {
         getAll: () =>
           Array.from({ length: 7 }, (_value, index) => ({
@@ -350,7 +384,7 @@ describe('Grok CLI status command', () => {
     const extension = await setupExtension();
     const notify = vi.fn();
 
-    await extension.commands.get('grok-cli-status')?.handler([], {
+    await extension.commands.get('grok-cli-usage')?.handler([], {
       modelRegistry: {
         getAll: () => {
           throw new Error('registry unavailable');
@@ -367,7 +401,7 @@ describe('Grok CLI status command', () => {
     const extension = await setupExtension();
     const notify = vi.fn();
 
-    await extension.commands.get('grok-cli-status')?.handler([], {
+    await extension.commands.get('grok-cli-usage')?.handler([], {
       modelRegistry: {
         getAll: () => {
           throw new XaiOAuthError('refresh failed', 'refresh_failed', true);

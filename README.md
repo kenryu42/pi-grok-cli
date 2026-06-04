@@ -62,10 +62,10 @@ Select **"Grok CLI"** from the provider list. This opens the xAI OAuth page in y
 /model grok-cli/grok-composer-2.5-fast
 ```
 
-### Check quota status
+### Check usage
 
 ```
-/grok-cli-status
+/grok-cli-usage
 ```
 
 ## Environment Variables
