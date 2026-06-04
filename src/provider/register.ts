@@ -10,9 +10,9 @@ import {
   ensureWebSearchDelegate,
   isPiWebAccessInstalled,
 } from '../tools/webSearchDelegate.js';
-import { registerStatusCommand } from './status.js';
 import { streamGrokCli } from './stream.js';
 import { syncGrokTools } from './toolScope.js';
+import { registerUsageCommand } from './usage.js';
 
 export default function registerGrokCli(pi: ExtensionAPI) {
   const baseUrl = getBaseUrl();
@@ -94,5 +94,5 @@ export default function registerGrokCli(pi: ExtensionAPI) {
     return sanitizePayload(event.payload as Record<string, unknown>, modelId, sessionId, ctx.cwd);
   });
 
-  registerStatusCommand(pi);
+  registerUsageCommand(pi);
 }

@@ -1,9 +1,9 @@
 import type { Api, Model } from '@earendil-works/pi-ai';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { XaiOAuthError } from '../shared/errors.js';
-import { fetchBillingUsage, formatQuota } from './quota.js';
+import { fetchBillingUsage, formatQuota } from './billing.js';
 
-export function registerStatusCommand(pi: Pick<ExtensionAPI, 'registerCommand'>) {
+export function registerUsageCommand(pi: Pick<ExtensionAPI, 'registerCommand'>) {
   pi.registerCommand('grok-cli-usage', {
     description: 'Show Grok CLI provider status, quota, and token health',
     handler: async (_args, ctx) => {
