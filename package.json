@@ -21,7 +21,7 @@
   "scripts": {
     "test": "vitest run --reporter=agent",
     "coverage": "vitest run --reporter=agent --coverage",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc -p tsconfig.check.json",
     "prepack": "bun run test && bun run coverage && bun run typecheck",
     "knip": "knip --production",
     "lint": "biome check --write .",

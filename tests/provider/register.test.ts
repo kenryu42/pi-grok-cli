@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { Api, Model, OAuthCredentials } from '@earendil-works/pi-ai';
 import type { ExtensionAPI, ProviderConfig } from '@earendil-works/pi-coding-agent';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { GROK_SHIM_TOOL_NAMES, grokToolsToActivate } from '../../src/tools/register.js';
@@ -336,7 +337,11 @@ describe('Grok CLI status command', () => {
     const extension = await setupExtension();
     extension.providers
       .get('grok-cli')
-      ?.streamSimple?.({ provider: 'grok-cli', id: 'grok-build' }, {}, {});
+      ?.streamSimple?.(
+        { provider: 'grok-cli', id: 'grok-build' } as Model<Api>,
+        { messages: [] },
+        {},
+      );
 
     expect(existsSync(join(home, '.pi', 'grok-cli-quota.json'))).toBe(false);
   });
@@ -354,7 +359,7 @@ describe('Grok CLI status command', () => {
     );
   });
 
-  it('shows env-token bypass and truncates long model lists', async () => {
+  it('shows env-token bypass warning', async () => {
     process.env.GROK_CLI_OAUTH_TOKEN = 'token';
     const extension = await setupExtension();
     const notify = vi.fn();
@@ -373,10 +378,6 @@ describe('Grok CLI status command', () => {
     expect(notify.mock.calls[0]).toEqual([
       '⚠️  Grok CLI: using GROK_CLI_OAUTH_TOKEN env bypass — no auto-refresh available',
       'warning',
-    ]);
-    expect(notify.mock.calls[1]).toEqual([
-      '✓ Grok CLI: 7 models available (grok-model-1, grok-model-2, grok-model-3, grok-model-4, grok-model-5 (+2 more))',
-      'info',
     ]);
   });
 
@@ -425,20 +426,22 @@ describe('Grok CLI provider registration', () => {
     expect(provider?.name).toBe('Grok CLI');
     expect(provider?.api).toBe('openai-responses');
     expect(provider?.apiKey).toBe('$GROK_CLI_OAUTH_TOKEN');
-    expect(provider?.models.map((model) => model.id)).toContain('grok-build');
-    expect(provider?.oauth?.getApiKey({ access: 'access-token' })).toBe('access-token');
+    expect(provider?.models?.map((model) => model.id)).toContain('grok-build');
+    expect(provider?.oauth?.getApiKey({ access: 'access-token', refresh: '', expires: 0 })).toBe(
+      'access-token',
+    );
     expect(
-      provider?.oauth?.modifyModels(
+      provider?.oauth?.modifyModels?.(
         [
-          { provider: 'grok-cli', id: 'grok-build', baseUrl: 'old' },
-          { provider: 'openai', id: 'gpt-4', baseUrl: 'keep' },
+          { provider: 'grok-cli', id: 'grok-build', baseUrl: 'old' } as Model<Api>,
+          { provider: 'openai', id: 'gpt-4', baseUrl: 'keep' } as Model<Api>,
         ],
         {
           access: 'access-token',
           refresh: 'refresh-token',
           expires: 123,
           baseUrl: 'https://example.invalid/custom///',
-        },
+        } as OAuthCredentials,
       ),
     ).toEqual([
       {

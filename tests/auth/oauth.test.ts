@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { getBaseUrl, login, refresh } from '../../src/auth/oauth.js';
 import { XaiErrorCode } from '../../src/shared/errors.js';
 
+type OAuthLoginCallbacks = Parameters<typeof login>[0];
+
 const originalEnv = { ...process.env };
 const originalFetch = globalThis.fetch;
 const storedRefreshCredentials = {
@@ -294,7 +296,7 @@ describe('OAuth helpers without network access', () => {
     await expect(
       login({
         onAuth: authorizeCallback,
-      }),
+      } as OAuthLoginCallbacks),
     ).resolves.toMatchObject({
       access: 'login-access',
       refresh: 'login-refresh',
@@ -315,7 +317,7 @@ describe('OAuth helpers without network access', () => {
     vi.useFakeTimers();
     globalThis.fetch = vi.fn<typeof fetch>(async () => Response.json(discoveryDocument));
     const onAuth = vi.fn();
-    const resultPromise = login({ onAuth }).then(
+    const resultPromise = login({ onAuth } as unknown as OAuthLoginCallbacks).then(
       () => undefined,
       (error: unknown) => error,
     );
@@ -341,7 +343,7 @@ describe('OAuth helpers without network access', () => {
     await expect(
       login({
         onAuth: authorizeCallback,
-      }),
+      } as OAuthLoginCallbacks),
     ).rejects.toMatchObject({
       code: XaiErrorCode.TOKEN_EXCHANGE_FAILED,
       message: 'xAI token exchange failed: exchange socket closed',
@@ -357,7 +359,7 @@ describe('OAuth helpers without network access', () => {
     await expect(
       login({
         onAuth: authorizeCallback,
-      }),
+      } as OAuthLoginCallbacks),
     ).rejects.toMatchObject({
       code: XaiErrorCode.TOKEN_EXCHANGE_FAILED,
       message: expect.stringContaining('xAI token exchange returned invalid JSON:'),

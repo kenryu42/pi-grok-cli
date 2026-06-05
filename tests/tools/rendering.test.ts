@@ -43,7 +43,13 @@ describe('tool rendering helpers', () => {
     expect(renderText(renderResultText(result, false, 'summary'))).toBe('summary');
     expect(renderText(renderResultText(result, true, 'summary'))).toBe('full output');
     expect(
-      renderText(renderResultText({ content: [{ type: 'image' }], details: {} }, true, 'summary')),
+      renderText(
+        renderResultText(
+          { content: [{ type: 'image' }] } as Parameters<typeof renderResultText>[0],
+          true,
+          'summary',
+        ),
+      ),
     ).toBe('summary');
     expect(renderText(renderRunning(true) ?? text(''))).toBe('Running...');
     expect(renderRunning(false)).toBeUndefined();

@@ -23,16 +23,6 @@ export function registerUsageCommand(pi: Pick<ExtensionAPI, 'registerCommand'>) 
           return;
         }
 
-        const modelNames = grokModels
-          .slice(0, 5)
-          .map((m: Model<Api>) => m.id)
-          .join(', ');
-        const suffix = grokModels.length > 5 ? ` (+${grokModels.length - 5} more)` : '';
-        ctx.ui.notify(
-          `✓ Grok CLI: ${grokModels.length} models available (${modelNames}${suffix})`,
-          'info',
-        );
-
         const apiKey = token ?? (await registry.getApiKeyForProvider?.('grok-cli'));
         if (!apiKey) {
           ctx.ui.notify(formatQuota(undefined).join('\n'), 'info');
@@ -40,6 +30,7 @@ export function registerUsageCommand(pi: Pick<ExtensionAPI, 'registerCommand'>) 
         }
 
         try {
+          ctx.ui.notify('Fetching grok cli usage…', 'info');
           ctx.ui.notify(formatQuota(await fetchBillingUsage(apiKey)).join('\n'), 'info');
         } catch (err) {
           ctx.ui.notify(

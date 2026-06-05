@@ -32,7 +32,8 @@ describe('webSearchDelegate', () => {
       cwd: '/tmp',
       hasUI: false,
     } as import('@earendil-works/pi-coding-agent').ExtensionContext);
-    expect(result.content[0]?.text).toBe('ok');
+    const first = result.content[0];
+    expect(first?.type === 'text' && first.text).toBe('ok');
   });
 
   it('isPiWebAccessInstalled reflects agent install path', () => {

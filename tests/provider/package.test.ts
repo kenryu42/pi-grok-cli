@@ -17,7 +17,7 @@ describe('npm package manifest', () => {
   it('runs publish checks before packing', () => {
     expect(packageJson.scripts?.test).toBe('vitest run --reporter=agent');
     expect(packageJson.scripts?.coverage).toBe('vitest run --reporter=agent --coverage');
-    expect(packageJson.scripts?.typecheck).toBe('tsc --noEmit');
+    expect(packageJson.scripts?.typecheck).toBe('tsc -p tsconfig.check.json');
     expect(packageJson.scripts?.prepack).toBe(
       'bun run test && bun run coverage && bun run typecheck',
     );
