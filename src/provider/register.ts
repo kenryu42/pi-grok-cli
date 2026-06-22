@@ -10,7 +10,7 @@ import {
   ensureWebSearchDelegate,
   isPiWebAccessInstalled,
 } from '../tools/webSearchDelegate.js';
-import { streamGrokCli } from './stream.js';
+import { grokCliModelHeaders, streamGrokCli } from './stream.js';
 import { syncGrokTools } from './toolScope.js';
 import { registerUsageCommand } from './usage.js';
 
@@ -40,6 +40,10 @@ export default function registerGrokCli(pi: ExtensionAPI) {
       cost: m.cost,
       contextWindow: m.contextWindow,
       maxTokens: m.maxTokens,
+      // Carried as model.headers so the version-gate headers reach the server on
+      // every request even when the API-provider registry reverts to pi-ai's
+      // built-in openai-responses handler (see grokCliModelHeaders).
+      headers: grokCliModelHeaders(m.id),
     })),
     oauth: {
       name: 'Grok CLI',
