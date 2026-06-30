@@ -10,6 +10,7 @@ import {
   ensureWebSearchDelegate,
   isPiWebAccessInstalled,
 } from '../tools/webSearchDelegate.js';
+import { registerVisionFeature } from '../vision/register.js';
 import { grokCliModelHeaders, streamGrokCli } from './stream.js';
 import { syncGrokTools } from './toolScope.js';
 import { registerUsageCommand } from './usage.js';
@@ -99,4 +100,6 @@ export default function registerGrokCli(pi: ExtensionAPI) {
   });
 
   registerUsageCommand(pi);
+
+  registerVisionFeature(pi);
 }

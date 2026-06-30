@@ -1,11 +1,4 @@
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  realpathSync,
-  symlinkSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { registerFileTools } from '../../src/tools/files.js';
@@ -29,7 +22,7 @@ function expectStoryState(result: ToolResult, cwd: string, replacements: number,
 }
 
 function expectedPath(cwd: string, ...parts: string[]) {
-  return join(realpathSync(cwd), ...parts);
+  return join(cwd, ...parts);
 }
 
 function strReplace(cwd: string, old_str: string, new_str: string) {
@@ -58,7 +51,7 @@ describe('file tools', () => {
 
     expect(firstText(result)).toContain('.hidden');
     expect(firstText(result)).toContain('visible.txt');
-    expect(result.details).toEqual({ path: realpathSync(cwd) });
+    expect(result.details).toEqual({ path: cwd });
   });
 
   it('lists directory contents when Unix ls is not on PATH', async () => {
@@ -76,7 +69,7 @@ describe('file tools', () => {
       );
 
       expect(firstText(result)).toContain('visible.txt');
-      expect(result.details).toEqual({ path: realpathSync(cwd) });
+      expect(result.details).toEqual({ path: cwd });
     } finally {
       process.env.PATH = oldPath;
       vi.resetModules();
@@ -90,7 +83,6 @@ describe('file tools', () => {
     const tools = collectTools(registerFileTools);
 
     const lsResult = await executeTool(tools.get('LS'), { path: 'missing-dir' }, cwd);
-    const readResult = await executeTool(tools.get('Read'), { path: 'dir' }, cwd);
     const writeResult = await executeTool(
       tools.get('Write'),
       { path: 'blocked/file.txt', content: 'content' },
@@ -104,7 +96,6 @@ describe('file tools', () => {
     const deleteResult = await executeTool(tools.get('Delete'), { path: 'dir' }, cwd);
 
     expect(firstText(lsResult).startsWith('LS error:')).toBe(true);
-    expect(firstText(readResult).startsWith('Read error:')).toBe(true);
     expect(firstText(writeResult).startsWith('Write error:')).toBe(true);
     expect(firstText(replaceResult).startsWith('StrReplace error:')).toBe(true);
     expect(firstText(deleteResult).startsWith('Delete error:')).toBe(true);
@@ -130,35 +121,30 @@ describe('file tools', () => {
     });
   });
 
-  it('writes a nested file and reads a requested line window', async () => {
-    const cwd = tempDir('pi-grok-cli-files-');
+  it('allows file operations on paths outside the workspace', async () => {
+    const parent = tempDir('pi-grok-cli-files-parent-');
+    const cwd = join(parent, 'workspace');
+    mkdirSync(cwd);
     const tools = collectTools(registerFileTools);
 
     const writeResult = await executeTool(
       tools.get('Write'),
-      { path: 'nested/notes.txt', content: 'alpha\nbeta\ngamma\ndelta' },
+      { path: '../outside.txt', content: 'hello' },
       cwd,
     );
+    expect(firstText(writeResult)).toBe('Successfully wrote 5 bytes to ../outside.txt');
+    expect(existsSync(join(parent, 'outside.txt'))).toBe(true);
 
-    expect(firstText(writeResult)).toBe('Successfully wrote 22 bytes to nested/notes.txt');
-    expect(writeResult.details).toEqual({
-      path: expectedPath(cwd, 'nested/notes.txt'),
-      bytesWritten: 22,
-    });
-
-    const readResult = await executeTool(
-      tools.get('Read'),
-      { path: 'nested/notes.txt', offset: 1, limit: 2 },
+    const replaceResult = await executeTool(
+      tools.get('StrReplace'),
+      { path: '../outside.txt', old_str: 'hello', new_str: 'world' },
       cwd,
     );
+    expect(firstText(replaceResult)).toBe('Replaced 1 occurrence(s) in ../outside.txt');
+    expect(readFileSync(join(parent, 'outside.txt'), 'utf-8')).toBe('world');
 
-    expect(firstText(readResult)).toBe(
-      '2\tbeta\n3\tgamma\n\n[Showing lines 2-3 of 4 total lines. Use offset to see more.]',
-    );
-    expect(readResult.details).toEqual({
-      path: expectedPath(cwd, 'nested/notes.txt'),
-      totalLines: 4,
-    });
+    const lsResult = await executeTool(tools.get('LS'), { path: '..' }, cwd);
+    expect(firstText(lsResult)).toContain('outside.txt');
   });
 
   it('writes Cursor-style contents arguments', async () => {
@@ -191,108 +177,6 @@ describe('file tools', () => {
       path: expectedPath(cwd, 'emoji.txt'),
       bytesWritten: 8,
     });
-  });
-
-  it('honors a zero read limit', async () => {
-    const cwd = tempDir('pi-grok-cli-files-');
-    writeFileSync(join(cwd, 'notes.txt'), 'alpha\nbeta', 'utf-8');
-    const result = await executeTool(
-      collectTools(registerFileTools).get('Read'),
-      { path: 'notes.txt', limit: 0 },
-      cwd,
-    );
-
-    expect(firstText(result)).toBe(
-      '\n\n[Showing lines 1-0 of 2 total lines. Use offset to see more.]',
-    );
-    expect(result.details).toEqual({
-      path: expectedPath(cwd, 'notes.txt'),
-      totalLines: 2,
-    });
-  });
-
-  it('does not add a blank numbered line for files ending with a newline', async () => {
-    const cwd = tempDir('pi-grok-cli-files-');
-    writeFileSync(join(cwd, 'notes.txt'), 'alpha\nbeta\n', 'utf-8');
-    const result = await executeTool(
-      collectTools(registerFileTools).get('Read'),
-      { path: 'notes.txt' },
-      cwd,
-    );
-
-    expect(firstText(result)).toBe('1\talpha\n2\tbeta');
-    expect(result.details).toEqual({
-      path: expectedPath(cwd, 'notes.txt'),
-      totalLines: 2,
-    });
-  });
-
-  it('reports missing files without throwing', async () => {
-    const cwd = tempDir('pi-grok-cli-files-');
-    const result = await executeTool(
-      collectTools(registerFileTools).get('Read'),
-      { path: 'missing.txt' },
-      cwd,
-    );
-
-    expect(firstText(result)).toBe(`File not found: ${join(cwd, 'missing.txt')}`);
-    expect(result.details).toEqual({
-      path: join(cwd, 'missing.txt'),
-      exists: false,
-      totalLines: 0,
-    });
-  });
-
-  it('rejects paths that escape the workspace', async () => {
-    const cwd = tempDir('pi-grok-cli-files-');
-    const outside = tempDir('pi-grok-cli-files-outside-');
-    writeFileSync(join(outside, 'secret.txt'), 'secret', 'utf-8');
-    symlinkSync(outside, join(cwd, 'outside'));
-
-    const readResult = await executeTool(
-      collectTools(registerFileTools).get('Read'),
-      { path: 'outside/secret.txt' },
-      cwd,
-    );
-    const writeResult = await executeTool(
-      collectTools(registerFileTools).get('Write'),
-      { path: '../escape.txt', content: 'escape' },
-      cwd,
-    );
-
-    expect(firstText(readResult)).toBe('Read error: Path is outside the workspace');
-    expect(readResult.details).toEqual({
-      path: join(cwd, 'outside', 'secret.txt'),
-      exists: true,
-      totalLines: 0,
-      failed: true,
-      error: 'Path is outside the workspace',
-    });
-    expect(firstText(writeResult)).toBe('Write error: Path is outside the workspace');
-    expect(writeResult.details).toEqual({
-      path: join(cwd, '..', 'escape.txt'),
-      bytesWritten: 0,
-      failed: true,
-      error: 'Path is outside the workspace',
-    });
-    expect(existsSync(join(cwd, '..', 'escape.txt'))).toBe(false);
-  });
-
-  it('renders read errors for existing paths without claiming the file is missing', async () => {
-    const cwd = tempDir('pi-grok-cli-files-');
-    mkdirSync(join(cwd, 'dir'));
-    const tools = collectTools(registerFileTools);
-    const result = await executeTool(tools.get('Read'), { path: 'dir' }, cwd);
-
-    expect(firstText(result).startsWith('Read error:')).toBe(true);
-    expect(result.details).toEqual({
-      path: join(cwd, 'dir'),
-      exists: true,
-      totalLines: 0,
-      failed: true,
-      error: expect.stringContaining('EISDIR: illegal operation on a directory, read'),
-    });
-    expect(renderToolResult(tools.get('Read'), result)).toBe('0 line(s)');
   });
 
   it('replaces every exact string occurrence', async () => {
@@ -487,23 +371,11 @@ describe('file tools', () => {
     const tools = collectTools(registerFileTools);
 
     expect(renderToolCall(tools.get('LS'), { path: '.' })).toBe('LS .');
-    expect(
-      renderToolCall(tools.get('Read'), {
-        path: 'notes.txt',
-        offset: 5,
-        limit: 10,
-      }),
-    ).toBe('Read notes.txt (from 5, 10 lines)');
+    expect(renderToolCall(tools.get('Write'), { path: 'notes.txt' })).toBe('Write notes.txt');
     expect(renderToolCall(tools.get('StrReplace'), { path: 'notes.txt' })).toBe(
       'StrReplace notes.txt',
     );
     expect(renderToolCall(tools.get('Delete'), { path: 'notes.txt' })).toBe('Delete notes.txt');
-    expect(
-      renderToolResult(tools.get('Read'), {
-        content: [{ type: 'text', text: 'missing' }],
-        details: { exists: false, totalLines: 0 },
-      }),
-    ).toBe('File not found');
     expect(
       renderToolResult(tools.get('StrReplace'), {
         content: [{ type: 'text', text: 'no replacement' }],

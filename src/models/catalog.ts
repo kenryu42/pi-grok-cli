@@ -7,7 +7,7 @@
 const COST_BUILD = { input: 1, output: 2, cacheRead: 0.2, cacheWrite: 0.2 };
 const COST_COMPOSER_FAST = { input: 3, output: 15, cacheRead: 0.5, cacheWrite: 0 };
 const COST_43 = { input: 1.25, output: 2.5, cacheRead: 0.2, cacheWrite: 0 };
-const COST_420 = { input: 2, output: 6, cacheRead: 0.2, cacheWrite: 0 };
+const COST_420 = { input: 1.25, output: 2.5, cacheRead: 0.2, cacheWrite: 0 };
 
 // ─── Model type ───────────────────────────────────────────────────────────────
 
@@ -38,7 +38,7 @@ const FALLBACK_MODELS: GrokCliModelConfig[] = [
     id: 'grok-composer-2.5-fast',
     name: 'Composer 2.5 Fast (Grok CLI)',
     reasoning: false,
-    input: ['text', 'image'],
+    input: ['text'],
     cost: COST_COMPOSER_FAST,
     contextWindow: 200_000,
     maxTokens: 30_000,

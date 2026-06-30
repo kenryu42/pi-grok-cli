@@ -29,9 +29,13 @@ describe('model catalog', () => {
     ]);
     expect(models.find((model) => model.id === 'grok-composer-2.5-fast')).toMatchObject({
       contextWindow: 200_000,
+      input: ['text'],
     });
     expect(models.find((model) => model.id === 'grok-build')).toMatchObject({
       contextWindow: 512_000,
+    });
+    expect(models.find((model) => model.id === 'grok-4.20-0309-reasoning')).toMatchObject({
+      cost: { input: 1.25, output: 2.5, cacheRead: 0.2, cacheWrite: 0 },
     });
   });
 

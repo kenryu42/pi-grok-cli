@@ -51,12 +51,17 @@ describe('repository layout', () => {
       'src/provider/usage.ts',
       'src/shared/errors.ts',
       'src/tools/files.ts',
+      'src/tools/read.ts',
       'src/tools/register.ts',
       'src/tools/rendering.ts',
       'src/tools/search.ts',
       'src/tools/shell.ts',
       'src/tools/webSearch.ts',
       'src/tools/webSearchDelegate.ts',
+      'src/vision/cache.ts',
+      'src/vision/config.ts',
+      'src/vision/describe.ts',
+      'src/vision/register.ts',
     ]);
   });
 
