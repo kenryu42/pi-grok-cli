@@ -54,7 +54,10 @@ pi -e ./pi-grok-cli
 /login
 ```
 
-Select **"Grok CLI"** from the provider list. This opens the xAI OAuth page in your browser.
+Select **"Grok CLI"** from the provider list, then choose a login method:
+
+- **Browser OAuth callback** opens the xAI OAuth page and waits for the local callback.
+- **Device code (SSH/headless)** shows a verification URL and short code. Open the URL on any browser, enter/confirm the code, and pi waits until xAI returns tokens to the remote machine.
 
 ### Select a model
 
