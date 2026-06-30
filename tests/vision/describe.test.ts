@@ -178,6 +178,18 @@ describe('handleReadResult — image routing', () => {
     ]);
   });
 
+  it('preserves text when replacing images in mixed read results', async () => {
+    const result = await handleReadResult(
+      readEvent([{ type: 'text', text: 'file metadata' }, imageBlock()]),
+      buildCtx(),
+    );
+
+    expect(result?.content).toEqual([
+      { type: 'text', text: 'file metadata' },
+      { type: 'text', text: '[Image 1 — described by grok-build]\na screenshot of a button' },
+    ]);
+  });
+
   it('stays silent while describing and writes the cache file', async () => {
     const ctx = buildCtx();
     await handleReadResult(readEvent([imageBlock()]), ctx);

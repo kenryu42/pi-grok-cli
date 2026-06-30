@@ -3,8 +3,10 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { resolveModels } from '../models/catalog.js';
 
-export const getConfigPath = () => join(homedir(), '.pi', 'grok-cli-vision.json');
-export const getCachePath = () => join(homedir(), '.pi', 'grok-cli-vision-cache.json');
+const homePath = () => process.env.HOME || homedir();
+
+export const getConfigPath = () => join(homePath(), '.pi', 'grok-cli-vision.json');
+export const getCachePath = () => join(homePath(), '.pi', 'grok-cli-vision-cache.json');
 
 export const DEFAULT_DESCRIBE_MODEL = 'grok-build';
 export const DEFAULT_MAX_IMAGES = 4;

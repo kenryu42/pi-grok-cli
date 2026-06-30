@@ -218,6 +218,23 @@ function textContent(text: string): TextContent {
   return { type: 'text', text };
 }
 
+function replaceImagesWithText(
+  content: (TextContent | ImageContent)[],
+  replacements: TextContent[],
+  skipped?: TextContent,
+): TextContent[] {
+  let imageIndex = 0;
+  const parts = content.flatMap((part) => {
+    if (part.type === 'text') return [part];
+
+    const replacement = replacements[imageIndex];
+    imageIndex += 1;
+    return replacement ? [replacement] : [];
+  });
+
+  return skipped ? [...parts, skipped] : parts;
+}
+
 async function resolveApiKey(ctx: ExtensionContext): Promise<string | undefined> {
   if (process.env.GROK_CLI_OAUTH_TOKEN) return process.env.GROK_CLI_OAUTH_TOKEN;
   try {
@@ -304,7 +321,19 @@ export async function handleReadResult(
       '[grok-cli-vision] No API key — run /login grok-cli or set GROK_CLI_OAUTH_TOKEN',
       'warning',
     );
-    return { content: [textContent('[grok-cli-vision: image not described — not authenticated]')] };
+    return {
+      content: replaceImagesWithText(
+        event.content,
+        selected.map(() =>
+          textContent('[grok-cli-vision: image not described — not authenticated]'),
+        ),
+        skipped > 0
+          ? textContent(
+              `[grok-cli-vision: ${skipped} additional image(s) omitted (maxImages=${config.maxImages}).]`,
+            )
+          : undefined,
+      ),
+    };
   }
 
   if (warning) ctx.ui.notify(`[grok-cli-vision] ${warning}`, 'warning');
@@ -314,15 +343,18 @@ export async function handleReadResult(
     selected.map((img, index) => describeSingle(img, index, config, cachePath, apiKey, ctx)),
   );
 
-  const parts: TextContent[] = descriptions.map((description, index) =>
+  const parts = descriptions.map((description, index) =>
     textContent(`[Image ${index + 1} — described by ${config.model}]\n${description}`),
   );
-  if (skipped > 0) {
-    parts.push(
-      textContent(
-        `[grok-cli-vision: ${skipped} additional image(s) omitted (maxImages=${config.maxImages}).]`,
-      ),
-    );
-  }
-  return { content: parts };
+  return {
+    content: replaceImagesWithText(
+      event.content,
+      parts,
+      skipped > 0
+        ? textContent(
+            `[grok-cli-vision: ${skipped} additional image(s) omitted (maxImages=${config.maxImages}).]`,
+          )
+        : undefined,
+    ),
+  };
 }
