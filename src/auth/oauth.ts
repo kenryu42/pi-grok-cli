@@ -404,20 +404,27 @@ async function exchangeCode(
 async function sleep(ms: number, signal?: AbortSignal) {
   if (signal?.aborted) throw new Error('Login cancelled');
   await new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(resolve, ms);
-    signal?.addEventListener(
-      'abort',
-      () => {
-        clearTimeout(timeout);
-        reject(new Error('Login cancelled'));
-      },
-      { once: true },
-    );
+    const onAbort = () => {
+      clearTimeout(timeout);
+      reject(new Error('Login cancelled'));
+    };
+    const timeout = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener('abort', onAbort, { once: true });
   });
 }
 
-function readNumber(value: unknown, fallback: number): number {
-  return typeof value === 'number' ? value : Number(value ?? fallback);
+function readPositiveNumber(value: unknown, fallback: number, field: string): number {
+  const parsed = typeof value === 'number' ? value : Number(value ?? fallback);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new XaiOAuthError(
+      `xAI device authorization returned invalid ${field}.`,
+      XaiErrorCode.DEVICE_AUTHORIZATION_INVALID,
+    );
+  }
+  return parsed;
 }
 
 async function requestDeviceCode(deviceAuthorizationEndpoint: string) {
@@ -456,8 +463,8 @@ async function requestDeviceCode(deviceAuthorizationEndpoint: string) {
     deviceCode,
     userCode,
     verificationUri: validateEndpoint(verificationUri, 'verification_uri'),
-    intervalSeconds: readNumber(payload.interval, 5),
-    expiresInSeconds: readNumber(payload.expires_in, 1800),
+    intervalSeconds: readPositiveNumber(payload.interval, 5, 'interval'),
+    expiresInSeconds: readPositiveNumber(payload.expires_in, 1800, 'expires_in'),
   };
 }
 
@@ -471,8 +478,18 @@ async function loginWithDeviceCode(
       XaiErrorCode.DEVICE_AUTHORIZATION_UNAVAILABLE,
     );
   }
+  const onDeviceCode =
+    typeof (callbacks as { onDeviceCode?: unknown }).onDeviceCode === 'function'
+      ? callbacks.onDeviceCode
+      : undefined;
+  if (!onDeviceCode) {
+    throw new XaiOAuthError(
+      'xAI device authorization requires a device-code capable pi login UI.',
+      XaiErrorCode.DEVICE_AUTHORIZATION_UNAVAILABLE,
+    );
+  }
   const device = await requestDeviceCode(discovery.device_authorization_endpoint);
-  callbacks.onDeviceCode({
+  onDeviceCode({
     userCode: device.userCode,
     verificationUri: device.verificationUri,
     intervalSeconds: device.intervalSeconds,
@@ -544,16 +561,19 @@ export async function login(
   callbacks: import('@earendil-works/pi-ai').OAuthLoginCallbacks,
 ): Promise<import('@earendil-works/pi-ai').OAuthCredentials> {
   const discovery = await discover();
-  const method =
-    discovery.device_authorization_endpoint && typeof callbacks.onSelect === 'function'
-      ? await callbacks.onSelect({
-          message: 'Select Grok CLI login method:',
-          options: [
-            { id: 'browser', label: 'Browser OAuth callback' },
-            { id: 'device', label: 'Device code (SSH/headless)' },
-          ],
-        })
-      : 'browser';
+  const supportsDeviceLogin =
+    discovery.device_authorization_endpoint &&
+    typeof callbacks.onSelect === 'function' &&
+    typeof (callbacks as { onDeviceCode?: unknown }).onDeviceCode === 'function';
+  const method = supportsDeviceLogin
+    ? await callbacks.onSelect({
+        message: 'Select Grok CLI login method:',
+        options: [
+          { id: 'browser', label: 'Browser OAuth callback' },
+          { id: 'device', label: 'Device code (SSH/headless)' },
+        ],
+      })
+    : 'browser';
   if (!method) throw new Error('Login cancelled');
   if (method === 'device') return loginWithDeviceCode(discovery, callbacks);
 
