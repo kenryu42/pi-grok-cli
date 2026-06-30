@@ -90,7 +90,7 @@ Grok CLI models are trained on Cursor-style tools. This extension registers shim
 | Terminal | `Shell` |
 | Web | `WebSearch` — only when [pi-web-access](https://www.npmjs.com/package/pi-web-access) is installed |
 
-These tools auto-activate when the active provider is **grok-cli**. The shims normalize common Cursor/Grok argument shapes (`contents` for writes, `glob_pattern`/`glob_filter` for search, `old_string`/`new_string` or `oldText`/`newText` for replacements) so agentic workflows don't fail on schema mismatches.
+These tools auto-activate when the active provider is **grok-cli**. `Read` is an alias for pi's native `read` tool (same image support, truncation, and 1-indexed `offset`), kept under the capital-`Read` name Cursor-trained models expect. The file shims (`Write`, `StrReplace`, `Edit`, `Delete`, `LS`) normalize common Cursor/Grok argument shapes (`contents` for writes, `old_string`/`new_string` or `oldText`/`newText` for replacements) so agentic workflows don't fail on schema mismatches.
 
 **Web search:** when pi-web-access is installed and grok-cli is active, pi's native `web_search` is removed from the active set and `WebSearch` (which delegates to pi-web-access) is used instead. Other providers keep using `web_search`. Without pi-web-access, nothing changes.
 

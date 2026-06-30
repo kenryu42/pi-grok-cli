@@ -11,7 +11,6 @@ import {
   type VisionImage,
 } from './cache.js';
 import { DEFAULT_PROMPT, getCachePath, loadConfig, type VisionConfig } from './config.js';
-import { debug } from './debug.js';
 
 const REQUEST_TIMEOUT_MS = 30_000;
 const MAX_ATTEMPTS = 3;
@@ -194,15 +193,12 @@ export async function describeImage(
     model,
   );
 
-  debug(`describe ${model}: HTTP ${res.status} ${res.statusText}`);
   if (!res.ok) {
     const body = await readErrorBody(res);
-    debug(`describe ${model}: error body: ${body.slice(0, 500)}`);
     throw new Error(explainHttpError(res.status, body, model));
   }
 
   const rawText = await res.text();
-  debug(`describe ${model}: raw response (first 500 chars): ${rawText.slice(0, 500)}`);
   let json: unknown;
   try {
     json = JSON.parse(rawText);
@@ -283,36 +279,26 @@ export async function handleReadResult(
   event: ToolResultEvent,
   ctx: ExtensionContext,
 ): Promise<{ content: TextContent[] } | undefined> {
-  if (event.toolName !== 'read') return;
-
-  const modelId = ctx.model?.id ?? '<unknown>';
-  const modelInput = ctx.model?.input;
-  const contentTypes = event.content.map((c) => c.type).join(',');
-  debug(
-    `tool_result read: model=${modelId} provider=${ctx.model?.provider ?? '<none>'} input=${JSON.stringify(modelInput)} content=[${contentTypes}]`,
-  );
+  // Accept both the native `read` tool and the capital-`Read` Cursor shim,
+  // which delegates to the native definition. Both return image blocks.
+  if (event.toolName !== 'read' && event.toolName !== 'Read') return;
 
   // Route when the active model exists and does not declare image input. This
   // matches pi's own read tool (getNonVisionImageNote), which treats any model
   // whose input lacks "image" — including input:[] — as non-vision.
-  if (!modelInput || modelInput.includes('image')) {
-    debug(`handleReadResult: skip (model handles images or model unknown)`);
-    return;
-  }
+  const modelInput = ctx.model?.input;
+  if (!modelInput || modelInput.includes('image')) return;
 
   const { config, warning } = loadConfig();
-  debug(`handleReadResult: config enabled=${config.enabled} model=${config.model}`);
   if (config.enabled === false) return;
 
   const images = event.content.filter((c): c is ImageContent => c.type === 'image');
-  debug(`handleReadResult: found ${images.length} image block(s)`);
   if (images.length === 0) return;
 
   const selected = images.slice(0, config.maxImages);
   const skipped = images.length - selected.length;
 
   const apiKey = await resolveApiKey(ctx);
-  debug(`handleReadResult: apiKey resolved=${Boolean(apiKey)}`);
   if (!apiKey) {
     ctx.ui.notify(
       '[grok-cli-vision] No API key — run /login grok-cli or set GROK_CLI_OAUTH_TOKEN',
@@ -338,6 +324,5 @@ export async function handleReadResult(
       ),
     );
   }
-  debug(`handleReadResult: returning ${parts.length} text part(s)`);
   return { content: parts };
 }

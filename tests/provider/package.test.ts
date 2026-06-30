@@ -51,6 +51,7 @@ describe('repository layout', () => {
       'src/provider/usage.ts',
       'src/shared/errors.ts',
       'src/tools/files.ts',
+      'src/tools/read.ts',
       'src/tools/register.ts',
       'src/tools/rendering.ts',
       'src/tools/search.ts',
@@ -59,7 +60,6 @@ describe('repository layout', () => {
       'src/tools/webSearchDelegate.ts',
       'src/vision/cache.ts',
       'src/vision/config.ts',
-      'src/vision/debug.ts',
       'src/vision/describe.ts',
       'src/vision/register.ts',
     ]);

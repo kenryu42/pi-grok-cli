@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { registerFileTools } from './files.js';
+import { createReadShim } from './read.js';
 import { registerSearchTools } from './search.js';
 import { registerShellTool } from './shell.js';
 import { registerWebSearchTool } from './webSearch.js';
@@ -33,5 +34,6 @@ export function registerGrokTools(pi: ExtensionAPI) {
   if (isPiWebAccessInstalled()) registerWebSearchTool(pi);
   registerSearchTools(pi);
   registerFileTools(pi);
+  pi.registerTool(createReadShim());
   registerShellTool(pi);
 }

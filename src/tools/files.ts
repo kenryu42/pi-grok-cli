@@ -6,12 +6,11 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { basename, dirname, join, resolve, sep } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { Type } from '@earendil-works/pi-ai';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import {
   booleanDetail,
-  detailRecord,
   fileError,
   fileNotFound,
   MAX_OUTPUT_CHARS,
@@ -25,7 +24,6 @@ import {
 } from './rendering.js';
 
 type ReplacementEdit = { oldText: string; newText: string };
-type FileDetails = { path: string; [key: string]: unknown };
 type WriteArgs = { path: string; content: string };
 type StrReplaceArgs = { path: string; old_str: string; new_str: string };
 type EditArgs = {
@@ -125,42 +123,15 @@ function renderPathToolCall(toolName: string, filePath: string, theme: ToolTheme
   return text(theme.fg('toolTitle', theme.bold(`${toolName} `)) + theme.fg('accent', filePath));
 }
 
-async function canonicalizeWithinWorkspace(cwd: string, requestedPath: string) {
-  const targetPath = resolve(cwd, requestedPath);
-  const realCwd = await fs.realpath(cwd);
-  const missingParts: string[] = [];
-  let currentPath = targetPath;
-  let realTarget: string | undefined;
-  while (!realTarget) {
-    try {
-      realTarget = join(await fs.realpath(currentPath), ...[...missingParts].reverse());
-    } catch (error) {
-      const parentPath = dirname(currentPath);
-      if (parentPath === currentPath) throw error;
-      missingParts.push(basename(currentPath));
-      currentPath = parentPath;
-    }
-  }
-  if (realTarget !== realCwd && !realTarget.startsWith(`${realCwd}${sep}`)) {
-    throw new Error('Path is outside the workspace');
-  }
-  return realTarget;
-}
+type FileDetails = { path: string; [key: string]: unknown };
 
-async function existingPathWithinWorkspace(cwd: string, requestedPath: string) {
-  const safePath = await canonicalizeWithinWorkspace(cwd, requestedPath);
-  return existsSync(safePath) ? safePath : undefined;
-}
-
-async function existingPathOrNotFound<T extends FileDetails>(
+function existingPathOrNotFound<T extends FileDetails>(
   cwd: string,
   requestedPath: string,
   extraDetails: Omit<T, 'path'>,
 ) {
-  return (
-    (await existingPathWithinWorkspace(cwd, requestedPath)) ??
-    fileNotFound(resolve(cwd, requestedPath), extraDetails)
-  );
+  const target = resolve(cwd, requestedPath);
+  return existsSync(target) ? target : fileNotFound(target, extraDetails);
 }
 
 function replacementPathOrNotFound(cwd: string, requestedPath: string) {
@@ -186,17 +157,16 @@ export function registerFileTools(pi: ExtensionAPI) {
       const targetPath = resolve(ctx.cwd, params.path);
 
       try {
-        const safePath = await canonicalizeWithinWorkspace(ctx.cwd, params.path);
         if (signal?.aborted) throw new Error('The operation was aborted');
 
-        let output = (await fs.readdir(safePath)).sort().join('\n');
+        let output = (await fs.readdir(targetPath)).sort().join('\n');
         if (output.length > MAX_OUTPUT_CHARS) {
           output = `${output.slice(0, MAX_OUTPUT_CHARS)}\n\n[LS: output truncated at 50KB]`;
         }
 
         return {
           content: [{ type: 'text', text: output }],
-          details: { path: safePath },
+          details: { path: targetPath },
         };
       } catch (error: unknown) {
         const err = error as ToolError;
@@ -221,99 +191,6 @@ export function registerFileTools(pi: ExtensionAPI) {
         expanded,
         isPartial,
         theme.fg('muted', stringDetail(result, 'path')),
-      );
-    },
-  });
-
-  // ── Read tool ────────────────────────────────────────────────────────
-
-  const ReadParams = Type.Object({
-    path: Type.String({
-      description: 'Path to the file to read',
-    }),
-    offset: Type.Optional(
-      Type.Number({
-        description: 'Line number to start reading from (0-indexed)',
-      }),
-    ),
-    limit: Type.Optional(
-      Type.Number({
-        description: 'Maximum number of lines to read',
-      }),
-    ),
-  });
-
-  pi.registerTool({
-    name: 'Read',
-    label: 'Read',
-    description: 'Read the contents of a file. Returns the file content with line numbers.',
-    parameters: ReadParams,
-
-    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const filePath = resolve(ctx.cwd, params.path);
-
-      try {
-        const safePath = await existingPathOrNotFound(ctx.cwd, params.path, {
-          exists: false,
-          totalLines: 0,
-        });
-        if (typeof safePath !== 'string') return safePath;
-
-        const content = readFileSync(safePath, 'utf-8');
-        const lines = content.endsWith('\n')
-          ? content.slice(0, -1).split('\n')
-          : content.split('\n');
-
-        const startLine = params.offset ?? 0;
-        const endLine =
-          params.limit !== undefined
-            ? Math.min(startLine + params.limit, lines.length)
-            : Math.min(startLine + 2000, lines.length);
-
-        const selectedLines = lines.slice(startLine, endLine);
-        const numberedLines = selectedLines.map((line, i) => `${startLine + i + 1}\t${line}`);
-
-        let output = numberedLines.join('\n');
-        if (endLine < lines.length) {
-          output += `\n\n[Showing lines ${startLine + 1}-${endLine} of ${lines.length} total lines. Use offset to see more.]`;
-        }
-
-        if (output.length > MAX_OUTPUT_CHARS) {
-          output = `${output.slice(0, MAX_OUTPUT_CHARS)}\n\n[Output truncated at 50KB]`;
-        }
-
-        return {
-          content: [{ type: 'text', text: output }],
-          details: { path: safePath, totalLines: lines.length },
-        };
-      } catch (error: unknown) {
-        const err = error as { code?: string };
-        return fileError(error, 'Read', filePath, {
-          exists: err.code !== 'ENOENT',
-          totalLines: 0,
-        });
-      }
-    },
-    renderCall(args, theme) {
-      const range =
-        args.offset !== undefined || args.limit !== undefined
-          ? theme.fg(
-              'muted',
-              ` (from ${args.offset ?? 0}${args.limit !== undefined ? `, ${args.limit} lines` : ''})`,
-            )
-          : '';
-      return text(
-        theme.fg('toolTitle', theme.bold('Read ')) + theme.fg('accent', args.path) + range,
-      );
-    },
-    renderResult(result, { expanded, isPartial }, theme) {
-      return renderResultSummary(
-        result,
-        expanded,
-        isPartial,
-        detailRecord(result).exists === false
-          ? theme.fg('error', 'File not found')
-          : theme.fg('muted', `${numberDetail(result, 'totalLines')} line(s)`),
       );
     },
   });
@@ -349,9 +226,8 @@ export function registerFileTools(pi: ExtensionAPI) {
       const filePath = resolve(ctx.cwd, params.path);
 
       try {
-        const safePath = await canonicalizeWithinWorkspace(ctx.cwd, params.path);
-        mkdirSync(dirname(safePath), { recursive: true });
-        writeFileSync(safePath, params.content, 'utf-8');
+        mkdirSync(dirname(filePath), { recursive: true });
+        writeFileSync(filePath, params.content, 'utf-8');
         const bytesWritten = Buffer.byteLength(params.content, 'utf8');
 
         return {
@@ -361,7 +237,7 @@ export function registerFileTools(pi: ExtensionAPI) {
               text: `Successfully wrote ${bytesWritten} bytes to ${params.path}`,
             },
           ],
-          details: { path: safePath, bytesWritten },
+          details: { path: filePath, bytesWritten },
         };
       } catch (error: unknown) {
         const err = error as ToolError;
@@ -434,12 +310,12 @@ export function registerFileTools(pi: ExtensionAPI) {
       const filePath = resolve(ctx.cwd, requestedPath);
 
       try {
-        const safePath = await replacementPathOrNotFound(ctx.cwd, requestedPath);
-        if (typeof safePath !== 'string') return safePath;
+        const resolved = replacementPathOrNotFound(ctx.cwd, requestedPath);
+        if (typeof resolved !== 'string') return resolved;
 
-        const content = readFileSync(safePath, 'utf-8');
+        const content = readFileSync(resolved, 'utf-8');
         if (params.old_str === '') {
-          return replacementResult('StrReplace error: old_str must not be empty', safePath);
+          return replacementResult('StrReplace error: old_str must not be empty', resolved);
         }
 
         const count = content.split(params.old_str).length - 1;
@@ -447,12 +323,12 @@ export function registerFileTools(pi: ExtensionAPI) {
         if (count === 0) {
           return replacementResult(
             `String not found in ${params.path}: "${params.old_str}"`,
-            safePath,
+            resolved,
           );
         }
 
         const newContent = content.replaceAll(params.old_str, () => params.new_str);
-        writeFileSync(safePath, newContent, 'utf-8');
+        writeFileSync(resolved, newContent, 'utf-8');
 
         return {
           content: [
@@ -461,7 +337,7 @@ export function registerFileTools(pi: ExtensionAPI) {
               text: `Replaced ${count} occurrence(s) in ${params.path}`,
             },
           ],
-          details: { path: safePath, replacements: count },
+          details: { path: resolved, replacements: count },
         };
       } catch (error: unknown) {
         return fileError(error, 'StrReplace', filePath, { replacements: 0 });
@@ -536,8 +412,8 @@ export function registerFileTools(pi: ExtensionAPI) {
       const filePath = resolve(ctx.cwd, params.path);
 
       try {
-        const safePath = await replacementPathOrNotFound(ctx.cwd, params.path);
-        if (typeof safePath !== 'string') return safePath;
+        const resolved = replacementPathOrNotFound(ctx.cwd, params.path);
+        if (typeof resolved !== 'string') return resolved;
         if (!params.edits?.length) {
           return {
             content: [
@@ -548,20 +424,20 @@ export function registerFileTools(pi: ExtensionAPI) {
                   : 'Edit error: provide at least one exact text replacement',
               },
             ],
-            details: { path: safePath, replacements: 0 },
+            details: { path: resolved, replacements: 0 },
           };
         }
         if (params.edits.some((edit) => edit.oldText === '')) {
-          return replacementResult('Edit error: oldText must not be empty', safePath);
+          return replacementResult('Edit error: oldText must not be empty', resolved);
         }
 
-        const result = applyEdits(readFileSync(safePath, 'utf-8'), params.edits);
+        const result = applyEdits(readFileSync(resolved, 'utf-8'), params.edits);
 
         if (result.replacements === 0) {
-          return replacementResult(`No replacement strings found in ${params.path}`, safePath);
+          return replacementResult(`No replacement strings found in ${params.path}`, resolved);
         }
 
-        writeFileSync(safePath, result.content, 'utf-8');
+        writeFileSync(resolved, result.content, 'utf-8');
 
         return {
           content: [
@@ -570,7 +446,7 @@ export function registerFileTools(pi: ExtensionAPI) {
               text: `Applied ${result.replacements} replacement(s) in ${params.path}`,
             },
           ],
-          details: { path: safePath, replacements: result.replacements },
+          details: { path: resolved, replacements: result.replacements },
         };
       } catch (error: unknown) {
         return fileError(error, 'Edit', filePath, { replacements: 0 });
@@ -602,14 +478,14 @@ export function registerFileTools(pi: ExtensionAPI) {
       const filePath = resolve(ctx.cwd, params.path);
 
       try {
-        const safePath = await existingPathOrNotFound(ctx.cwd, params.path, { deleted: false });
-        if (typeof safePath !== 'string') return safePath;
+        const resolved = existingPathOrNotFound(ctx.cwd, params.path, { deleted: false });
+        if (typeof resolved !== 'string') return resolved;
 
-        unlinkSync(safePath);
+        unlinkSync(resolved);
 
         return {
           content: [{ type: 'text', text: `Successfully deleted ${params.path}` }],
-          details: { path: safePath, deleted: true },
+          details: { path: resolved, deleted: true },
         };
       } catch (error: unknown) {
         return fileError(error, 'Delete', filePath, { deleted: false });
