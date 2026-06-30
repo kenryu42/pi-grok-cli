@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-interface CacheEntry {
+export interface CacheEntry {
   createdAt: string;
   description: string;
   imageHash: string;
@@ -11,7 +11,7 @@ interface CacheEntry {
   promptHash: string;
 }
 
-interface CacheFile {
+export interface CacheFile {
   version: 1;
   entries: Record<string, CacheEntry>;
 }
@@ -24,6 +24,8 @@ export interface VisionImage {
 function emptyCache(): CacheFile {
   return { version: 1, entries: {} };
 }
+
+const cacheUpdates = new Map<string, Promise<void>>();
 
 export function loadCache(cachePath: string): CacheFile {
   try {
@@ -45,6 +47,26 @@ export function loadCache(cachePath: string): CacheFile {
 export function saveCache(cache: CacheFile, cachePath: string) {
   mkdirSync(dirname(cachePath), { recursive: true });
   writeFileSync(cachePath, JSON.stringify(cache, null, 2));
+}
+
+export async function updateCache(cachePath: string, update: (cache: CacheFile) => void) {
+  const previous = cacheUpdates.get(cachePath) ?? Promise.resolve();
+  let release = () => {};
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const next = previous.then(() => current);
+  cacheUpdates.set(cachePath, next);
+
+  await previous;
+  try {
+    const cache = loadCache(cachePath);
+    update(cache);
+    saveCache(cache, cachePath);
+  } finally {
+    release();
+    if (cacheUpdates.get(cachePath) === next) cacheUpdates.delete(cachePath);
+  }
 }
 
 export function clearCache(cachePath: string) {

@@ -10,6 +10,7 @@ import {
   makeCacheKey,
   pruneCache,
   saveCache,
+  updateCache,
   type VisionImage,
 } from '../../src/vision/cache.js';
 
@@ -71,6 +72,32 @@ describe('grok-cli-vision cache', () => {
     expect(reloaded.entries[key]?.description).toBe('a description');
     expect(reloaded.entries[key]?.model).toBe('grok-build');
     expect(cacheStats(path).entries).toBe(1);
+  });
+
+  it('serializes updates so concurrent writers preserve distinct entries', async () => {
+    const path = cachePath();
+    const images: VisionImage[] = ['first', 'second'].map((value) => ({
+      data: Buffer.from(value).toString('base64'),
+      mimeType: 'image/png',
+    }));
+
+    await Promise.all(
+      images.map((img, i) =>
+        updateCache(path, (cache) => {
+          cache.entries[makeCacheKey(img, 'grok-build', prompt)] = makeCacheEntry(
+            img,
+            'grok-build',
+            prompt,
+            `d${i}`,
+          );
+        }),
+      ),
+    );
+
+    expect(Object.values(loadCache(path).entries).map((entry) => entry.description)).toEqual([
+      'd0',
+      'd1',
+    ]);
   });
 
   it('prunes to the most recent entries by createdAt', () => {

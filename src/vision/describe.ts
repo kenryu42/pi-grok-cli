@@ -7,7 +7,7 @@ import {
   makeCacheEntry,
   makeCacheKey,
   pruneCache,
-  saveCache,
+  updateCache,
   type VisionImage,
 } from './cache.js';
 import { DEFAULT_PROMPT, getCachePath, loadConfig, type VisionConfig } from './config.js';
@@ -269,15 +269,15 @@ async function describeSingle(
       ctx.signal,
     );
     if (config.cacheEnabled) {
-      const cache = loadCache(cachePath);
-      cache.entries[cacheKey] = makeCacheEntry(
-        visionImg,
-        config.model,
-        DEFAULT_PROMPT,
-        description,
-      );
-      pruneCache(cache, config.cacheMaxEntries);
-      saveCache(cache, cachePath);
+      await updateCache(cachePath, (cache) => {
+        cache.entries[cacheKey] = makeCacheEntry(
+          visionImg,
+          config.model,
+          DEFAULT_PROMPT,
+          description,
+        );
+        pruneCache(cache, config.cacheMaxEntries);
+      });
     }
     return description;
   } catch (err) {
