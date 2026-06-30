@@ -36,6 +36,7 @@ const TOKEN_REQUEST_TIMEOUT_MS = Number.parseInt(
 interface XaiDiscovery {
   authorization_endpoint: string;
   token_endpoint: string;
+  device_authorization_endpoint?: string;
 }
 
 export interface XaiOAuthCredentials {
@@ -146,9 +147,18 @@ async function discover(): Promise<XaiDiscovery> {
     'authorization_endpoint',
   );
   const tokenEndpoint = validateEndpoint(String(payload.token_endpoint ?? ''), 'token_endpoint');
+  const deviceAuthorizationEndpoint = payload.device_authorization_endpoint
+    ? validateEndpoint(
+        String(payload.device_authorization_endpoint),
+        'device_authorization_endpoint',
+      )
+    : undefined;
   return {
     authorization_endpoint: authorizationEndpoint,
     token_endpoint: tokenEndpoint,
+    ...(deviceAuthorizationEndpoint
+      ? { device_authorization_endpoint: deviceAuthorizationEndpoint }
+      : {}),
   };
 }
 
@@ -318,6 +328,45 @@ async function tokenResponseJson(
   }
 }
 
+async function tokenResponsePayload(response: Response): Promise<Record<string, unknown>> {
+  const text = await tokenResponseText(response);
+  try {
+    return JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    return { error: `HTTP ${response.status}`, error_description: text };
+  }
+}
+
+function credentialsFromLoginPayload(
+  payload: Record<string, unknown>,
+  tokenEndpoint: string,
+  invalidCode: string,
+  label: string,
+): XaiOAuthCredentials {
+  const access = String(payload.access_token ?? '');
+  const refresh = String(payload.refresh_token ?? '');
+  if (!access) {
+    throw new XaiOAuthError(`xAI ${label} did not return access_token.`, invalidCode);
+  }
+  if (!refresh) {
+    throw new XaiOAuthError(`xAI ${label} did not return refresh_token.`, invalidCode);
+  }
+  const expiresIn =
+    typeof payload.expires_in === 'number'
+      ? payload.expires_in
+      : Number(payload.expires_in ?? 3600);
+  return {
+    access,
+    refresh,
+    expires: Date.now() + expiresIn * 1000 - REFRESH_SKEW_MS,
+    tokenEndpoint,
+    discovery: { authorization_endpoint: '', token_endpoint: tokenEndpoint },
+    idToken: String(payload.id_token ?? ''),
+    tokenType: String(payload.token_type ?? 'Bearer'),
+    baseUrl: getBaseUrl(),
+  };
+}
+
 async function exchangeCode(
   tokenEndpoint: string,
   code: string,
@@ -342,39 +391,151 @@ async function exchangeCode(
       XaiErrorCode.TOKEN_EXCHANGE_FAILED,
     );
   }
-  const payload = await tokenResponseJson(
-    response,
-    XaiErrorCode.TOKEN_EXCHANGE_FAILED,
+  return credentialsFromLoginPayload(
+    await tokenResponseJson(response, XaiErrorCode.TOKEN_EXCHANGE_FAILED, 'token exchange'),
+    tokenEndpoint,
+    XaiErrorCode.TOKEN_EXCHANGE_INVALID,
     'token exchange',
   );
-  const access = String(payload.access_token ?? '');
-  const refresh = String(payload.refresh_token ?? '');
-  if (!access) {
+}
+
+// ─── Device authorization ───────────────────────────────────────────────────
+
+async function sleep(ms: number, signal?: AbortSignal) {
+  if (signal?.aborted) throw new Error('Login cancelled');
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(resolve, ms);
+    signal?.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(timeout);
+        reject(new Error('Login cancelled'));
+      },
+      { once: true },
+    );
+  });
+}
+
+function readNumber(value: unknown, fallback: number): number {
+  return typeof value === 'number' ? value : Number(value ?? fallback);
+}
+
+async function requestDeviceCode(deviceAuthorizationEndpoint: string) {
+  const response = await fetchTokenResponse(
+    deviceAuthorizationEndpoint,
+    new URLSearchParams({
+      client_id: CLIENT_ID,
+      scope: SCOPE,
+    }),
+    XaiErrorCode.DEVICE_AUTHORIZATION_FAILED,
+    'device authorization',
+  );
+  if (!response.ok) {
     throw new XaiOAuthError(
-      'xAI token exchange did not return access_token.',
-      XaiErrorCode.TOKEN_EXCHANGE_INVALID,
+      `xAI device authorization failed: ${response.status} ${await tokenResponseText(response)}`,
+      XaiErrorCode.DEVICE_AUTHORIZATION_FAILED,
     );
   }
-  if (!refresh) {
+  const payload = await tokenResponseJson(
+    response,
+    XaiErrorCode.DEVICE_AUTHORIZATION_FAILED,
+    'device authorization',
+  );
+  const deviceCode = String(payload.device_code ?? '');
+  const userCode = String(payload.user_code ?? '');
+  const verificationUri = String(
+    payload.verification_uri_complete ?? payload.verification_uri ?? '',
+  );
+  if (!deviceCode || !userCode || !verificationUri) {
     throw new XaiOAuthError(
-      'xAI token exchange did not return refresh_token.',
-      XaiErrorCode.TOKEN_EXCHANGE_INVALID,
+      'xAI device authorization did not return device_code, user_code, and verification_uri.',
+      XaiErrorCode.DEVICE_AUTHORIZATION_INVALID,
     );
   }
-  const expiresIn =
-    typeof payload.expires_in === 'number'
-      ? payload.expires_in
-      : Number(payload.expires_in ?? 3600);
   return {
-    access,
-    refresh,
-    expires: Date.now() + expiresIn * 1000 - REFRESH_SKEW_MS,
-    tokenEndpoint,
-    discovery: { authorization_endpoint: '', token_endpoint: tokenEndpoint },
-    idToken: String(payload.id_token ?? ''),
-    tokenType: String(payload.token_type ?? 'Bearer'),
-    baseUrl: getBaseUrl(),
+    deviceCode,
+    userCode,
+    verificationUri: validateEndpoint(verificationUri, 'verification_uri'),
+    intervalSeconds: readNumber(payload.interval, 5),
+    expiresInSeconds: readNumber(payload.expires_in, 1800),
   };
+}
+
+async function loginWithDeviceCode(
+  discovery: XaiDiscovery,
+  callbacks: import('@earendil-works/pi-ai').OAuthLoginCallbacks,
+): Promise<XaiOAuthCredentials> {
+  if (!discovery.device_authorization_endpoint) {
+    throw new XaiOAuthError(
+      'xAI OIDC discovery did not include a device authorization endpoint.',
+      XaiErrorCode.DEVICE_AUTHORIZATION_UNAVAILABLE,
+    );
+  }
+  const device = await requestDeviceCode(discovery.device_authorization_endpoint);
+  callbacks.onDeviceCode({
+    userCode: device.userCode,
+    verificationUri: device.verificationUri,
+    intervalSeconds: device.intervalSeconds,
+    expiresInSeconds: device.expiresInSeconds,
+  });
+  callbacks.onProgress?.('Waiting for xAI device authorization...');
+
+  const deadline = Date.now() + device.expiresInSeconds * 1000;
+  const poll = async (intervalSeconds: number): Promise<XaiOAuthCredentials> => {
+    if (Date.now() >= deadline) {
+      throw new XaiOAuthError(
+        'Timed out waiting for xAI device authorization.',
+        XaiErrorCode.DEVICE_AUTHORIZATION_FAILED,
+      );
+    }
+    await sleep(intervalSeconds * 1000, callbacks.signal);
+    const response = await fetchTokenResponse(
+      discovery.token_endpoint,
+      new URLSearchParams({
+        grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+        client_id: CLIENT_ID,
+        device_code: device.deviceCode,
+      }),
+      XaiErrorCode.DEVICE_AUTHORIZATION_FAILED,
+      'device token exchange',
+    );
+    if (response.ok) {
+      const credentials = credentialsFromLoginPayload(
+        await tokenResponseJson(
+          response,
+          XaiErrorCode.DEVICE_AUTHORIZATION_FAILED,
+          'device token exchange',
+        ),
+        discovery.token_endpoint,
+        XaiErrorCode.DEVICE_AUTHORIZATION_INVALID,
+        'device token exchange',
+      );
+      credentials.discovery = discovery;
+      return credentials;
+    }
+
+    const payload = await tokenResponsePayload(response);
+    if (payload.error === 'authorization_pending') return poll(intervalSeconds);
+    if (payload.error === 'slow_down') return poll(intervalSeconds + 5);
+    throw new XaiOAuthError(
+      `xAI device authorization failed: ${response.status} ${String(
+        payload.error_description ?? payload.error ?? 'unknown error',
+      )}`,
+      XaiErrorCode.DEVICE_AUTHORIZATION_FAILED,
+      payload.error === 'access_denied' || payload.error === 'expired_token',
+    );
+  };
+
+  return poll(Math.max(1, device.intervalSeconds));
+}
+
+async function loginWithBrowserCallback() {
+  const { verifier, challenge } = await generatePKCE();
+  const state = base64Url(crypto.getRandomValues(new Uint8Array(16)));
+  const nonce = base64Url(crypto.getRandomValues(new Uint8Array(16)));
+  const callback = await startCallbackServer();
+
+  return { callback, challenge, nonce, state, verifier };
 }
 
 // ─── Login (called by pi's /login flow) ──────────────────────────────────────
@@ -383,30 +544,39 @@ export async function login(
   callbacks: import('@earendil-works/pi-ai').OAuthLoginCallbacks,
 ): Promise<import('@earendil-works/pi-ai').OAuthCredentials> {
   const discovery = await discover();
-  const { verifier, challenge } = await generatePKCE();
-  const state = base64Url(crypto.getRandomValues(new Uint8Array(16)));
-  const nonce = base64Url(crypto.getRandomValues(new Uint8Array(16)));
-  const callback = await startCallbackServer();
+  const method =
+    discovery.device_authorization_endpoint && typeof callbacks.onSelect === 'function'
+      ? await callbacks.onSelect({
+          message: 'Select Grok CLI login method:',
+          options: [
+            { id: 'browser', label: 'Browser OAuth callback' },
+            { id: 'device', label: 'Device code (SSH/headless)' },
+          ],
+        })
+      : 'browser';
+  if (!method) throw new Error('Login cancelled');
+  if (method === 'device') return loginWithDeviceCode(discovery, callbacks);
 
+  const browser = await loginWithBrowserCallback();
   try {
     const authUrl = new URL(discovery.authorization_endpoint);
     authUrl.searchParams.set('response_type', 'code');
     authUrl.searchParams.set('client_id', CLIENT_ID);
-    authUrl.searchParams.set('redirect_uri', callback.redirectUri);
+    authUrl.searchParams.set('redirect_uri', browser.callback.redirectUri);
     authUrl.searchParams.set('scope', SCOPE);
-    authUrl.searchParams.set('code_challenge', challenge);
+    authUrl.searchParams.set('code_challenge', browser.challenge);
     authUrl.searchParams.set('code_challenge_method', 'S256');
-    authUrl.searchParams.set('state', state);
-    authUrl.searchParams.set('nonce', nonce);
+    authUrl.searchParams.set('state', browser.state);
+    authUrl.searchParams.set('nonce', browser.nonce);
     authUrl.searchParams.set('plan', 'generic');
     authUrl.searchParams.set('referrer', 'pi-grok-cli');
 
     callbacks.onAuth({
       url: authUrl.toString(),
-      instructions: `Authorize xAI, then return to pi. Callback listener: ${callback.redirectUri}`,
+      instructions: `Authorize xAI, then return to pi. Callback listener: ${browser.callback.redirectUri}`,
     });
 
-    const result = await callback.waitForCallback(180_000);
+    const result = await browser.callback.waitForCallback(180_000);
 
     if (result.error) {
       const code =
@@ -416,7 +586,7 @@ export async function login(
           : XaiErrorCode.AUTHORIZATION_FAILED;
       throw new XaiOAuthError(result.errorDescription ?? result.error, code);
     }
-    if (result.state !== state) {
+    if (result.state !== browser.state) {
       throw new XaiOAuthError(
         'xAI OAuth state mismatch — possible CSRF.',
         XaiErrorCode.STATE_MISMATCH,
@@ -432,13 +602,13 @@ export async function login(
     const credentials = await exchangeCode(
       discovery.token_endpoint,
       result.code,
-      callback.redirectUri,
-      verifier,
+      browser.callback.redirectUri,
+      browser.verifier,
     );
     credentials.discovery = discovery;
     return credentials;
   } finally {
-    callback.server.close();
+    browser.callback.server.close();
   }
 }
 

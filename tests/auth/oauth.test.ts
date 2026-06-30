@@ -313,6 +313,85 @@ describe('OAuth helpers without network access', () => {
     );
   });
 
+  it('logs in with device authorization for SSH/headless sessions', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_700_000_000_000);
+    const onSelect = vi.fn(async () => 'device');
+    const onDeviceCode = vi.fn();
+    const onProgress = vi.fn();
+    let tokenPolls = 0;
+    const fetchMock = vi.fn<typeof fetch>(async (input) => {
+      if (input === 'https://auth.x.ai/.well-known/openid-configuration') {
+        return Response.json({
+          ...discoveryDocument,
+          device_authorization_endpoint: 'https://auth.x.ai/oauth/device/code',
+        });
+      }
+      if (input === 'https://auth.x.ai/oauth/device/code') {
+        return Response.json({
+          device_code: 'device-code',
+          user_code: 'ABCD-EFGH',
+          verification_uri: 'https://accounts.x.ai/oauth/device',
+          verification_uri_complete: 'https://accounts.x.ai/oauth/device?user_code=ABCD-EFGH',
+          expires_in: 1800,
+          interval: 5,
+        });
+      }
+      tokenPolls += 1;
+      if (tokenPolls === 1) {
+        return Response.json({ error: 'authorization_pending' }, { status: 400 });
+      }
+      return Response.json({
+        access_token: 'device-access',
+        refresh_token: 'device-refresh',
+        expires_in: 900,
+        id_token: 'device-id',
+        token_type: 'Bearer',
+      });
+    });
+    globalThis.fetch = fetchMock;
+
+    const resultPromise = login({
+      onSelect,
+      onDeviceCode,
+      onProgress,
+    } as unknown as OAuthLoginCallbacks);
+
+    await vi.waitFor(() => expect(onDeviceCode).toHaveBeenCalledOnce());
+    expect(onSelect).toHaveBeenCalledWith({
+      message: 'Select Grok CLI login method:',
+      options: [
+        { id: 'browser', label: 'Browser OAuth callback' },
+        { id: 'device', label: 'Device code (SSH/headless)' },
+      ],
+    });
+    expect(onDeviceCode).toHaveBeenCalledWith({
+      userCode: 'ABCD-EFGH',
+      verificationUri: 'https://accounts.x.ai/oauth/device?user_code=ABCD-EFGH',
+      intervalSeconds: 5,
+      expiresInSeconds: 1800,
+    });
+    expect(onProgress).toHaveBeenCalledWith('Waiting for xAI device authorization...');
+
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    await expect(resultPromise).resolves.toMatchObject({
+      access: 'device-access',
+      refresh: 'device-refresh',
+      expires: expect.any(Number),
+      tokenEndpoint: 'https://auth.x.ai/oauth/token',
+      discovery: {
+        ...discoveryDocument,
+        device_authorization_endpoint: 'https://auth.x.ai/oauth/device/code',
+      },
+      idToken: 'device-id',
+      tokenType: 'Bearer',
+    });
+    expect((fetchMock.mock.calls[3]?.[1]?.body as URLSearchParams).toString()).toBe(
+      'grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_code&client_id=b1a00492-073a-47ea-816f-4c329264a828&device_code=device-code',
+    );
+  });
+
   it('reports callback timeouts with a dedicated error code', async () => {
     vi.useFakeTimers();
     globalThis.fetch = vi.fn<typeof fetch>(async () => Response.json(discoveryDocument));
