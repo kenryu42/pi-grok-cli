@@ -14,7 +14,7 @@ Default catalog (filter/reorder with `PI_GROK_CLI_MODELS`):
 
 | Model ID | Context | Reasoning | Input | Cost ($/M tok, in/out) |
 |---|---|---|---|---|
-| `grok-composer-2.5-fast` | 200K | no | text | 3 / 15 |
+| `grok-composer-2.5-fast` | 200K | no | text (images auto-routed to `grok-build`) | 3 / 15 |
 | `grok-build` | 512K | yes | text + image | 1 / 2 |
 | `grok-4.3` | 1M | yes | text + image | 1.25 / 2.5 |
 | `grok-4.20-0309-reasoning` | 2M | yes | text + image | 1.25 / 2.5 |
@@ -64,6 +64,20 @@ Tokens auto-refresh 120s before expiry. To skip OAuth entirely, set `GROK_CLI_OA
 ```
 
 Prints credits used / limit, remaining credits, and the reset time for the current billing period.
+
+### 4. Image input on text-only models
+
+Text-only models like `grok-composer-2.5-fast` (Composer 2.5) have no image input of their own. When one is active and a `read` result contains an image, pi-grok-cli automatically describes that image with an image-capable model (`grok-build` by default) over the same Grok CLI account, then returns the description to the active model as text. The active model reasons over the description as if it had seen the image.
+
+This is on by default and needs no setup beyond `/login`. Pasted images work too — pi writes the clipboard to a temp file and reads it, so the same path applies.
+
+| Command | Description |
+| --- | --- |
+| `/grok-cli-vision:status` | Show on/off, describer model, and cache stats. |
+| `/grok-cli-vision:on` / `:off` | Enable or disable image routing. |
+| `/grok-cli-vision:cache-clear` | Clear the response cache. |
+
+Configuration lives at `~/.pi/grok-cli-vision.json` (created on first change) with an in-memory response cache at `~/.pi/grok-cli-vision-cache.json`. Descriptions are cached by image hash + model + prompt, so repeat reads of the same image are free. Image-capable models (`grok-build`, `grok-4.3`, `grok-4.20-*`) are never routed — they read images natively.
 
 ## Cursor tool compatibility
 

@@ -1,0 +1,84 @@
+import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
+import { describe, expect, it, vi } from 'vitest';
+import { useTempHome } from './helpers.js';
+
+const setupHome = useTempHome();
+
+interface CommandConfig {
+  handler: (args: string[], ctx: unknown) => Promise<void>;
+}
+
+type ToolResultHandler = (event: unknown, ctx: unknown) => unknown;
+
+async function setupExtension() {
+  const commands = new Map<string, CommandConfig>();
+  const toolResultHandlers: ToolResultHandler[] = [];
+  const { registerVisionFeature } = await import('../../src/vision/register.js');
+  registerVisionFeature({
+    on(event: string, handler: ToolResultHandler) {
+      if (event === 'tool_result') toolResultHandlers.push(handler);
+    },
+    registerCommand(name: string, config: unknown) {
+      commands.set(name, config as CommandConfig);
+    },
+  } as unknown as ExtensionAPI);
+  return { commands, toolResultHandlers };
+}
+
+describe('registerVisionFeature', () => {
+  it('registers the tool_result handler and four commands', async () => {
+    setupHome();
+    const { commands, toolResultHandlers } = await setupExtension();
+
+    expect(toolResultHandlers).toHaveLength(1);
+    expect([...commands.keys()].sort()).toEqual([
+      'grok-cli-vision:cache-clear',
+      'grok-cli-vision:off',
+      'grok-cli-vision:on',
+      'grok-cli-vision:status',
+    ]);
+  });
+
+  it('status reports ON with the default describer and zero cache entries', async () => {
+    setupHome();
+    const { commands } = await setupExtension();
+    const notify = vi.fn();
+
+    await commands.get('grok-cli-vision:status')?.handler([], {
+      ui: { notify },
+    });
+
+    const text = notify.mock.calls.at(-1)?.[0] as string;
+    expect(text).toMatch(/grok-cli-vision: ON/);
+    expect(text).toMatch(/describer: grok-build/);
+    expect(text).toMatch(/cache: ON \(0 entries/);
+  });
+
+  it('on/off persist enabled state to the config file', async () => {
+    setupHome();
+    const { commands } = await setupExtension();
+
+    await commands.get('grok-cli-vision:off')?.handler([], { ui: { notify: vi.fn() } });
+    const { loadConfig } = await import('../../src/vision/config.js');
+    expect(loadConfig().config.enabled).toBe(false);
+
+    await commands.get('grok-cli-vision:on')?.handler([], { ui: { notify: vi.fn() } });
+    expect(loadConfig().config.enabled).toBe(true);
+  });
+
+  it('delegates read tool results to the vision handler', async () => {
+    setupHome();
+    const { toolResultHandlers } = await setupExtension();
+    const result = await toolResultHandlers[0]?.(
+      { type: 'tool_result', toolName: 'bash', content: [{ type: 'text', text: 'x' }] },
+      {
+        model: { input: ['text'] },
+        modelRegistry: { getApiKeyForProvider: async () => 'token' },
+        ui: { notify: vi.fn() },
+        signal: undefined,
+      },
+    );
+
+    expect(result).toBeUndefined();
+  });
+});
