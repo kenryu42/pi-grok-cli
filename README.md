@@ -1,36 +1,27 @@
 # pi-grok-cli
 
 [![CI](https://github.com/kenryu42/pi-grok-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/kenryu42/pi-grok-cli/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/github/v/tag/kenryu42/pi-grok-cli?label=version&color=blue)](https://github.com/kenryu42/pi-grok-cli)
+[![npm version](https://img.shields.io/npm/v/pi-grok-cli?label=npm&color=blue)](https://www.npmjs.com/package/pi-grok-cli)
 [![License: MIT](https://img.shields.io/badge/License-MIT-red.svg)](https://opensource.org/licenses/MIT)
 
-A pi extension that connects to **Grok CLI's API endpoint**.
-The Grok CLI has access to models **not available** on the public `api.x.ai` API yet:
+A [pi](https://github.com/earendil-works/pi-coding-agent) extension that connects to **Grok CLI's inference endpoint** (`cli-chat-proxy.grok.com`) instead of the public `api.x.ai` API. This gives pi access to models the public API does not expose, plus Cursor-style coding tools the Grok CLI models are trained to call.
 
-| Model | Public API (`api.x.ai`) | Grok CLI |
-|---|---|---|
-| `grok-composer-2.5-fast` | ❌ | ✅ |
-| `grok-build` | ✅ | ✅ |
-| `grok-4.3` | ✅ | ✅ |
+> Requires an active Grok subscription or an X Premium subscription with Grok access.
 
-`grok-composer-2.5-fast` is Cursor's Composer 2.5 model, a purpose-built agentic coding model optimized for long-horizon coding tasks.
+## Models
 
-## Cursor Tool Compatibility
+Default catalog (filter/reorder with `PI_GROK_CLI_MODELS`):
 
-Grok CLI models are trained to use Cursor-style coding tools. This extension includes compatibility shims so those models can keep using familiar tool calls inside pi:
+| Model ID | Context | Reasoning | Input | Cost ($/M tok, in/out) |
+|---|---|---|---|---|
+| `grok-composer-2.5-fast` | 200K | no | text | 3 / 15 |
+| `grok-build` | 512K | yes | text + image | 1 / 2 |
+| `grok-4.3` | 1M | yes | text + image | 1.25 / 2.5 |
+| `grok-4.20-0309-reasoning` | 2M | yes | text + image | 1.25 / 2.5 |
+| `grok-4.20-0309-non-reasoning` | 2M | no | text + image | 1.25 / 2.5 |
+| `grok-4.20-multi-agent-0309` | 2M | yes | text + image | 1.25 / 2.5 |
 
-- File tools: `Read`, `Write`, `StrReplace`, `Edit`, `Delete`, and `LS`
-- Search tools: `Grep` and `Glob`
-- Web search: `WebSearch` only when [pi-web-access](https://www.npmjs.com/package/pi-web-access) is installed (`pi install npm:pi-web-access`); it delegates to that extension’s `web_search`
-- Terminal tool: `Shell`
-
-When the active model is **grok-cli** and pi-web-access is installed, `web_search` is removed from the active tool set and blocked if invoked; use `WebSearch` instead. If pi-web-access is not installed, `WebSearch` is not registered and nothing changes for web search. Other providers keep using `web_search` from pi-web-access when that extension is installed.
-
-The shims also normalize common Cursor/Grok argument shapes, such as `contents` for writes, `glob_pattern` for file search, `glob_filter` for grep filters, and `old_string`/`new_string` or `oldText`/`newText` for exact replacements. This keeps agentic coding workflows moving instead of failing on tool schema mismatches.
-
-## Requirements
-
-You need an active Grok subscription or an X Premium subscription with Grok access to use this extension.
+`grok-composer-2.5-fast` is Cursor's Composer 2.5 — an agentic coding model tuned for long-horizon tasks. Reasoning-effort control is honored by `grok-4.3`, `grok-4.20-multi-agent`, and `grok-3-mini*` reasoning models; non-reasoning models expose a thinking-level map instead.
 
 ## Installation
 
@@ -38,45 +29,79 @@ You need an active Grok subscription or an X Premium subscription with Grok acce
 pi install npm:pi-grok-cli
 ```
 
-For local development from this checkout:
+Local development from this checkout:
 
 ```bash
-pi install ./pi-grok-cli
-# or run once without installing
-pi -e ./pi-grok-cli
+pi install ./pi-grok-cli     # install
+pi -e ./pi-grok-cli          # run once without installing
 ```
 
 ## Usage
 
-### Login
+### 1. Log in
 
 ```
 /login
 ```
 
-Select **"Grok CLI"** from the provider list, then choose a login method:
+Pick **"Grok CLI"**, then choose a method:
 
-- **Browser OAuth callback** opens the xAI OAuth page and waits for the local callback.
-- **Device code (SSH/headless)** shows a verification URL and short code. Open the URL on any browser, enter/confirm the code, and pi waits until xAI returns tokens to the remote machine.
+- **Browser OAuth callback** — opens the xAI OAuth page; pi listens on a local loopback port and completes the PKCE exchange automatically.
+- **Device code (SSH / headless)** — shows a verification URL and short code. Open the URL anywhere, confirm the code, and pi polls xAI until tokens arrive. Useful when no local browser is available.
 
-### Select a model
+Tokens auto-refresh 120s before expiry. To skip OAuth entirely, set `GROK_CLI_OAUTH_TOKEN` (no auto-refresh, no model discovery — rotate it yourself).
+
+### 2. Select a model
 
 ```
 /model grok-cli/grok-composer-2.5-fast
 ```
 
-### Check usage
+### 3. Check quota
 
 ```
 /grok-cli-usage
 ```
 
-## Environment Variables
+Prints credits used / limit, remaining credits, and the reset time for the current billing period.
+
+## Cursor tool compatibility
+
+Grok CLI models are trained on Cursor-style tools. This extension registers shims so those calls keep working inside pi:
+
+| Category | Tools |
+|---|---|
+| File | `Read`, `Write`, `StrReplace`, `Edit`, `Delete`, `LS` |
+| Search | `Grep`, `Glob` |
+| Terminal | `Shell` |
+| Web | `WebSearch` — only when [pi-web-access](https://www.npmjs.com/package/pi-web-access) is installed |
+
+These tools auto-activate when the active provider is **grok-cli**. The shims normalize common Cursor/Grok argument shapes (`contents` for writes, `glob_pattern`/`glob_filter` for search, `old_string`/`new_string` or `oldText`/`newText` for replacements) so agentic workflows don't fail on schema mismatches.
+
+**Web search:** when pi-web-access is installed and grok-cli is active, pi's native `web_search` is removed from the active set and `WebSearch` (which delegates to pi-web-access) is used instead. Other providers keep using `web_search`. Without pi-web-access, nothing changes.
+
+## Environment variables
 
 | Variable | Default | Description |
 |---|---|---|
-| `PI_GROK_CLI_BASE_URL` | `https://cli-chat-proxy.grok.com/v1` | Override API base URL |
-| `PI_GROK_CLI_MODELS` | (all models) | Comma-separated model IDs to expose |
-| `PI_GROK_CLI_OAUTH_CLIENT_ID` | `b1a00492-...` | Override OAuth client ID |
+| `PI_GROK_CLI_BASE_URL` | `https://cli-chat-proxy.grok.com/v1` | Override the API base URL |
+| `GROK_CLI_BASE_URL` | — | Fallback base URL if `PI_GROK_CLI_BASE_URL` is unset |
+| `PI_GROK_CLI_MODELS` | (all) | Comma-separated model IDs to expose (filters/reorders) |
+| `PI_GROK_CLI_OAUTH_CLIENT_ID` | `b1a00492-…` | Override the OAuth client ID |
 | `PI_GROK_CLI_OAUTH_SCOPE` | `openid profile email offline_access grok-cli:access api:access` | Override OAuth scopes |
-| `GROK_CLI_OAUTH_TOKEN` | — | Direct token bypass that skips OAuth entirely. No automatic refresh or renewal is performed; provide a valid external access token and replace or rotate it when it expires. |
+| `PI_GROK_CLI_CALLBACK_HOST` | `127.0.0.1` | Browser-flow loopback callback host |
+| `PI_GROK_CLI_CALLBACK_PORT` | `56122` | Browser-flow loopback callback port (falls back to ephemeral) |
+| `PI_GROK_CLI_TOKEN_TIMEOUT_MS` | `30000` | Timeout for OAuth token requests |
+| `GROK_CLI_OAUTH_TOKEN` | — | Direct token bypass that skips OAuth. No auto-refresh; rotate it yourself. |
+
+## Development
+
+```bash
+bun install
+bun run check        # lint + typecheck + knip + duplicate detection + coverage
+bun run test         # vitest only
+```
+
+## License
+
+MIT
