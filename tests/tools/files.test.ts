@@ -14,7 +14,7 @@ import {
 } from './toolTestHelpers.js';
 
 function expectStoryState(result: ToolResult, cwd: string, replacements: number, content: string) {
-  expect(result.details).toEqual({
+  expect(result.details).toMatchObject({
     path: expectedPath(cwd, 'story.txt'),
     replacements,
   });
@@ -199,6 +199,7 @@ describe('file tools', () => {
 
     expect(firstText(result)).toBe('Replaced 2 occurrence(s) in story.txt');
     expectStoryState(result, cwd, 2, 'green blue green');
+    expect(result.details.diff).toBe('-1 red blue red\n+1 green blue green');
   });
 
   it('rejects empty replacement search strings without changing files', async () => {
@@ -452,6 +453,12 @@ describe('file tools', () => {
     );
     expect(renderToolCall(tools.get('Edit'), { path: 'notes.txt' })).toBe('Edit notes.txt');
     expect(renderToolCall(tools.get('Delete'), { path: 'notes.txt' })).toBe('Delete notes.txt');
+    expect(
+      renderToolResult(tools.get('StrReplace'), {
+        content: [{ type: 'text', text: 'replacement' }],
+        details: { replacements: 1, diff: ' 1 before\n-2 old\n+2 new\n 3 after' },
+      }),
+    ).toBe(' 1 before\n-2 old\n+2 new\n 3 after\n\n1 replacement');
     expect(
       renderToolResult(tools.get('StrReplace'), {
         content: [{ type: 'text', text: 'no replacement' }],

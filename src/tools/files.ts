@@ -40,7 +40,18 @@ type EditArgs = {
 
 type ToolTheme = {
   bold: (text: string) => string;
-  fg: (name: 'accent' | 'dim' | 'error' | 'muted' | 'toolTitle', text: string) => string;
+  fg: (
+    name:
+      | 'accent'
+      | 'dim'
+      | 'error'
+      | 'muted'
+      | 'toolDiffAdded'
+      | 'toolDiffContext'
+      | 'toolDiffRemoved'
+      | 'toolTitle',
+    text: string,
+  ) => string;
 };
 
 function parseEditList(value: unknown): ReplacementEdit[] | undefined {
@@ -106,21 +117,76 @@ function replacementResult(text: string, filePath: string) {
   };
 }
 
+function replacementSummary(replacements: number) {
+  if (replacements === 0) return 'No replacements';
+  return `${replacements} ${replacements === 1 ? 'replacement' : 'replacements'}`;
+}
+
+function splitDisplayLines(value: string) {
+  const lines = value.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+  return lines.at(-1) === '' ? lines.slice(0, -1) : lines;
+}
+
+function generateDisplayDiff(oldContent: string, newContent: string, contextLines = 2) {
+  if (oldContent === newContent) return '';
+  const oldLines = splitDisplayLines(oldContent);
+  const newLines = splitDisplayLines(newContent);
+  const firstChanged = oldLines.findIndex((line, index) => line !== newLines[index]);
+  const changeStart =
+    firstChanged === -1 ? Math.min(oldLines.length, newLines.length) : firstChanged;
+  const maxSuffix = Math.min(oldLines.length - changeStart, newLines.length - changeStart);
+  const commonSuffix = Array.from({ length: maxSuffix }).findIndex(
+    (_, index) => oldLines.at(-index - 1) !== newLines.at(-index - 1),
+  );
+  const suffixLength = commonSuffix === -1 ? maxSuffix : commonSuffix;
+  const oldChangeEnd = oldLines.length - suffixLength;
+  const newChangeEnd = newLines.length - suffixLength;
+  const beforeStart = Math.max(0, changeStart - contextLines);
+  const afterEnd = Math.min(oldLines.length, oldChangeEnd + contextLines);
+
+  return [
+    ...oldLines
+      .slice(beforeStart, changeStart)
+      .map((line, index) => ` ${beforeStart + index + 1} ${line}`),
+    ...oldLines
+      .slice(changeStart, oldChangeEnd)
+      .map((line, index) => `-${changeStart + index + 1} ${line}`),
+    ...newLines
+      .slice(changeStart, newChangeEnd)
+      .map((line, index) => `+${changeStart + index + 1} ${line}`),
+    ...oldLines
+      .slice(oldChangeEnd, afterEnd)
+      .map((line, index) => ` ${oldChangeEnd + index + 1} ${line}`),
+  ].join('\n');
+}
+
+function renderDisplayDiff(diff: string, theme: ToolTheme) {
+  return diff
+    .split('\n')
+    .map((line) => {
+      if (line.startsWith('+')) return theme.fg('toolDiffAdded', line);
+      if (line.startsWith('-')) return theme.fg('toolDiffRemoved', line);
+      return theme.fg('toolDiffContext', line);
+    })
+    .join('\n');
+}
+
 function renderReplacementResult(
   result: { content: { type: string; text?: string }[]; details: unknown },
   expanded: boolean,
   isPartial: boolean,
-  theme: { fg: (name: 'dim' | 'muted', text: string) => string },
+  theme: ToolTheme,
 ) {
   const replacements = numberDetail(result, 'replacements');
-  return renderResultSummary(
-    result,
-    expanded,
-    isPartial,
+  const summary =
     replacements === 0
-      ? theme.fg('dim', 'No replacements')
-      : theme.fg('muted', `${replacements} replacement(s)`),
-  );
+      ? theme.fg('dim', replacementSummary(replacements))
+      : theme.fg('muted', replacementSummary(replacements));
+  const diff = stringDetail(result, 'diff');
+  if (isPartial || replacements === 0 || !diff) {
+    return renderResultSummary(result, expanded, isPartial, summary);
+  }
+  return text(`${renderDisplayDiff(diff, theme)}\n\n${summary}`);
 }
 
 function renderPathToolCall(toolName: string, filePath: string, theme: ToolTheme) {
@@ -373,7 +439,11 @@ export function registerFileTools(pi: ExtensionAPI) {
               text: `Replaced ${count} occurrence(s) in ${params.path}`,
             },
           ],
-          details: { path: resolved, replacements: count },
+          details: {
+            path: resolved,
+            replacements: count,
+            diff: generateDisplayDiff(content, newContent),
+          },
         };
       } catch (error: unknown) {
         return fileError(error, 'StrReplace', filePath, { replacements: 0 });

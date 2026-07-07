@@ -741,7 +741,7 @@ describe('Grok CLI tool rendering', () => {
           {},
         ) as Renderable,
       ),
-    ).toBe('3 replacement(s)');
+    ).toBe('3 replacements');
     expect(
       renderText(
         extension.tools.get('Delete')?.renderResult?.(
