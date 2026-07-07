@@ -27,11 +27,13 @@ describe('tool display config', () => {
         toolDisplay: 'preview',
         shellTailLines: 12,
         readPreviewLines: 2,
+        writeCallPreviewLines: 8,
       }),
     ).toEqual({
       ...configForToolDisplayMode('preview'),
       shellTailLines: 12,
       readPreviewLines: 2,
+      writeCallPreviewLines: 8,
     });
   });
 

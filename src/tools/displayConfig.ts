@@ -14,7 +14,7 @@ export interface ToolDisplayConfig {
   lsPreviewEntries: number;
   shellTailLines: number;
   readPreviewLines: number;
-  writePreviewLines: number;
+  writeCallPreviewLines: number;
   webSearchPreviewChars: number;
 }
 
@@ -26,7 +26,7 @@ const MODE_DEFAULTS: Record<ToolDisplayMode, ToolDisplayConfig> = {
     lsPreviewEntries: 0,
     shellTailLines: 0,
     readPreviewLines: 0,
-    writePreviewLines: 0,
+    writeCallPreviewLines: 0,
     webSearchPreviewChars: 0,
   },
   preview: {
@@ -36,7 +36,7 @@ const MODE_DEFAULTS: Record<ToolDisplayMode, ToolDisplayConfig> = {
     lsPreviewEntries: 20,
     shellTailLines: 20,
     readPreviewLines: 0,
-    writePreviewLines: 0,
+    writeCallPreviewLines: 10,
     webSearchPreviewChars: 500,
   },
 };
@@ -97,7 +97,7 @@ export function normalizeToolDisplayConfig(
   normalizePositiveInteger(record, 'lsPreviewEntries', config, warnings);
   normalizePositiveInteger(record, 'shellTailLines', config, warnings);
   normalizePositiveInteger(record, 'readPreviewLines', config, warnings);
-  normalizePositiveInteger(record, 'writePreviewLines', config, warnings);
+  normalizePositiveInteger(record, 'writeCallPreviewLines', config, warnings);
   normalizePositiveInteger(record, 'webSearchPreviewChars', config, warnings);
 
   return config;
@@ -145,7 +145,7 @@ function formatConfig(config: ToolDisplayConfig, warning?: string): string {
     `lsPreviewEntries: ${config.lsPreviewEntries}`,
     `shellTailLines: ${config.shellTailLines}`,
     `readPreviewLines: ${config.readPreviewLines}`,
-    `writePreviewLines: ${config.writePreviewLines}`,
+    `writeCallPreviewLines: ${config.writeCallPreviewLines}`,
     `webSearchPreviewChars: ${config.webSearchPreviewChars}`,
     `config: ${getToolDisplayConfigPath()}`,
     warning ? `warning: ${warning}` : undefined,

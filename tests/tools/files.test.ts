@@ -432,6 +432,21 @@ describe('file tools', () => {
 
     expect(renderToolCall(tools.get('LS'), { path: '.' })).toBe('LS .');
     expect(renderToolCall(tools.get('Write'), { path: 'notes.txt' })).toBe('Write notes.txt');
+    expect(
+      renderToolCall(tools.get('Write'), {
+        path: 'notes.txt',
+        content: Array.from({ length: 12 }, (_, index) => `line ${index + 1}`).join('\n'),
+      }),
+    ).toBe(
+      'Write notes.txt\n\nline 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10\n... (2 more lines, 12 total)',
+    );
+    expect(
+      renderToolCall(
+        tools.get('Write'),
+        { path: 'notes.txt', content: 'line 1\nline 2\nline 3' },
+        { expanded: true },
+      ),
+    ).toBe('Write notes.txt\n\nline 1\nline 2\nline 3');
     expect(renderToolCall(tools.get('StrReplace'), { path: 'notes.txt' })).toBe(
       'StrReplace notes.txt',
     );
@@ -465,6 +480,18 @@ describe('file tools', () => {
         { expanded: true, isPartial: false },
       ),
     ).toBe('full listing');
+    expect(
+      renderToolResult(tools.get('Write'), {
+        content: [{ type: 'text', text: 'writing' }],
+        details: { bytesWritten: 10 },
+      }),
+    ).toBe('');
+    expect(
+      renderToolResult(tools.get('Write'), {
+        content: [{ type: 'text', text: 'Write error: denied' }],
+        details: { failed: true },
+      }),
+    ).toBe('Write error: denied');
     expect(
       renderToolResult(
         tools.get('Write'),

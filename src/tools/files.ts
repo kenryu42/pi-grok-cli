@@ -10,7 +10,6 @@ import { dirname, resolve } from 'node:path';
 import { Type } from '@earendil-works/pi-ai';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import {
-  argsFromRenderContext,
   booleanDetail,
   currentToolDisplayConfig,
   fileError,
@@ -41,7 +40,7 @@ type EditArgs = {
 
 type ToolTheme = {
   bold: (text: string) => string;
-  fg: (name: 'accent' | 'toolTitle', text: string) => string;
+  fg: (name: 'accent' | 'dim' | 'error' | 'muted' | 'toolTitle', text: string) => string;
 };
 
 function parseEditList(value: unknown): ReplacementEdit[] | undefined {
@@ -126,6 +125,34 @@ function renderReplacementResult(
 
 function renderPathToolCall(toolName: string, filePath: string, theme: ToolTheme) {
   return text(theme.fg('toolTitle', theme.bold(`${toolName} `)) + theme.fg('accent', filePath));
+}
+
+function writeCallPreviewLines(value: string, limit: number) {
+  if (limit <= 0) return [];
+  const normalized = value.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+  const lines = normalized.at(-1) === '' ? normalized.slice(0, -1) : normalized;
+  if (lines.length <= limit) return lines;
+  return [
+    ...lines.slice(0, limit),
+    `... (${lines.length - limit} more lines, ${lines.length} total)`,
+  ];
+}
+
+function renderWriteToolCall(
+  args: Record<string, unknown>,
+  theme: ToolTheme,
+  context?: { expanded?: boolean },
+) {
+  const call =
+    theme.fg('toolTitle', theme.bold('Write ')) + theme.fg('accent', stringFrom(args.path) ?? '');
+  const content = stringFrom(args.content) ?? stringFrom(args.contents);
+  if (!content) return text(call);
+  const lines = writeCallPreviewLines(
+    content,
+    context?.expanded ? Number.MAX_SAFE_INTEGER : currentToolDisplayConfig().writeCallPreviewLines,
+  );
+  if (lines.length === 0) return text(call);
+  return text(`${call}\n\n${theme.fg('dim', lines.join('\n'))}`);
 }
 
 type FileDetails = { path: string; [key: string]: unknown };
@@ -259,19 +286,18 @@ export function registerFileTools(pi: ExtensionAPI) {
         };
       }
     },
-    renderCall(args, theme) {
-      return renderPathToolCall('Write', args.path, theme);
+    renderCall(args, theme, context) {
+      return renderWriteToolCall(args, theme, context);
     },
     renderResult(result, { expanded, isPartial }, theme, context) {
-      return renderResultWithPreview(
+      if (isPartial) return text('Running...');
+      if (!booleanDetail(result, 'failed') && recordFrom(context)?.isError !== true)
+        return text('');
+      return renderResultSummary(
         result,
-        { expanded, isPartial },
-        theme.fg('muted', `${numberDetail(result, 'bytesWritten')} bytes written`),
-        previewLines(
-          stringFrom(argsFromRenderContext(context).content) ?? '',
-          currentToolDisplayConfig().writePreviewLines,
-        ),
-        theme,
+        expanded,
+        false,
+        theme.fg('error', firstText(result) ?? 'Write failed'),
       );
     },
   });

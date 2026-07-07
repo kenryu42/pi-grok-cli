@@ -198,9 +198,9 @@ pi's `Ctrl+O` keybinding still controls full tool expansion. pi-grok-cli adds a 
 | --- | --- |
 | `/grok-cli-tools:status` | Show the current collapsed-view display mode and preview limits. |
 | `/grok-cli-tools:minimal` | Show compact summaries only. |
-| `/grok-cli-tools:preview` | Default. Show key summaries plus bounded previews for search, listing, shell, and web results. |
+| `/grok-cli-tools:preview` | Default. Show key summaries plus bounded previews for search, listing, shell, Write calls, and web results. |
 
-Configuration lives at `~/.pi/grok-cli-tools.json`.
+Configuration lives at `~/.pi/grok-cli-tools.json`; `writeCallPreviewLines` controls collapsed Write call previews.
 
 ### Common environment variables
 

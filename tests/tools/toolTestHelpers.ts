@@ -43,7 +43,11 @@ type RegisteredTool = {
     onUpdate: () => void,
     ctx: { cwd: string },
   ) => Promise<ToolResult>;
-  renderCall?: (args: Record<string, unknown>, theme: ToolTheme) => Renderable;
+  renderCall?: (
+    args: Record<string, unknown>,
+    theme: ToolTheme,
+    context?: Record<string, unknown>,
+  ) => Renderable;
   renderResult?: (
     result: ToolResult,
     state: { expanded: boolean; isPartial: boolean },
@@ -110,9 +114,13 @@ export const plainTheme = {
   fg: (_name: string, text: string) => text,
 };
 
-export function renderToolCall(tool: RegisteredTool | undefined, args: Record<string, unknown>) {
+export function renderToolCall(
+  tool: RegisteredTool | undefined,
+  args: Record<string, unknown>,
+  context: Record<string, unknown> = {},
+) {
   if (!tool?.renderCall) throw new Error('Tool call renderer was not registered');
-  return renderText(tool.renderCall(args, plainTheme));
+  return renderText(tool.renderCall(args, plainTheme, context));
 }
 
 export function renderToolResult(

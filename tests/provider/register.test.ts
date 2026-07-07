@@ -707,6 +707,17 @@ describe('Grok CLI tool rendering', () => {
 
     expect(
       renderText(
+        extension.tools
+          .get('Write')
+          ?.renderCall?.(
+            { path: 'notes.txt', content: 'alpha\nbeta\ngamma' },
+            theme,
+            {},
+          ) as Renderable,
+      ),
+    ).toBe('Write notes.txt\n\nalpha\nbeta\ngamma');
+    expect(
+      renderText(
         extension.tools.get('Write')?.renderResult?.(
           {
             content: [{ type: 'text', text: 'long write output' }],
@@ -717,7 +728,7 @@ describe('Grok CLI tool rendering', () => {
           {},
         ) as Renderable,
       ),
-    ).toBe('42 bytes written');
+    ).toBe('');
     expect(
       renderText(
         extension.tools.get('StrReplace')?.renderResult?.(
