@@ -3,6 +3,7 @@ import { promises as fs } from 'node:fs';
 import { basename, join, relative } from 'node:path';
 import { promisify } from 'node:util';
 import { Text } from '@earendil-works/pi-tui';
+import { loadToolDisplayConfig } from './displayConfig.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -18,6 +19,11 @@ export function recordFrom(value: unknown): Record<string, unknown> | undefined 
 export function stringFrom(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
   return value;
+}
+
+export function argsFromRenderContext(value: unknown): Record<string, unknown> {
+  const context = recordFrom(value);
+  return recordFrom(context?.args) ?? context ?? {};
 }
 
 export function truncateLines(lines: string[]): string {
@@ -108,10 +114,40 @@ export function text(text: string): Text {
   return new Text(text, 0, 0);
 }
 
-function firstText(result: { content: { type: string; text?: string }[] }) {
+export function firstText(result: { content: { type: string; text?: string }[] }) {
   const first = result.content[0];
   if (first?.type !== 'text') return undefined;
   return first.text;
+}
+
+function normalizedLines(value: string): string[] {
+  const lines = value.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+  return lines.at(-1) === '' ? lines.slice(0, -1) : lines;
+}
+
+export function previewLines(
+  value: string,
+  limit: number,
+  direction: 'head' | 'tail' = 'head',
+): string[] {
+  if (limit <= 0) return [];
+  const lines = normalizedLines(value);
+  if (lines.length <= limit) return lines;
+  const selected = direction === 'tail' ? lines.slice(-limit) : lines.slice(0, limit);
+  return [
+    ...selected,
+    `[Showing ${direction === 'tail' ? 'last' : 'first'} ${selected.length} of ${lines.length} lines.]`,
+  ];
+}
+
+export function previewChars(value: string, limit: number): string {
+  if (limit <= 0) return '';
+  if (value.length <= limit) return value;
+  return `${value.slice(0, limit)}\n[Preview truncated at ${limit} characters.]`;
+}
+
+export function currentToolDisplayConfig() {
+  return loadToolDisplayConfig().config;
 }
 
 export function renderResultText(
@@ -121,6 +157,21 @@ export function renderResultText(
 ): Text {
   if (expanded) return text(firstText(result) ?? summary);
   return text(summary);
+}
+
+export function renderResultWithPreview(
+  result: { content: { type: string; text?: string }[] },
+  options: { expanded: boolean; isPartial: boolean },
+  summary: string,
+  preview: string | string[],
+  theme: { fg: (name: 'dim', text: string) => string },
+): Text {
+  const running = renderRunning(options.isPartial);
+  if (running) return running;
+  if (options.expanded) return renderResultText(result, true, summary);
+  const previewText = Array.isArray(preview) ? preview.join('\n') : preview;
+  if (!previewText) return text(summary);
+  return text(`${summary}\n${theme.fg('dim', previewText)}`);
 }
 
 export function renderRunning(isPartial: boolean): Text | undefined {

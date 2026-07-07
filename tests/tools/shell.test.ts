@@ -131,13 +131,13 @@ describe('shell tool', () => {
         content: [{ type: 'text', text: 'full output' }],
         details: { exitCode: 0 },
       }),
-    ).toBe('Exit 0');
+    ).toBe('Exit 0\nfull output');
     expect(
       renderToolResult(shell, {
         content: [{ type: 'text', text: 'spawn failed' }],
         details: { exitCode: 'ENOENT' },
       }),
-    ).toBe('Exit 1');
+    ).toBe('Exit 1\nspawn failed');
     expect(
       renderToolResult(
         shell,

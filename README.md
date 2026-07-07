@@ -190,6 +190,18 @@ Vision configuration is read from `~/.pi/grok-cli-vision.json`. The file is crea
 
 `model` must identify an image-capable model. Invalid values are reported and replaced with safe defaults. Manual changes apply on the next image read.
 
+### Tool display modes
+
+pi's `Ctrl+O` keybinding still controls full tool expansion. pi-grok-cli adds a separate collapsed-view setting so Grok/Composer tool calls can use either summary-only or bounded-preview output.
+
+| Command | Description |
+| --- | --- |
+| `/grok-cli-tools:status` | Show the current collapsed-view display mode and preview limits. |
+| `/grok-cli-tools:minimal` | Show compact summaries only. |
+| `/grok-cli-tools:preview` | Default. Show key summaries plus bounded previews for search, listing, shell, and web results. |
+
+Configuration lives at `~/.pi/grok-cli-tools.json`.
+
 ### Common environment variables
 
 | Variable | Default | Description |

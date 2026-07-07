@@ -1,7 +1,13 @@
 import { StringEnum, Type } from '@earendil-works/pi-ai';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { Text } from '@earendil-works/pi-tui';
-import { renderRunning, text } from './rendering.js';
+import {
+  currentToolDisplayConfig,
+  firstText,
+  previewChars,
+  renderRunning,
+  text,
+} from './rendering.js';
 import {
   ensureWebSearchDelegate,
   getWebSearchDelegate,
@@ -148,9 +154,12 @@ export function registerWebSearchTool(pi: ExtensionAPI) {
           ? theme.fg('success', `${details.totalResults} sources`)
           : theme.fg('success', 'search complete');
 
-      if (!expanded) return text(summary);
+      const textContent = firstText(result) ?? '';
+      if (!expanded) {
+        const preview = previewChars(textContent, currentToolDisplayConfig().webSearchPreviewChars);
+        return preview ? new Text(`${summary}\n${theme.fg('dim', preview)}`, 0, 0) : text(summary);
+      }
 
-      const textContent = result.content.find((c) => c.type === 'text')?.text ?? '';
       const preview = textContent.length > 800 ? `${textContent.slice(0, 800)}...` : textContent;
       return new Text(`${summary}\n${theme.fg('dim', preview)}`, 0, 0);
     },

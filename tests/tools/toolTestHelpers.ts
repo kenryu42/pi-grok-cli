@@ -2,11 +2,20 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
-import { afterEach } from 'vitest';
+import { afterEach, beforeEach } from 'vitest';
 
 const tempDirs: string[] = [];
+const defaultToolDisplayConfigDir = mkdtempSync(join(tmpdir(), 'pi-grok-cli-tool-display-'));
+const defaultToolDisplayConfigPath = join(defaultToolDisplayConfigDir, 'missing.json');
+
+tempDirs.push(defaultToolDisplayConfigDir);
+
+beforeEach(() => {
+  process.env.PI_GROK_CLI_TOOLS_CONFIG = defaultToolDisplayConfigPath;
+});
 
 afterEach(() => {
+  process.env.PI_GROK_CLI_TOOLS_CONFIG = defaultToolDisplayConfigPath;
   for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true });
 });
 

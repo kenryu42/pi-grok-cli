@@ -302,7 +302,7 @@ describe('search tools', () => {
           render: () => [],
         },
       ),
-    ).toBe('1 match(es)');
+    ).toBe('1 match(es)\nsrc/alpha.ts:1:needle');
     expect(
       renderText(
         grep?.renderResult?.(result, { expanded: true, isPartial: false }, plainTheme, {}) ?? {
@@ -352,7 +352,7 @@ describe('search tools', () => {
           render: () => [],
         },
       ),
-    ).toBe('2 file(s)');
+    ).toBe('2 file(s)\nsrc/alpha.ts\nsrc/gamma.ts');
     expect(
       renderText(
         glob?.renderResult?.(

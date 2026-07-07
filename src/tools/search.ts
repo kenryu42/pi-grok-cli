@@ -5,16 +5,18 @@ import { promisify } from 'node:util';
 import { Type } from '@earendil-works/pi-ai';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import {
+  currentToolDisplayConfig,
   execWithRgFallback,
+  firstText,
   globToRegExp,
   hasRipgrep,
   listFilesRecursive,
   MAX_OUTPUT_BYTES,
   normalizePath,
   numberDetail,
+  previewLines,
   recordFrom,
-  renderResultText,
-  renderRunning,
+  renderResultWithPreview,
   stringFrom,
   text,
   toolError,
@@ -119,15 +121,17 @@ export function registerSearchTools(pi: ExtensionAPI) {
       );
     },
     renderResult(result, { expanded, isPartial }, theme) {
-      const running = renderRunning(isPartial);
-      if (running) return running;
       const matchCount = numberDetail(result, 'matchCount');
-      return renderResultText(
+      return renderResultWithPreview(
         result,
-        expanded,
+        { expanded, isPartial },
         matchCount === 0
           ? theme.fg('dim', 'No matches')
           : theme.fg('muted', `${matchCount} match(es)`),
+        matchCount === 0
+          ? []
+          : previewLines(firstText(result) ?? '', currentToolDisplayConfig().grepPreviewMatches),
+        theme,
       );
     },
   });
@@ -211,13 +215,15 @@ export function registerSearchTools(pi: ExtensionAPI) {
       );
     },
     renderResult(result, { expanded, isPartial }, theme) {
-      const running = renderRunning(isPartial);
-      if (running) return running;
       const fileCount = numberDetail(result, 'fileCount');
-      return renderResultText(
+      return renderResultWithPreview(
         result,
-        expanded,
+        { expanded, isPartial },
         fileCount === 0 ? theme.fg('dim', 'No files') : theme.fg('muted', `${fileCount} file(s)`),
+        fileCount === 0
+          ? []
+          : previewLines(firstText(result) ?? '', currentToolDisplayConfig().globPreviewFiles),
+        theme,
       );
     },
   });

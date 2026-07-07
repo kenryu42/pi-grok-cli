@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Api, Model, OAuthCredentials, OAuthProviderInterface } from '@earendil-works/pi-ai';
@@ -56,6 +56,7 @@ const originalFetch = globalThis.fetch;
 const originalHome = process.env.HOME;
 const originalTimeZone = process.env.TZ;
 const originalToken = process.env.GROK_CLI_OAUTH_TOKEN;
+const originalToolDisplayConfig = process.env.PI_GROK_CLI_TOOLS_CONFIG;
 const tempDirs: string[] = [];
 
 beforeEach(() => {
@@ -84,10 +85,18 @@ afterEach(() => {
   } else {
     process.env.GROK_CLI_OAUTH_TOKEN = originalToken;
   }
+  if (originalToolDisplayConfig === undefined) {
+    delete process.env.PI_GROK_CLI_TOOLS_CONFIG;
+  } else {
+    process.env.PI_GROK_CLI_TOOLS_CONFIG = originalToolDisplayConfig;
+  }
   for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true });
 });
 
 async function setupExtension(initialActiveTools = ['read', 'bash'], piWebAccessInstalled = true) {
+  const configDir = mkdtempSync(join(tmpdir(), 'pi-grok-cli-tool-display-'));
+  tempDirs.push(configDir);
+  process.env.PI_GROK_CLI_TOOLS_CONFIG = join(configDir, 'missing.json');
   vi.spyOn(webSearchDelegate, 'isPiWebAccessInstalled').mockReturnValue(piWebAccessInstalled);
   const commands = new Map<string, CommandConfig>();
   const providers = new Map<string, ProviderConfig>();
@@ -145,6 +154,13 @@ function contextForModel(provider: string): TestContext {
     model: { provider, id: `${provider}-model` },
     modelRegistry: { getAll: () => [] },
     ui: { notify: vi.fn() },
+  };
+}
+
+function commandContext(notify: TestContext['ui']['notify']): TestContext {
+  return {
+    modelRegistry: { getAll: () => [] },
+    ui: { notify },
   };
 }
 
@@ -461,6 +477,24 @@ describe('Grok CLI status command', () => {
   });
 });
 
+describe('Grok CLI tool display commands', () => {
+  it('registers status and mode commands that persist display config', async () => {
+    const extension = await setupExtension();
+    const notify = vi.fn();
+
+    await extension.commands.get('grok-cli-tools:preview')?.handler([], commandContext(notify));
+
+    expect(notify.mock.calls.at(-1)?.[0]).toContain('grok-cli-tools display: preview');
+    expect(
+      JSON.parse(readFileSync(process.env.PI_GROK_CLI_TOOLS_CONFIG ?? '', 'utf-8')).toolDisplay,
+    ).toBe('preview');
+
+    await extension.commands.get('grok-cli-tools:status')?.handler([], commandContext(notify));
+
+    expect(notify.mock.calls.at(-1)?.[0]).toContain('grok-cli-tools display: preview');
+  });
+});
+
 describe('Grok CLI provider registration', () => {
   it('registers provider metadata and OAuth helpers', async () => {
     const extension = await setupExtension();
@@ -649,7 +683,7 @@ describe('Grok CLI tool rendering', () => {
     }
   });
 
-  it('keeps collapsed search output compact and expands to full output', async () => {
+  it('shows preview collapsed search output and expands to full output', async () => {
     const extension = await setupExtension();
     const grep = extension.tools.get('Grep');
     const result = {
@@ -664,8 +698,7 @@ describe('Grok CLI tool rendering', () => {
       grep?.renderResult?.(result, { expanded: true, isPartial: false }, theme, {}) as Renderable,
     );
 
-    expect(collapsed).toBe('2 match(es)');
-    expect(collapsed).not.toContain('src/a.ts');
+    expect(collapsed).toBe('2 match(es)\nsrc/a.ts:1:match\nsrc/b.ts:2:match');
     expect(expanded).toContain('src/a.ts:1:match');
   });
 
@@ -723,6 +756,6 @@ describe('Grok CLI tool rendering', () => {
           {},
         ) as Renderable,
       ),
-    ).toBe('Exit 2');
+    ).toBe('Exit 2\nlong shell output');
   });
 });

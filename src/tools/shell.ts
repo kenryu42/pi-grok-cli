@@ -5,11 +5,13 @@ import { promisify } from 'node:util';
 import { Type } from '@earendil-works/pi-ai';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import {
+  currentToolDisplayConfig,
   detailRecord,
+  firstText,
   MAX_OUTPUT_BYTES,
   MAX_OUTPUT_CHARS,
-  renderResultText,
-  renderRunning,
+  previewLines,
+  renderResultWithPreview,
   text,
 } from './rendering.js';
 
@@ -145,14 +147,14 @@ export function registerShellTool(pi: ExtensionAPI) {
       );
     },
     renderResult(result, { expanded, isPartial }, theme) {
-      const running = renderRunning(isPartial);
-      if (running) return running;
       const exitCode =
         typeof detailRecord(result).exitCode === 'number' ? detailRecord(result).exitCode : 1;
-      return renderResultText(
+      return renderResultWithPreview(
         result,
-        expanded,
+        { expanded, isPartial },
         exitCode === 0 ? theme.fg('muted', 'Exit 0') : theme.fg('warning', `Exit ${exitCode}`),
+        previewLines(firstText(result) ?? '', currentToolDisplayConfig().shellTailLines, 'tail'),
+        theme,
       );
     },
   });

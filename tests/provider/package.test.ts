@@ -66,6 +66,7 @@ describe('repository layout', () => {
       'src/provider/toolScope.ts',
       'src/provider/usage.ts',
       'src/shared/errors.ts',
+      'src/tools/displayConfig.ts',
       'src/tools/files.ts',
       'src/tools/read.ts',
       'src/tools/register.ts',

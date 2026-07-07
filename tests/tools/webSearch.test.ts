@@ -168,7 +168,7 @@ describe('WebSearch tool', () => {
         content: [{ type: 'text', text: 'synthesized answer' }],
         details: { totalResults: 12 },
       };
-      expect(renderToolResult(ws, result)).toBe('12 sources');
+      expect(renderToolResult(ws, result)).toBe('12 sources\nsynthesized answer');
     });
 
     it('shows search complete when no totalResults', () => {
@@ -176,7 +176,7 @@ describe('WebSearch tool', () => {
         content: [{ type: 'text', text: 'answer' }],
         details: {},
       };
-      expect(renderToolResult(ws, result)).toBe('search complete');
+      expect(renderToolResult(ws, result)).toBe('search complete\nanswer');
     });
 
     it('shows expanded content with summary prefix', () => {

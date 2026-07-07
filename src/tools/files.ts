@@ -10,13 +10,18 @@ import { dirname, resolve } from 'node:path';
 import { Type } from '@earendil-works/pi-ai';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import {
+  argsFromRenderContext,
   booleanDetail,
+  currentToolDisplayConfig,
   fileError,
   fileNotFound,
+  firstText,
   MAX_OUTPUT_CHARS,
   numberDetail,
+  previewLines,
   recordFrom,
   renderResultSummary,
+  renderResultWithPreview,
   stringDetail,
   stringFrom,
   type ToolError,
@@ -186,11 +191,12 @@ export function registerFileTools(pi: ExtensionAPI) {
       return renderPathToolCall('LS', args.path, theme);
     },
     renderResult(result, { expanded, isPartial }, theme) {
-      return renderResultSummary(
+      return renderResultWithPreview(
         result,
-        expanded,
-        isPartial,
+        { expanded, isPartial },
         theme.fg('muted', stringDetail(result, 'path')),
+        previewLines(firstText(result) ?? '', currentToolDisplayConfig().lsPreviewEntries),
+        theme,
       );
     },
   });
@@ -256,12 +262,16 @@ export function registerFileTools(pi: ExtensionAPI) {
     renderCall(args, theme) {
       return renderPathToolCall('Write', args.path, theme);
     },
-    renderResult(result, { expanded, isPartial }, theme) {
-      return renderResultSummary(
+    renderResult(result, { expanded, isPartial }, theme, context) {
+      return renderResultWithPreview(
         result,
-        expanded,
-        isPartial,
+        { expanded, isPartial },
         theme.fg('muted', `${numberDetail(result, 'bytesWritten')} bytes written`),
+        previewLines(
+          stringFrom(argsFromRenderContext(context).content) ?? '',
+          currentToolDisplayConfig().writePreviewLines,
+        ),
+        theme,
       );
     },
   });
