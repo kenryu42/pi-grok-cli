@@ -7,10 +7,9 @@ import {
   streamSimpleOpenAIResponses,
 } from '@earendil-works/pi-ai';
 
-// Matches the version the live inference endpoint's client gate accepts.
-// Verified empirically against the server (same value the open-grok-build
-// opencode plugin uses); keep it in sync with that reference implementation.
-export const GROK_CLI_VERSION = '0.2.22';
+// Grok CLI client version. Keep it in sync with the version the official Grok
+// CLI client emits (observed in captured cli-chat-proxy.grok.com traffic).
+export const GROK_CLI_VERSION = '0.2.91';
 
 // The version gate reads the client version out of User-Agent. The accepted
 // format is the product/version pair the official clients emit — both the pager
