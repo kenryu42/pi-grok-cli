@@ -368,8 +368,8 @@ describe('OAuth helpers without network access', () => {
     expect(onSelect).toHaveBeenCalledWith({
       message: 'Select Grok CLI login method:',
       options: [
-        { id: 'browser', label: 'Browser OAuth callback' },
-        { id: 'device', label: 'Device code (SSH/headless)' },
+        { id: 'browser', label: 'Browser login (default)' },
+        { id: 'device', label: 'Device code login (headless)' },
       ],
     });
     expect(onDeviceCode).toHaveBeenCalledWith({

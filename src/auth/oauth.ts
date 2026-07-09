@@ -569,8 +569,8 @@ export async function login(
     ? await callbacks.onSelect({
         message: 'Select Grok CLI login method:',
         options: [
-          { id: 'browser', label: 'Browser OAuth callback' },
-          { id: 'device', label: 'Device code (SSH/headless)' },
+          { id: 'browser', label: 'Browser login (default)' },
+          { id: 'device', label: 'Device code login (headless)' },
         ],
       })
     : 'browser';
