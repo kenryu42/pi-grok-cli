@@ -189,6 +189,27 @@ function billingResponse(monthlyLimit: unknown, used: unknown, billingPeriodEnd:
   });
 }
 
+function creditsResponse(creditUsagePercent: unknown, billingPeriodEnd: string) {
+  return Response.json({
+    config: {
+      currentPeriod: {
+        type: 'USAGE_PERIOD_TYPE_WEEKLY',
+        start: '2026-07-07T00:19:56+00:00',
+        end: billingPeriodEnd,
+      },
+      creditUsagePercent,
+      billingPeriodStart: '2026-07-07T00:19:56+00:00',
+      billingPeriodEnd,
+    },
+  });
+}
+
+const billingFetchMock = (monthly: Response, credits: Response) =>
+  vi.fn<typeof fetch>(async (input) => {
+    const url = typeof input === 'string' ? input : input.toString();
+    return url.includes('format=credits') ? credits : monthly;
+  });
+
 async function runStatus(extension: Awaited<ReturnType<typeof setupExtension>>) {
   const notify = vi.fn();
   await extension.commands.get('grok-cli-usage')?.handler([], statusContext(notify));
@@ -196,18 +217,22 @@ async function runStatus(extension: Awaited<ReturnType<typeof setupExtension>>) 
 }
 
 describe('Grok CLI status command', () => {
-  it('fetches unified billing usage with the env token and no user id header', async () => {
+  it('fetches monthly and weekly billing usage with the env token and no user id header', async () => {
     process.env.GROK_CLI_OAUTH_TOKEN = 'env-token';
     setupHome();
-    const fetchMock = vi.fn<typeof fetch>(async () =>
+    const fetchMock = billingFetchMock(
       billingResponse(4000, 1421, '2026-07-01T00:00:00+00:00'),
+      creditsResponse(1.0, '2026-07-14T00:19:56+00:00'),
     );
     globalThis.fetch = fetchMock;
     const extension = await setupExtension();
     const notify = await runStatus(extension);
 
-    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls[0]?.[0]).toBe('https://cli-chat-proxy.grok.com/v1/billing');
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(
+      'https://cli-chat-proxy.grok.com/v1/billing?format=credits',
+    );
     expect(fetchMock.mock.calls[0]?.[1]?.headers).toMatchObject({
       authorization: 'Bearer env-token',
       'x-xai-token-auth': 'xai-grok-cli',
@@ -217,9 +242,39 @@ describe('Grok CLI status command', () => {
     expect(notify.mock.calls.at(-1)?.[0]).toBe(
       [
         '  Usage:',
-        '    1,421 / 4,000 credits used (36%)',
-        '    2,579 credits remaining',
-        '    Resets at Jun 30 16:00 PT',
+        '    Monthly',
+        '      Credits    1,421 / 4,000 used  36%',
+        '      Remaining  2,579 credits',
+        '      Reset      Jun 30, 17:00 PT',
+        '',
+        '    Weekly',
+        '      Limit      1% used',
+        '      Reset      Jul 13, 17:19 PT',
+      ].join('\n'),
+    );
+  });
+
+  it('omits the weekly block when the credits endpoint is unavailable', async () => {
+    process.env.GROK_CLI_OAUTH_TOKEN = 'env-token';
+    setupHome();
+    const fetchMock = billingFetchMock(
+      billingResponse(4000, 172, '2026-08-01T00:00:00+00:00'),
+      new Response('nope', { status: 500 }),
+    );
+    globalThis.fetch = fetchMock;
+    const extension = await setupExtension();
+    const notify = await runStatus(extension);
+
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(
+      'https://cli-chat-proxy.grok.com/v1/billing?format=credits',
+    );
+    expect(notify.mock.calls.at(-1)?.[0]).toBe(
+      [
+        '  Usage:',
+        '    Monthly',
+        '      Credits    172 / 4,000 used  4%',
+        '      Remaining  3,828 credits',
+        '      Reset      Jul 31, 17:00 PT',
       ].join('\n'),
     );
   });
@@ -245,7 +300,7 @@ describe('Grok CLI status command', () => {
     expect(fetchMock.mock.calls[0]?.[1]?.headers).toMatchObject({
       authorization: 'Bearer provider-token',
     });
-    expect(notify.mock.calls.at(-1)?.[0]).toContain('100 / 4,000 credits used (3%)');
+    expect(notify.mock.calls.at(-1)?.[0]).toContain('100 / 4,000 used  3%');
   });
 
   it('does not fetch billing when no token is available', async () => {

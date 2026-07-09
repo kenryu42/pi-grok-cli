@@ -1,12 +1,37 @@
 import { getBaseUrl } from '../auth/oauth.js';
 
-interface BillingUsage {
+interface MonthlyUsage {
   monthlyLimit: number;
   used: number;
   billingPeriodEnd: string;
 }
 
-function parseBillingUsage(payload: unknown): BillingUsage {
+interface WeeklyUsage {
+  creditUsagePercent: number;
+  billingPeriodEnd: string;
+}
+
+interface BillingUsage {
+  monthly: MonthlyUsage;
+  weekly?: WeeklyUsage;
+}
+
+const RESET_FORMATTER = new Intl.DateTimeFormat('en-US', {
+  month: 'short',
+  day: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+  timeZone: 'America/Los_Angeles',
+});
+
+const billingHeaders = (token: string) => ({
+  authorization: `Bearer ${token}`,
+  'x-xai-token-auth': 'xai-grok-cli',
+  accept: 'application/json',
+});
+
+function parseMonthlyUsage(payload: unknown): MonthlyUsage {
   if (!payload || typeof payload !== 'object') throw new Error('invalid billing payload');
   const config = (payload as Record<string, unknown>).config;
   if (!config || typeof config !== 'object') throw new Error('invalid billing payload');
@@ -27,19 +52,53 @@ function parseBillingUsage(payload: unknown): BillingUsage {
   return { monthlyLimit, used, billingPeriodEnd };
 }
 
-export async function fetchBillingUsage(token: string): Promise<BillingUsage> {
-  const response = await fetch(`${getBaseUrl()}/billing`, {
-    headers: {
-      authorization: `Bearer ${token}`,
-      'x-xai-token-auth': 'xai-grok-cli',
-      accept: 'application/json',
-    },
-  });
-  if (!response.ok) throw new Error(`billing endpoint returned ${response.status}`);
-  return parseBillingUsage(await response.json());
+function parseWeeklyUsage(payload: unknown): WeeklyUsage | undefined {
+  if (!payload || typeof payload !== 'object') return undefined;
+  const config = (payload as Record<string, unknown>).config;
+  if (!config || typeof config !== 'object') return undefined;
+  const currentPeriod = (config as Record<string, unknown>).currentPeriod as
+    | Record<string, unknown>
+    | undefined;
+  if (currentPeriod?.type !== 'USAGE_PERIOD_TYPE_WEEKLY') return undefined;
+  const creditUsagePercent = (config as Record<string, unknown>).creditUsagePercent;
+  const billingPeriodEnd = (config as Record<string, unknown>).billingPeriodEnd;
+  if (
+    typeof creditUsagePercent !== 'number' ||
+    !Number.isFinite(creditUsagePercent) ||
+    typeof billingPeriodEnd !== 'string' ||
+    !Number.isFinite(new Date(billingPeriodEnd).getTime())
+  ) {
+    return undefined;
+  }
+  return { creditUsagePercent, billingPeriodEnd };
 }
 
-export function formatQuota(usage: BillingUsage | undefined) {
+export async function fetchBillingUsage(token: string): Promise<BillingUsage> {
+  const headers = billingHeaders(token);
+  const monthlyResponse = await fetch(`${getBaseUrl()}/billing`, { headers });
+  if (!monthlyResponse.ok) throw new Error(`billing endpoint returned ${monthlyResponse.status}`);
+  const monthly = parseMonthlyUsage(await monthlyResponse.json());
+
+  const weekly = await fetchWeeklyUsage(headers).catch(() => undefined);
+  return { monthly, weekly };
+}
+
+async function fetchWeeklyUsage(headers: Record<string, string>): Promise<WeeklyUsage | undefined> {
+  const response = await fetch(`${getBaseUrl()}/billing?format=credits`, { headers });
+  if (!response.ok) return undefined;
+  return parseWeeklyUsage(await response.json());
+}
+
+function formatReset(iso: string): string {
+  const parts = RESET_FORMATTER.formatToParts(new Date(iso));
+  const part = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
+  const hour = part('hour') === '24' ? '00' : part('hour');
+  return `${part('month')} ${part('day')}, ${hour}:${part('minute')} PT`;
+}
+
+const detail = (label: string, value: string) => `      ${label.padEnd(9)}  ${value}`;
+
+export function formatQuota(usage: BillingUsage | undefined): string[] {
   if (!usage) {
     return [
       '  Usage:',
@@ -47,11 +106,29 @@ export function formatQuota(usage: BillingUsage | undefined) {
     ];
   }
 
-  const resetDate = new Date(new Date(usage.billingPeriodEnd).getTime() - 8 * 60 * 60 * 1000);
-  return [
+  const monthlyPercent = Math.round((usage.monthly.used / usage.monthly.monthlyLimit) * 100);
+  const lines = [
     '  Usage:',
-    `    ${usage.used.toLocaleString()} / ${usage.monthlyLimit.toLocaleString()} credits used (${Math.round((usage.used / usage.monthlyLimit) * 100)}%)`,
-    `    ${(usage.monthlyLimit - usage.used).toLocaleString()} credits remaining`,
-    `    Resets at ${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][resetDate.getUTCMonth()]} ${resetDate.getUTCDate()} ${resetDate.getUTCHours().toString().padStart(2, '0')}:${resetDate.getUTCMinutes().toString().padStart(2, '0')} PT`,
+    '    Monthly',
+    detail(
+      'Credits',
+      `${usage.monthly.used.toLocaleString()} / ${usage.monthly.monthlyLimit.toLocaleString()} used  ${monthlyPercent}%`,
+    ),
+    detail(
+      'Remaining',
+      `${(usage.monthly.monthlyLimit - usage.monthly.used).toLocaleString()} credits`,
+    ),
+    detail('Reset', formatReset(usage.monthly.billingPeriodEnd)),
   ];
+
+  if (usage.weekly) {
+    lines.push(
+      '',
+      '    Weekly',
+      detail('Limit', `${Math.round(usage.weekly.creditUsagePercent)}% used`),
+      detail('Reset', formatReset(usage.weekly.billingPeriodEnd)),
+    );
+  }
+
+  return lines;
 }
