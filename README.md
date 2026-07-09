@@ -17,11 +17,12 @@ Default catalog (filter/reorder with `PI_GROK_CLI_MODELS`):
 | `grok-composer-2.5-fast` | 200K | no | text (images auto-routed to `grok-build`) | 3 / 15 |
 | `grok-build` | 512K | yes | text + image | 1 / 2 |
 | `grok-4.3` | 1M | yes | text + image | 1.25 / 2.5 |
+| `grok-4.5` | 500K | yes | text + image | 2 / 6 |
 | `grok-4.20-0309-reasoning` | 2M | yes | text + image | 1.25 / 2.5 |
 | `grok-4.20-0309-non-reasoning` | 2M | no | text + image | 1.25 / 2.5 |
 | `grok-4.20-multi-agent-0309` | 2M | yes | text + image | 1.25 / 2.5 |
 
-`grok-composer-2.5-fast` is Cursor's Composer 2.5 — an agentic coding model tuned for long-horizon tasks. Reasoning-effort control is honored by `grok-4.3`, `grok-4.20-multi-agent`, and `grok-3-mini*` reasoning models; non-reasoning models expose a thinking-level map instead.
+`grok-composer-2.5-fast` is Cursor's Composer 2.5 — an agentic coding model tuned for long-horizon tasks. Reasoning-effort control is honored by `grok-4.5`, `grok-4.3`, `grok-4.20-multi-agent`, and `grok-3-mini*` reasoning models; non-reasoning models expose a thinking-level map instead.
 
 ## Installation
 
@@ -77,7 +78,7 @@ This is on by default and needs no setup beyond `/login`. Pasted images work too
 | `/grok-cli-vision:on` / `:off` | Enable or disable image routing. |
 | `/grok-cli-vision:cache-clear` | Clear the response cache. |
 
-Configuration lives at `~/.pi/grok-cli-vision.json` (created on first change) with an in-memory response cache at `~/.pi/grok-cli-vision-cache.json`. Descriptions are cached by image hash + model + prompt, so repeat reads of the same image are free. Image-capable models (`grok-build`, `grok-4.3`, `grok-4.20-*`) are never routed — they read images natively.
+Configuration lives at `~/.pi/grok-cli-vision.json` (created on first change) with an in-memory response cache at `~/.pi/grok-cli-vision-cache.json`. Descriptions are cached by image hash + model + prompt, so repeat reads of the same image are free. Image-capable models (`grok-build`, `grok-4.5`, `grok-4.3`, `grok-4.20-*`) are never routed — they read images natively.
 
 ## Cursor tool compatibility
 
