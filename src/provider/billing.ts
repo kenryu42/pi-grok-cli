@@ -25,7 +25,7 @@ const RESET_FORMATTER = new Intl.DateTimeFormat(undefined, {
   timeZoneName: 'short',
 });
 
-const LOCAL_TIME_ZONE = RESET_FORMATTER.resolvedOptions().timeZone;
+export const LOCAL_TIME_ZONE = RESET_FORMATTER.resolvedOptions().timeZone;
 
 const billingHeaders = (token: string) => ({
   authorization: `Bearer ${token}`,

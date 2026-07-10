@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import type { Api, Model, OAuthCredentials } from '@earendil-works/pi-ai';
 import type { ExtensionAPI, ProviderConfig } from '@earendil-works/pi-coding-agent';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { LOCAL_TIME_ZONE } from '../../src/provider/billing.js';
 import { GROK_SHIM_TOOL_NAMES, grokToolsToActivate } from '../../src/tools/register.js';
 import * as webSearchDelegate from '../../src/tools/webSearchDelegate.js';
 
@@ -210,6 +211,11 @@ const billingFetchMock = (monthly: Response, credits: Response) =>
     return url.includes('format=credits') ? credits : monthly;
   });
 
+function expectReset(status: string) {
+  expect(status).toMatch(/Reset\s+.+\s(?:GMT[+-]\d+(?::\d+)?|UTC|[A-Z]{2,5})\s\S+/);
+  expect(status).toContain(LOCAL_TIME_ZONE);
+}
+
 async function runStatus(extension: Awaited<ReturnType<typeof setupExtension>>) {
   const notify = vi.fn();
   await extension.commands.get('grok-cli-usage')?.handler([], statusContext(notify));
@@ -243,11 +249,7 @@ describe('Grok CLI status command', () => {
     expect(status).toContain('1,421 / 4,000 used  36%');
     expect(status).toContain('2,579 credits');
     expect(status).toContain('1% used');
-    const localFormatter = new Intl.DateTimeFormat(undefined, { timeZoneName: 'short' });
-    expect(status).toContain(
-      localFormatter.formatToParts(new Date()).find((part) => part.type === 'timeZoneName')?.value,
-    );
-    expect(status).toContain(localFormatter.resolvedOptions().timeZone);
+    expectReset(status);
   });
 
   it('omits the weekly block when the credits endpoint is unavailable', async () => {
@@ -267,6 +269,7 @@ describe('Grok CLI status command', () => {
     const status = String(notify.mock.calls.at(-1)?.[0]);
     expect(status).toContain('172 / 4,000 used  4%');
     expect(status).toContain('3,828 credits');
+    expectReset(status);
   });
 
   it('uses the registered provider token when no env token is set', async () => {
