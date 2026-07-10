@@ -24,6 +24,31 @@ afterEach(() => {
 });
 
 describe('webSearchDelegate retry', () => {
+  it('loads extensions that import Pi package subpaths', async () => {
+    const extensionDir = join(testAgentDir, 'npm', 'node_modules', 'pi-web-access');
+    mkdirSync(extensionDir, { recursive: true });
+    writeFileSync(
+      join(extensionDir, 'index.js'),
+      `
+import { StringEnum } from '@earendil-works/pi-ai/compat'
+
+export default function (pi) {
+  if (typeof StringEnum !== 'function') throw new Error('expected StringEnum')
+  pi.registerTool({
+    name: 'web_search',
+    execute: async () => ({ content: [{ type: 'text', text: 'ok' }], details: {} }),
+  })
+}
+`,
+    );
+    const pi = {} as Parameters<typeof ensureWebSearchDelegate>[0];
+
+    await ensureWebSearchDelegate(pi);
+
+    expect(getWebSearchLoadError()).toBeUndefined();
+    expect(getWebSearchDelegate()).toBeTypeOf('function');
+  });
+
   it('retries after a failed delegate load', async () => {
     const extensionDir = join(testAgentDir, 'npm', 'node_modules', 'pi-web-access');
     mkdirSync(extensionDir, { recursive: true });
@@ -45,11 +70,35 @@ export default function (pi) {
 
     await ensureWebSearchDelegate(pi);
     expect(getWebSearchDelegate()).toBeUndefined();
-    expect(getWebSearchLoadError()).toBe('temporary load failure');
+    expect(getWebSearchLoadError()).toBe('Failed to load extension: temporary load failure');
 
     await ensureWebSearchDelegate(pi);
     expect(getWebSearchDelegate()).toBeTypeOf('function');
     expect(getWebSearchLoadError()).toBeUndefined();
+  });
+
+  it('reports extensions that do not register web_search', async () => {
+    const extensionDir = join(testAgentDir, 'npm', 'node_modules', 'pi-web-access');
+    mkdirSync(extensionDir, { recursive: true });
+    writeFileSync(
+      join(extensionDir, 'index.js'),
+      `
+export default function (pi) {
+  pi.registerTool({
+    name: 'fetch_content',
+    execute: async () => ({ content: [{ type: 'text', text: 'ok' }], details: {} }),
+  })
+}
+`,
+    );
+    const pi = {} as Parameters<typeof ensureWebSearchDelegate>[0];
+
+    await ensureWebSearchDelegate(pi);
+
+    expect(getWebSearchDelegate()).toBeUndefined();
+    expect(getWebSearchLoadError()).toBe(
+      'pi-web-access loaded but did not register web_search. Update pi-web-access.',
+    );
   });
 
   it('does not let a stale load replace the delegate for a newer binding', async () => {

@@ -32,8 +32,8 @@ const { streamSimpleOpenAIResponses, mockPiWebAccessInstalled } = vi.hoisted(() 
   ),
 }));
 
-vi.mock('@earendil-works/pi-ai', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@earendil-works/pi-ai')>()),
+vi.mock('@earendil-works/pi-ai/compat', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@earendil-works/pi-ai/compat')>()),
   streamSimpleOpenAIResponses,
 }));
 

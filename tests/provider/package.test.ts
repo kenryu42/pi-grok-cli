@@ -27,9 +27,12 @@ describe('npm package manifest', () => {
     expect(existsSync(new URL('../../vitest.config.ts', import.meta.url))).toBe(true);
   });
 
-  it('declares direct runtime dependencies needed by the source entrypoint', () => {
-    expect(packageJson.dependencies?.jiti).toBeDefined();
-    expect(packageJson.dependencies?.typebox).toBeDefined();
+  it('declares the Pi runtime version required by web search delegation', () => {
+    expect(packageJson.peerDependencies?.['@earendil-works/pi-ai']).toBe('>=0.80.0');
+    expect(packageJson.peerDependencies?.['@earendil-works/pi-coding-agent']).toBe('>=0.80.0');
+    expect(packageJson.peerDependencies?.['@earendil-works/pi-tui']).toBe('>=0.80.0');
+    expect(packageJson.dependencies?.jiti).toBeUndefined();
+    expect(packageJson.dependencies?.typebox).toBeUndefined();
   });
 });
 

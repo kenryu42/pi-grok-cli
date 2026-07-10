@@ -5,7 +5,7 @@ import {
   type Model,
   type SimpleStreamOptions,
   streamSimpleOpenAIResponses,
-} from '@earendil-works/pi-ai';
+} from '@earendil-works/pi-ai/compat';
 
 // Grok CLI client version. Keep it in sync with the version the official Grok
 // CLI client emits (observed in captured cli-chat-proxy.grok.com traffic).
@@ -57,7 +57,7 @@ export function streamGrokCli(
   options?: SimpleStreamOptions,
 ): AssistantMessageEventStream {
   const sessionId = options?.sessionId;
-  const headers: Record<string, string> = {
+  const headers = {
     ...options?.headers,
     ...grokCliModelHeaders(model.id),
   };

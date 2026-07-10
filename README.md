@@ -26,6 +26,8 @@ Default catalog (filter/reorder with `PI_GROK_CLI_MODELS`):
 
 ## Installation
 
+Requires Pi 0.80.0 or newer. Check with `pi --version` and update with `pi update --self`.
+
 ```bash
 pi install npm:pi-grok-cli
 ```
