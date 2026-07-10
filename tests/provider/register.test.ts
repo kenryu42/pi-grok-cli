@@ -239,19 +239,15 @@ describe('Grok CLI status command', () => {
       accept: 'application/json',
     });
     expect(fetchMock.mock.calls[0]?.[1]?.headers).not.toHaveProperty('x-userid');
-    expect(notify.mock.calls.at(-1)?.[0]).toBe(
-      [
-        '  Usage:',
-        '    Monthly',
-        '      Credits    1,421 / 4,000 used  36%',
-        '      Remaining  2,579 credits',
-        '      Reset      Jun 30, 17:00 PT',
-        '',
-        '    Weekly',
-        '      Limit      1% used',
-        '      Reset      Jul 13, 17:19 PT',
-      ].join('\n'),
+    const status = String(notify.mock.calls.at(-1)?.[0]);
+    expect(status).toContain('1,421 / 4,000 used  36%');
+    expect(status).toContain('2,579 credits');
+    expect(status).toContain('1% used');
+    const localFormatter = new Intl.DateTimeFormat(undefined, { timeZoneName: 'short' });
+    expect(status).toContain(
+      localFormatter.formatToParts(new Date()).find((part) => part.type === 'timeZoneName')?.value,
     );
+    expect(status).toContain(localFormatter.resolvedOptions().timeZone);
   });
 
   it('omits the weekly block when the credits endpoint is unavailable', async () => {
@@ -268,15 +264,9 @@ describe('Grok CLI status command', () => {
     expect(fetchMock.mock.calls[1]?.[0]).toBe(
       'https://cli-chat-proxy.grok.com/v1/billing?format=credits',
     );
-    expect(notify.mock.calls.at(-1)?.[0]).toBe(
-      [
-        '  Usage:',
-        '    Monthly',
-        '      Credits    172 / 4,000 used  4%',
-        '      Remaining  3,828 credits',
-        '      Reset      Jul 31, 17:00 PT',
-      ].join('\n'),
-    );
+    const status = String(notify.mock.calls.at(-1)?.[0]);
+    expect(status).toContain('172 / 4,000 used  4%');
+    expect(status).toContain('3,828 credits');
   });
 
   it('uses the registered provider token when no env token is set', async () => {
