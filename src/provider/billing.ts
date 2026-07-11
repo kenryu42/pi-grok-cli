@@ -16,7 +16,7 @@ interface BillingUsage {
   weekly?: WeeklyUsage;
 }
 
-const RESET_FORMATTER = new Intl.DateTimeFormat(undefined, {
+const RESET_FORMATTER = new Intl.DateTimeFormat('en-US', {
   month: 'short',
   day: 'numeric',
   hour: '2-digit',
@@ -25,7 +25,7 @@ const RESET_FORMATTER = new Intl.DateTimeFormat(undefined, {
   timeZoneName: 'short',
 });
 
-export const LOCAL_TIME_ZONE = RESET_FORMATTER.resolvedOptions().timeZone;
+const LOCAL_TIME_ZONE = RESET_FORMATTER.resolvedOptions().timeZone;
 
 const billingHeaders = (token: string) => ({
   authorization: `Bearer ${token}`,

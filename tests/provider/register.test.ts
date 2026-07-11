@@ -3,8 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Api, Model, OAuthCredentials } from '@earendil-works/pi-ai';
 import type { ExtensionAPI, ProviderConfig } from '@earendil-works/pi-coding-agent';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { LOCAL_TIME_ZONE } from '../../src/provider/billing.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GROK_SHIM_TOOL_NAMES, grokToolsToActivate } from '../../src/tools/register.js';
 import * as webSearchDelegate from '../../src/tools/webSearchDelegate.js';
 
@@ -81,8 +80,13 @@ type ExtensionHandler = (event: unknown, ctx: TestContext) => unknown;
 
 const originalFetch = globalThis.fetch;
 const originalHome = process.env.HOME;
+const originalTimeZone = process.env.TZ;
 const originalToken = process.env.GROK_CLI_OAUTH_TOKEN;
 const tempDirs: string[] = [];
+
+beforeEach(() => {
+  process.env.TZ = 'America/New_York';
+});
 
 afterEach(() => {
   vi.resetModules();
@@ -92,6 +96,11 @@ afterEach(() => {
     delete process.env.HOME;
   } else {
     process.env.HOME = originalHome;
+  }
+  if (originalTimeZone === undefined) {
+    delete process.env.TZ;
+  } else {
+    process.env.TZ = originalTimeZone;
   }
   if (originalToken === undefined) {
     delete process.env.GROK_CLI_OAUTH_TOKEN;
@@ -211,11 +220,6 @@ const billingFetchMock = (monthly: Response, credits: Response) =>
     return url.includes('format=credits') ? credits : monthly;
   });
 
-function expectReset(status: string) {
-  expect(status).toMatch(/Reset\s+.+\s(?:GMT[+-]\d+(?::\d+)?|UTC|[A-Z]{2,5})\s\S+/);
-  expect(status).toContain(LOCAL_TIME_ZONE);
-}
-
 async function runStatus(extension: Awaited<ReturnType<typeof setupExtension>>) {
   const notify = vi.fn();
   await extension.commands.get('grok-cli-usage')?.handler([], statusContext(notify));
@@ -245,18 +249,26 @@ describe('Grok CLI status command', () => {
       accept: 'application/json',
     });
     expect(fetchMock.mock.calls[0]?.[1]?.headers).not.toHaveProperty('x-userid');
-    const status = String(notify.mock.calls.at(-1)?.[0]);
-    expect(status).toContain('1,421 / 4,000 used  36%');
-    expect(status).toContain('2,579 credits');
-    expect(status).toContain('1% used');
-    expectReset(status);
+    expect(notify.mock.calls.at(-1)?.[0]).toBe(
+      [
+        '  Usage:',
+        '    Monthly',
+        '      Credits    1,421 / 4,000 used  36%',
+        '      Remaining  2,579 credits',
+        '      Reset      Jun 30, 20:00 EDT America/New_York',
+        '',
+        '    Weekly',
+        '      Limit      1% used',
+        '      Reset      Jul 13, 20:19 EDT America/New_York',
+      ].join('\n'),
+    );
   });
 
   it('omits the weekly block when the credits endpoint is unavailable', async () => {
     process.env.GROK_CLI_OAUTH_TOKEN = 'env-token';
     setupHome();
     const fetchMock = billingFetchMock(
-      billingResponse(4000, 172, '2026-08-01T00:00:00+00:00'),
+      billingResponse(4000, 172, '2026-01-01T00:00:00+00:00'),
       new Response('nope', { status: 500 }),
     );
     globalThis.fetch = fetchMock;
@@ -266,10 +278,15 @@ describe('Grok CLI status command', () => {
     expect(fetchMock.mock.calls[1]?.[0]).toBe(
       'https://cli-chat-proxy.grok.com/v1/billing?format=credits',
     );
-    const status = String(notify.mock.calls.at(-1)?.[0]);
-    expect(status).toContain('172 / 4,000 used  4%');
-    expect(status).toContain('3,828 credits');
-    expectReset(status);
+    expect(notify.mock.calls.at(-1)?.[0]).toBe(
+      [
+        '  Usage:',
+        '    Monthly',
+        '      Credits    172 / 4,000 used  4%',
+        '      Remaining  3,828 credits',
+        '      Reset      Dec 31, 19:00 EST America/New_York',
+      ].join('\n'),
+    );
   });
 
   it('uses the registered provider token when no env token is set', async () => {
