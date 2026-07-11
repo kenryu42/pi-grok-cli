@@ -1,6 +1,6 @@
 {
   "name": "pi-grok-cli",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "Use Grok CLI's API endpoint in pi.",
   "keywords": [
     "pi-package",
