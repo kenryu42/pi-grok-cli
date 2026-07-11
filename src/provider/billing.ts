@@ -16,14 +16,16 @@ interface BillingUsage {
   weekly?: WeeklyUsage;
 }
 
-const RESET_FORMATTER = new Intl.DateTimeFormat('en-US', {
+const RESET_FORMATTER = new Intl.DateTimeFormat(undefined, {
   month: 'short',
   day: 'numeric',
   hour: '2-digit',
   minute: '2-digit',
   hour12: false,
-  timeZone: 'America/Los_Angeles',
+  timeZoneName: 'short',
 });
+
+export const LOCAL_TIME_ZONE = RESET_FORMATTER.resolvedOptions().timeZone;
 
 const billingHeaders = (token: string) => ({
   authorization: `Bearer ${token}`,
@@ -93,7 +95,7 @@ function formatReset(iso: string): string {
   const parts = RESET_FORMATTER.formatToParts(new Date(iso));
   const part = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
   const hour = part('hour') === '24' ? '00' : part('hour');
-  return `${part('month')} ${part('day')}, ${hour}:${part('minute')} PT`;
+  return `${part('month')} ${part('day')}, ${hour}:${part('minute')} ${part('timeZoneName')} ${LOCAL_TIME_ZONE}`;
 }
 
 const detail = (label: string, value: string) => `      ${label.padEnd(9)}  ${value}`;

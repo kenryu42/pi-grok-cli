@@ -66,7 +66,7 @@ Tokens auto-refresh 120s before expiry. To skip OAuth entirely, set `GROK_CLI_OA
 /grok-cli-usage
 ```
 
-Prints credits used / limit, remaining credits, and the reset time for the current billing period.
+Prints credits used / limit, remaining credits, and the reset time in your local system timezone (for example, `Jul 11, 13:01 GMT+7 Asia/Bangkok`) for the current billing period.
 
 ### 4. Image input on text-only models
 
