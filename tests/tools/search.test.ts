@@ -176,6 +176,18 @@ describe('search tools', () => {
     expect(result.details).toEqual({ fileCount: 0 });
   });
 
+  it('reports glob filesystem errors', async () => {
+    const cwd = setupProject();
+    const result = await executeTool(
+      collectTools(registerSearchTools).get('Glob'),
+      { pattern: '**/*.ts', path: 'missing' },
+      cwd,
+    );
+
+    expect(firstText(result).startsWith('Glob error:')).toBe(true);
+    expect(result.details).toMatchObject({ fileCount: 0, failed: true });
+  });
+
   it('globs path-containing patterns through the find fallback', async () => {
     const cwd = setupProject();
     await withFindFallbackTools(async (fallbackTools) => {

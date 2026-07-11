@@ -66,6 +66,35 @@ describe('registerVisionFeature', () => {
     expect(loadConfig().config.enabled).toBe(true);
   });
 
+  it('clears cached vision descriptions and notifies the user', async () => {
+    setupHome();
+    const { commands } = await setupExtension();
+    const { getCachePath } = await import('../../src/vision/config.js');
+    const { loadCache, saveCache } = await import('../../src/vision/cache.js');
+    const notify = vi.fn();
+    saveCache(
+      {
+        version: 1,
+        entries: {
+          cached: {
+            createdAt: '2026-07-12T00:00:00.000Z',
+            description: 'cached description',
+            imageHash: 'image',
+            mediaType: 'image/png',
+            model: 'grok-build',
+            promptHash: 'prompt',
+          },
+        },
+      },
+      getCachePath(),
+    );
+
+    await commands.get('grok-cli-vision:cache-clear')?.handler([], { ui: { notify } });
+
+    expect(loadCache(getCachePath()).entries).toEqual({});
+    expect(notify).toHaveBeenCalledWith('grok-cli-vision cache: cleared', 'info');
+  });
+
   it('delegates read tool results to the vision handler', async () => {
     setupHome();
     const { toolResultHandlers } = await setupExtension();

@@ -60,9 +60,24 @@ function deviceAuthorizationResponse(overrides: Record<string, unknown> = {}) {
   });
 }
 
+function deviceLoginCallbacks(onDeviceCode = vi.fn()) {
+  return {
+    onSelect: async () => 'device',
+    onDeviceCode,
+  } as unknown as OAuthLoginCallbacks;
+}
+
+async function fetchCallback(input: string | URL, init: RequestInit = {}) {
+  const headers = new Headers(init.headers);
+  headers.set('Connection', 'close');
+  const response = await originalFetch(input, { ...init, headers });
+  await response.text();
+  return response;
+}
+
 function authorizeCallback(auth: { url: string }) {
   const url = new URL(auth.url);
-  void originalFetch(
+  void fetchCallback(
     `${url.searchParams.get('redirect_uri')}?code=callback-code&state=${url.searchParams.get('state')}`,
   );
 }
@@ -86,10 +101,10 @@ function mockBrowserLogin(
 }
 
 async function rejectCallbackThenAuthorize(auth: { url: string }, invalidQuery: string) {
-  await expect(originalFetch(callbackUrl(auth, invalidQuery))).resolves.toMatchObject({
+  await expect(fetchCallback(callbackUrl(auth, invalidQuery))).resolves.toMatchObject({
     status: 400,
   });
-  await originalFetch(
+  await fetchCallback(
     callbackUrl(auth, `code=accepted&state=${new URL(auth.url).searchParams.get('state')}`),
   );
 }
@@ -384,6 +399,59 @@ describe('OAuth helpers without network access', () => {
     );
   });
 
+  it('answers trusted-origin CORS preflight requests before accepting the callback', async () => {
+    mockBrowserLogin();
+    let preflight: Response | undefined;
+
+    await expect(
+      login({
+        onAuth: async (auth) => {
+          const redirect = new URL(new URL(auth.url).searchParams.get('redirect_uri') ?? '');
+          preflight = await fetchCallback(redirect, {
+            method: 'OPTIONS',
+            headers: { Origin: 'https://auth.x.ai' },
+          });
+          authorizeCallback(auth);
+        },
+      } as OAuthLoginCallbacks),
+    ).resolves.toMatchObject({ access: 'access' });
+
+    expect(preflight?.status).toBe(204);
+    expect(preflight?.headers.get('access-control-allow-origin')).toBe('https://auth.x.ai');
+    expect(preflight?.headers.get('access-control-allow-methods')).toBe('GET, OPTIONS');
+    expect(preflight?.headers.get('access-control-allow-private-network')).toBe('true');
+  });
+
+  it('reports a rejected token exchange response', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input) =>
+      input === 'https://auth.x.ai/.well-known/openid-configuration'
+        ? Response.json(discoveryDocument)
+        : new Response('authorization code expired', { status: 400 }),
+    );
+    globalThis.fetch = fetchMock;
+
+    await expect(login({ onAuth: authorizeCallback } as OAuthLoginCallbacks)).rejects.toMatchObject(
+      {
+        code: XaiErrorCode.TOKEN_EXCHANGE_FAILED,
+        message: 'xAI token exchange failed: 400 authorization code expired',
+      },
+    );
+  });
+
+  it.each([
+    [{ refresh_token: 'refresh' }, 'access_token'],
+    [{ access_token: 'access' }, 'refresh_token'],
+  ])('rejects token exchange payloads missing %s', async (payload, field) => {
+    mockBrowserLogin(payload);
+
+    await expect(login({ onAuth: authorizeCallback } as OAuthLoginCallbacks)).rejects.toMatchObject(
+      {
+        code: XaiErrorCode.TOKEN_EXCHANGE_INVALID,
+        message: `xAI token exchange did not return ${field}.`,
+      },
+    );
+  });
+
   it('offers and returns fresh official Grok credentials without a network request', async () => {
     const fetchMock = vi.fn<typeof fetch>();
     const onSelect = vi.fn(async () => 'existing');
@@ -510,7 +578,7 @@ describe('OAuth helpers without network access', () => {
             suffix === 'other'
               ? `${redirect.origin}/other?code=ignored&state=${new URL(auth.url).searchParams.get('state')}`
               : `${redirect.origin}/${suffix}`;
-          await expect(originalFetch(invalid)).resolves.toMatchObject({
+          await expect(fetchCallback(invalid)).resolves.toMatchObject({
             status: suffix === 'other' ? 404 : 400,
           });
           authorizeCallback(auth);
@@ -531,7 +599,7 @@ describe('OAuth helpers without network access', () => {
     await expect(
       login({
         onAuth: (auth) => {
-          void originalFetch(
+          void fetchCallback(
             callbackUrl(
               auth,
               `error=access_denied&error_description=Denied&state=${new URL(auth.url).searchParams.get('state')}`,
@@ -552,8 +620,8 @@ describe('OAuth helpers without network access', () => {
     await login({
       onAuth: (auth) => {
         const state = new URL(auth.url).searchParams.get('state');
-        void originalFetch(callbackUrl(auth, `code=first&state=${state}`))
-          .then(() => originalFetch(callbackUrl(auth, `code=second&state=${state}`)))
+        void fetchCallback(callbackUrl(auth, `code=first&state=${state}`))
+          .then(() => fetchCallback(callbackUrl(auth, `code=second&state=${state}`)))
           .catch(() => undefined);
       },
     } as OAuthLoginCallbacks);
@@ -674,7 +742,7 @@ describe('OAuth helpers without network access', () => {
         return `${redirectUri}?code=manual&state=${new URL(authUrl).searchParams.get('state')}`;
       },
     } as OAuthLoginCallbacks);
-    await expect(originalFetch(redirectUri)).rejects.toThrow();
+    await expect(fetchCallback(redirectUri)).rejects.toThrow();
   });
 
   it('surfaces a matching-state manual OAuth error', async () => {
@@ -698,6 +766,18 @@ describe('OAuth helpers without network access', () => {
       login({
         onAuth,
         onManualCodeInput: () => new Promise(() => undefined),
+        signal: controller.signal,
+      } as OAuthLoginCallbacks),
+    ).rejects.toThrow('Login cancelled');
+  });
+
+  it('aborts browser login after callback waiting has started', async () => {
+    const controller = new AbortController();
+    globalThis.fetch = vi.fn<typeof fetch>(async () => Response.json(discoveryDocument));
+
+    await expect(
+      login({
+        onAuth: () => setTimeout(() => controller.abort(), 0),
         signal: controller.signal,
       } as OAuthLoginCallbacks),
     ).rejects.toThrow('Login cancelled');
@@ -784,16 +864,150 @@ describe('OAuth helpers without network access', () => {
     });
     globalThis.fetch = fetchMock;
 
-    await expect(
-      login({
-        onSelect: async () => 'device',
-        onDeviceCode: vi.fn(),
-      } as unknown as OAuthLoginCallbacks),
-    ).rejects.toMatchObject({
+    await expect(login(deviceLoginCallbacks())).rejects.toMatchObject({
       code: XaiErrorCode.DEVICE_AUTHORIZATION_INVALID,
       message: 'xAI device authorization returned invalid interval.',
     });
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('reports rejected and incomplete device authorization responses', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input) => {
+      if (input === 'https://auth.x.ai/.well-known/openid-configuration') {
+        return Response.json(deviceDiscoveryDocument);
+      }
+      return new Response('device authorization unavailable', { status: 503 });
+    });
+    globalThis.fetch = fetchMock;
+
+    await expect(login(deviceLoginCallbacks())).rejects.toMatchObject({
+      code: XaiErrorCode.DEVICE_AUTHORIZATION_FAILED,
+      message: 'xAI device authorization failed: 503 device authorization unavailable',
+    });
+
+    fetchMock.mockImplementation(async (input) => {
+      if (input === 'https://auth.x.ai/.well-known/openid-configuration') {
+        return Response.json(deviceDiscoveryDocument);
+      }
+      return Response.json({ device_code: 'device-code' });
+    });
+
+    await expect(login(deviceLoginCallbacks())).rejects.toMatchObject({
+      code: XaiErrorCode.DEVICE_AUTHORIZATION_INVALID,
+      message:
+        'xAI device authorization did not return device_code, user_code, and verification_uri.',
+    });
+  });
+
+  it('honors slow_down and marks denied device authorization as requiring login', async () => {
+    vi.useFakeTimers();
+    const onDeviceCode = vi.fn();
+    const fetchMock = vi.fn<typeof fetch>(async (input) => {
+      if (input === 'https://auth.x.ai/.well-known/openid-configuration') {
+        return Response.json(deviceDiscoveryDocument);
+      }
+      if (input === 'https://auth.x.ai/oauth/device/code') return deviceAuthorizationResponse();
+      if (fetchMock.mock.calls.length === 3) {
+        return Response.json({ error: 'slow_down' }, { status: 400 });
+      }
+      return Response.json(
+        { error: 'access_denied', error_description: 'The user denied access.' },
+        { status: 400 },
+      );
+    });
+    globalThis.fetch = fetchMock;
+
+    const resultPromise = login(deviceLoginCallbacks(onDeviceCode)).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+
+    await vi.waitFor(() => expect(onDeviceCode).toHaveBeenCalledOnce());
+    await vi.advanceTimersByTimeAsync(15_000);
+
+    await expect(resultPromise).resolves.toMatchObject({
+      code: XaiErrorCode.DEVICE_AUTHORIZATION_FAILED,
+      message: 'xAI device authorization failed: 400 The user denied access.',
+      reloginRequired: true,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it('cancels device authorization while waiting to poll', async () => {
+    const controller = new AbortController();
+    const onDeviceCode = vi.fn();
+    const fetchMock = vi.fn<typeof fetch>(async (input) => {
+      if (input === 'https://auth.x.ai/.well-known/openid-configuration') {
+        return Response.json(deviceDiscoveryDocument);
+      }
+      if (input === 'https://auth.x.ai/oauth/device/code') return deviceAuthorizationResponse();
+      throw new Error(`Unexpected fetch URL: ${String(input)}`);
+    });
+    globalThis.fetch = fetchMock;
+
+    const resultPromise = login({
+      ...deviceLoginCallbacks(onDeviceCode),
+      signal: controller.signal,
+    });
+    await vi.waitFor(() => expect(onDeviceCode).toHaveBeenCalledOnce());
+    controller.abort();
+
+    await expect(resultPromise).rejects.toThrow('Login cancelled');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('times out expired device authorization', async () => {
+    vi.useFakeTimers();
+    const onDeviceCode = vi.fn();
+    const fetchMock = vi.fn<typeof fetch>(async (input) => {
+      if (input === 'https://auth.x.ai/.well-known/openid-configuration') {
+        return Response.json(deviceDiscoveryDocument);
+      }
+      if (input === 'https://auth.x.ai/oauth/device/code') {
+        return deviceAuthorizationResponse({ expires_in: 1, interval: 1 });
+      }
+      return Response.json({ error: 'authorization_pending' }, { status: 400 });
+    });
+    globalThis.fetch = fetchMock;
+
+    const resultPromise = login(deviceLoginCallbacks(onDeviceCode)).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    await vi.waitFor(() => expect(onDeviceCode).toHaveBeenCalledOnce());
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    await expect(resultPromise).resolves.toMatchObject({
+      code: XaiErrorCode.DEVICE_AUTHORIZATION_FAILED,
+      message: 'Timed out waiting for xAI device authorization.',
+    });
+  });
+
+  it('reports non-JSON device polling errors', async () => {
+    vi.useFakeTimers();
+    const onDeviceCode = vi.fn();
+    const fetchMock = vi.fn<typeof fetch>(async (input) => {
+      if (input === 'https://auth.x.ai/.well-known/openid-configuration') {
+        return Response.json(deviceDiscoveryDocument);
+      }
+      if (input === 'https://auth.x.ai/oauth/device/code') {
+        return deviceAuthorizationResponse({ interval: 1 });
+      }
+      return new Response('proxy error', { status: 400 });
+    });
+    globalThis.fetch = fetchMock;
+
+    const resultPromise = login(deviceLoginCallbacks(onDeviceCode)).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    await vi.waitFor(() => expect(onDeviceCode).toHaveBeenCalledOnce());
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    await expect(resultPromise).resolves.toMatchObject({
+      code: XaiErrorCode.DEVICE_AUTHORIZATION_FAILED,
+      message: 'xAI device authorization failed: 400 proxy error',
+    });
   });
 
   it('falls back to browser login when the UI has no device-code callback', async () => {

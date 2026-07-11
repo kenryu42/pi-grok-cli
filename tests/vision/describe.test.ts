@@ -33,6 +33,7 @@ afterEach(() => {
   if (originalToken === undefined) delete process.env.GROK_CLI_OAUTH_TOKEN;
   else process.env.GROK_CLI_OAUTH_TOKEN = originalToken;
   for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  vi.useRealTimers();
 });
 
 interface CtxOverrides {
@@ -293,6 +294,87 @@ describe('handleReadResult — response shapes and resilience', () => {
     const result = await handleReadResult(readEvent([imageBlock()]), buildCtx());
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect((result?.content[0] as { text: string }).text).toContain('recovered');
+  });
+
+  it('reports an exhausted rate-limit retry sequence', async () => {
+    vi.useFakeTimers();
+    fetchMock = vi.fn<typeof fetch>(async () =>
+      Response.json({ error: { message: 'quota exhausted' } }, { status: 429 }),
+    );
+    globalThis.fetch = fetchMock;
+
+    const resultPromise = handleReadResult(readEvent([imageBlock()]), buildCtx());
+    await vi.advanceTimersByTimeAsync(1_500);
+    const result = await resultPromise;
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect((result?.content[0] as { text: string }).text).toContain(
+      'Grok CLI rate limited the request (HTTP 429). Try again later: quota exhausted',
+    );
+  });
+
+  it('reports an exhausted request-timeout retry sequence', async () => {
+    vi.useFakeTimers();
+    fetchMock = vi.fn<typeof fetch>(
+      async (_input, init) =>
+        new Promise((_resolve, reject) => {
+          const signal = init?.signal;
+          if (!signal) throw new Error('expected request signal');
+          signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+        }),
+    );
+    globalThis.fetch = fetchMock;
+
+    const resultPromise = handleReadResult(readEvent([imageBlock()]), buildCtx());
+    await vi.runAllTimersAsync();
+    const result = await resultPromise;
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect((result?.content[0] as { text: string }).text).toContain(
+      'Grok CLI request timed out after 30s after 3 attempts.',
+    );
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('stops retrying when the request is cancelled', async () => {
+    const controller = new AbortController();
+    fetchMock = vi.fn<typeof fetch>(async () => {
+      controller.abort();
+      return new Response('server error', { status: 500 });
+    });
+    globalThis.fetch = fetchMock;
+
+    const result = await handleReadResult(
+      readEvent([imageBlock()]),
+      buildCtx({ signal: controller.signal }),
+    );
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect((result?.content[0] as { text: string }).text).toContain('request cancelled');
+  });
+
+  it.each([
+    [401, 'Grok CLI rejected the API key (HTTP 401)'],
+    [418, 'Grok CLI request failed (HTTP 418)'],
+  ])('explains non-retryable HTTP %i responses', async (status, message) => {
+    fetchMock = vi.fn<typeof fetch>(async () => new Response('', { status }));
+    globalThis.fetch = fetchMock;
+
+    const result = await handleReadResult(readEvent([imageBlock()]), buildCtx());
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect((result?.content[0] as { text: string }).text).toContain(message);
+  });
+
+  it('reports a successful non-JSON response', async () => {
+    fetchMock = vi.fn<typeof fetch>(async () => new Response('<html>proxy error</html>'));
+    globalThis.fetch = fetchMock;
+
+    const result = await handleReadResult(readEvent([imageBlock()]), buildCtx());
+
+    expect((result?.content[0] as { text: string }).text).toContain(
+      'Grok CLI returned non-JSON response:',
+    );
   });
 
   it('caps described images at maxImages and notes the skipped remainder', async () => {

@@ -54,6 +54,18 @@ describe('file tools', () => {
     expect(result.details).toEqual({ path: cwd });
   });
 
+  it('truncates oversized directory listings', async () => {
+    const cwd = tempDir('pi-grok-cli-files-');
+    Array.from({ length: 700 }, (_, index) =>
+      writeFileSync(join(cwd, `${String(index).padStart(4, '0')}-${'x'.repeat(70)}`), '', 'utf-8'),
+    );
+
+    const result = await executeTool(collectTools(registerFileTools).get('LS'), { path: '.' }, cwd);
+
+    expect(firstText(result)).toHaveLength(50_000 + '\n\n[LS: output truncated at 50KB]'.length);
+    expect(firstText(result).endsWith('[LS: output truncated at 50KB]')).toBe(true);
+  });
+
   it('lists directory contents when Unix ls is not on PATH', async () => {
     const cwd = tempDir('pi-grok-cli-files-');
     const oldPath = process.env.PATH;
@@ -334,6 +346,54 @@ describe('file tools', () => {
     expectStoryState(result, cwd, 0, 'red blue red');
   });
 
+  it('rejects malformed edit lists without changing files', async () => {
+    const cwd = tempDir('pi-grok-cli-files-');
+    writeFileSync(join(cwd, 'story.txt'), 'red blue red', 'utf-8');
+    const edit = collectTools(registerFileTools).get('Edit');
+
+    const invalidJson = await executePreparedTool(
+      edit,
+      { path: 'story.txt', edits: '{ not json' },
+      cwd,
+    );
+    const invalidItems = await executePreparedTool(
+      edit,
+      { path: 'story.txt', edits: [{ oldText: 'red' }] },
+      cwd,
+    );
+
+    expect(firstText(invalidJson)).toBe('Edit error: provide at least one exact text replacement');
+    expect(firstText(invalidItems)).toBe('Edit error: provide at least one exact text replacement');
+    expect(readFileSync(join(cwd, 'story.txt'), 'utf-8')).toBe('red blue red');
+  });
+
+  it('reports no-match and filesystem failures from Edit', async () => {
+    const cwd = tempDir('pi-grok-cli-files-');
+    writeFileSync(join(cwd, 'story.txt'), 'red blue red', 'utf-8');
+    mkdirSync(join(cwd, 'directory'));
+    const edit = collectTools(registerFileTools).get('Edit');
+
+    const noMatch = await executePreparedTool(
+      edit,
+      { path: 'story.txt', oldText: 'purple', newText: 'green' },
+      cwd,
+    );
+    const directory = await executePreparedTool(
+      edit,
+      { path: 'directory', oldText: 'red', newText: 'green' },
+      cwd,
+    );
+
+    expect(firstText(noMatch)).toBe('No replacement strings found in story.txt');
+    expect(noMatch.details).toEqual({ path: join(cwd, 'story.txt'), replacements: 0 });
+    expect(firstText(directory).startsWith('Edit error:')).toBe(true);
+    expect(directory.details).toMatchObject({
+      path: join(cwd, 'directory'),
+      replacements: 0,
+      failed: true,
+    });
+  });
+
   it('leaves files unchanged when the replacement string is absent', async () => {
     const cwd = tempDir('pi-grok-cli-files-');
     writeFileSync(join(cwd, 'story.txt'), 'red blue red', 'utf-8');
@@ -375,6 +435,7 @@ describe('file tools', () => {
     expect(renderToolCall(tools.get('StrReplace'), { path: 'notes.txt' })).toBe(
       'StrReplace notes.txt',
     );
+    expect(renderToolCall(tools.get('Edit'), { path: 'notes.txt' })).toBe('Edit notes.txt');
     expect(renderToolCall(tools.get('Delete'), { path: 'notes.txt' })).toBe('Delete notes.txt');
     expect(
       renderToolResult(tools.get('StrReplace'), {
@@ -388,6 +449,12 @@ describe('file tools', () => {
         details: { deleted: false },
       }),
     ).toBe('Not deleted');
+    expect(
+      renderToolResult(tools.get('Edit'), {
+        content: [{ type: 'text', text: 'edited' }],
+        details: { replacements: 2 },
+      }),
+    ).toBe('2 replacement(s)');
     expect(
       renderToolResult(
         tools.get('LS'),

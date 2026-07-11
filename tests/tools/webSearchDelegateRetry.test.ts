@@ -68,6 +68,51 @@ export default function (pi) {
     });
   });
 
+  it('isolates unrelated extension registrations while preserving API access', async () => {
+    const extensionDir = join(testAgentDir, 'npm', 'node_modules', 'pi-web-access');
+    mkdirSync(extensionDir, { recursive: true });
+    writeFileSync(
+      join(extensionDir, 'index.js'),
+      `
+export default function (pi) {
+  pi.registerCommand('web-command', {})
+  pi.registerShortcut('ctrl+w', {})
+  pi.on('session_start', () => undefined)
+  pi.registerTool({
+    name: 'web_search',
+    execute: async () => ({ content: [{ type: 'text', text: pi.marker }], details: {} }),
+  })
+}
+`,
+    );
+    const pi = {
+      marker: 'live API',
+      on: vi.fn(),
+      registerCommand: vi.fn(),
+      registerShortcut: vi.fn(),
+      registerTool: vi.fn(),
+    } as unknown as NonNullable<Parameters<typeof ensureWebSearchDelegate>[0]>;
+
+    await ensureWebSearchDelegate(pi);
+
+    expect(pi.on).not.toHaveBeenCalled();
+    expect(pi.registerCommand).not.toHaveBeenCalled();
+    expect(pi.registerShortcut).not.toHaveBeenCalled();
+    expect(pi.registerTool).not.toHaveBeenCalled();
+    const delegate = getWebSearchDelegate();
+    expect(delegate).toBeTypeOf('function');
+    if (!delegate) throw new Error('expected delegate');
+    await expect(
+      delegate(
+        'call-1',
+        {},
+        undefined,
+        undefined,
+        {} as import('@earendil-works/pi-coding-agent').ExtensionContext,
+      ),
+    ).resolves.toMatchObject({ content: [{ type: 'text', text: 'live API' }] });
+  });
+
   it('retries after a failed delegate load', async () => {
     const extensionDir = join(testAgentDir, 'npm', 'node_modules', 'pi-web-access');
     mkdirSync(extensionDir, { recursive: true });

@@ -49,13 +49,20 @@ describe('grok-cli-vision config', () => {
 
   it('falls back to defaults with a warning for invalid fields', () => {
     setupHome();
-    writeConfig({ enabled: 'yes', model: 'not-a-model', maxImages: -3, cacheMaxEntries: 0 });
+    writeConfig({
+      enabled: 'yes',
+      model: 'not-a-model',
+      maxImages: -3,
+      cacheEnabled: 'yes',
+      cacheMaxEntries: 0,
+    });
 
     const { config, warning } = loadConfig();
     expect(config).toEqual(DEFAULT_CONFIG);
     expect(warning).toMatch(/enabled must be true or false/);
     expect(warning).toMatch(/Unknown model "not-a-model"/);
     expect(warning).toMatch(/maxImages must be a positive integer/);
+    expect(warning).toMatch(/cacheEnabled must be true or false/);
     expect(warning).toMatch(/cacheMaxEntries must be a positive integer/);
   });
 

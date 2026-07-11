@@ -289,6 +289,20 @@ describe('Grok CLI status command', () => {
     );
   });
 
+  it('omits malformed weekly billing data while preserving monthly usage', async () => {
+    process.env.GROK_CLI_OAUTH_TOKEN = 'env-token';
+    setupHome();
+    globalThis.fetch = billingFetchMock(
+      billingResponse(4000, 172, '2026-01-01T00:00:00+00:00'),
+      creditsResponse('invalid', 'not-a-date'),
+    );
+    const notify = await runStatus(await setupExtension());
+    const message = notify.mock.calls.at(-1)?.[0] as string;
+
+    expect(message).toContain('172 / 4,000 used  4%');
+    expect(message).not.toContain('Weekly');
+  });
+
   it('uses the registered provider token when no env token is set', async () => {
     delete process.env.GROK_CLI_OAUTH_TOKEN;
     setupHome();

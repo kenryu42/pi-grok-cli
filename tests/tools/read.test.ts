@@ -47,6 +47,17 @@ describe('Read shim (native read alias)', () => {
     expect(prepared).toEqual({ path: 'README.md', offset: undefined, limit: 50 });
   });
 
+  it('normalizes missing and invalid arguments to safe defaults', () => {
+    const shim = createReadShim();
+
+    expect(shim.prepareArguments(null)).toEqual({ path: '' });
+    expect(shim.prepareArguments({ path: 42, offset: '10', limit: false })).toEqual({
+      path: '',
+      offset: undefined,
+      limit: undefined,
+    });
+  });
+
   it('executes through the prepared Cursor-style arguments', async () => {
     const cwd = tempDir('pi-grok-cli-read-');
     writeFileSync(join(cwd, 'story.txt'), 'once upon a time', 'utf-8');
