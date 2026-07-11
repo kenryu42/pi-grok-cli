@@ -1,7 +1,7 @@
 {
   "name": "pi-grok-cli",
   "version": "0.3.4",
-  "description": "Use Grok CLI's API endpoint in pi.",
+  "description": "Use your X Premium or SuperGrok subscription in pi.",
   "keywords": [
     "pi-package",
     "pi-extension",
@@ -9,7 +9,9 @@
     "grok",
     "grok-cli",
     "oauth",
-    "xai-oauth"
+    "xai-oauth",
+    "vision",
+    "multimodal"
   ],
   "type": "module",
   "main": "./src/index.ts",
