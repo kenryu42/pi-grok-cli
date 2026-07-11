@@ -24,29 +24,48 @@ afterEach(() => {
 });
 
 describe('webSearchDelegate retry', () => {
-  it('loads extensions that import Pi package subpaths', async () => {
+  it('loads the public extension factory and delegates the complete execution contract', async () => {
     const extensionDir = join(testAgentDir, 'npm', 'node_modules', 'pi-web-access');
     mkdirSync(extensionDir, { recursive: true });
     writeFileSync(
       join(extensionDir, 'index.js'),
       `
-import { StringEnum } from '@earendil-works/pi-ai/compat'
-
 export default function (pi) {
-  if (typeof StringEnum !== 'function') throw new Error('expected StringEnum')
   pi.registerTool({
     name: 'web_search',
-    execute: async () => ({ content: [{ type: 'text', text: 'ok' }], details: {} }),
+    execute: async (id, params, signal, onUpdate, ctx) => ({
+      content: [{ type: 'text', text: JSON.stringify({ id, params, aborted: signal.aborted, hasUpdate: typeof onUpdate === 'function', cwd: ctx.cwd }) }],
+      details: {},
+    }),
   })
 }
 `,
     );
-    const pi = {} as Parameters<typeof ensureWebSearchDelegate>[0];
+    const pi = { registerTool() {} } as unknown as Parameters<typeof ensureWebSearchDelegate>[0];
 
     await ensureWebSearchDelegate(pi);
 
     expect(getWebSearchLoadError()).toBeUndefined();
-    expect(getWebSearchDelegate()).toBeTypeOf('function');
+    const delegate = getWebSearchDelegate();
+    expect(delegate).toBeTypeOf('function');
+    if (!delegate) throw new Error('expected delegate');
+    const result = await delegate(
+      'call-1',
+      { query: 'xAI' },
+      new AbortController().signal,
+      () => undefined,
+      { cwd: '/workspace' } as import('@earendil-works/pi-coding-agent').ExtensionContext,
+    );
+    expect(result.content[0]).toEqual({
+      type: 'text',
+      text: JSON.stringify({
+        id: 'call-1',
+        params: { query: 'xAI' },
+        aborted: false,
+        hasUpdate: true,
+        cwd: '/workspace',
+      }),
+    });
   });
 
   it('retries after a failed delegate load', async () => {
@@ -70,11 +89,56 @@ export default function (pi) {
 
     await ensureWebSearchDelegate(pi);
     expect(getWebSearchDelegate()).toBeUndefined();
-    expect(getWebSearchLoadError()).toBe('Failed to load extension: temporary load failure');
+    expect(getWebSearchLoadError()).toBe('temporary load failure');
 
     await ensureWebSearchDelegate(pi);
     expect(getWebSearchDelegate()).toBeTypeOf('function');
     expect(getWebSearchLoadError()).toBeUndefined();
+  });
+
+  it('reports an incompatible package without a public default factory', async () => {
+    const extensionDir = join(testAgentDir, 'npm', 'node_modules', 'pi-web-access');
+    mkdirSync(extensionDir, { recursive: true });
+    writeFileSync(join(extensionDir, 'index.js'), 'export const version = "old"\n');
+
+    await ensureWebSearchDelegate({} as Parameters<typeof ensureWebSearchDelegate>[0]);
+
+    expect(getWebSearchDelegate()).toBeUndefined();
+    expect(getWebSearchLoadError()).toBe(
+      'pi-web-access is incompatible. Install pi-web-access 0.13.0 or newer with a public default extension factory.',
+    );
+  });
+
+  it('shares one public factory load across concurrent first calls', async () => {
+    const extensionDir = join(testAgentDir, 'npm', 'node_modules', 'pi-web-access');
+    mkdirSync(extensionDir, { recursive: true });
+    writeFileSync(
+      join(extensionDir, 'index.js'),
+      `
+export default async function (pi) {
+  globalThis.concurrentDelegateLoads += 1
+  await globalThis.finishConcurrentDelegateLoad
+  pi.registerTool({ name: 'web_search', execute: async () => ({ content: [], details: {} }) })
+}
+`,
+    );
+    let finish = () => {};
+    vi.stubGlobal('concurrentDelegateLoads', 0);
+    vi.stubGlobal(
+      'finishConcurrentDelegateLoad',
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+    );
+    const pi = {} as Parameters<typeof ensureWebSearchDelegate>[0];
+
+    const first = ensureWebSearchDelegate(pi);
+    const second = ensureWebSearchDelegate(pi);
+    const globals = globalThis as unknown as { concurrentDelegateLoads: number };
+    await vi.waitFor(() => expect(globals.concurrentDelegateLoads).toBe(1));
+    finish();
+    await Promise.all([first, second]);
+    expect(globals.concurrentDelegateLoads).toBe(1);
   });
 
   it('reports extensions that do not register web_search', async () => {

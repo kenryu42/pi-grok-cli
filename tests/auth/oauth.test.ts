@@ -1,8 +1,21 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { getBaseUrl, login, refresh } from '../../src/auth/oauth.js';
+import {
+  closeCallbackServer,
+  getBaseUrl,
+  login as loginWithCredentialReader,
+  refresh,
+  type XaiOAuthCredentials,
+} from '../../src/auth/oauth.js';
 import { XaiErrorCode } from '../../src/shared/errors.js';
 
-type OAuthLoginCallbacks = Parameters<typeof login>[0];
+type CompleteOAuthLoginCallbacks = Parameters<typeof loginWithCredentialReader>[0];
+type OAuthLoginCallbacks = Partial<CompleteOAuthLoginCallbacks>;
+const login = (callbacks: OAuthLoginCallbacks) =>
+  loginWithCredentialReader(callbacks as CompleteOAuthLoginCallbacks, async () => undefined);
+const loginWithCredentialsForTest = (
+  callbacks: OAuthLoginCallbacks,
+  credentials: XaiOAuthCredentials,
+) => loginWithCredentialReader(callbacks as CompleteOAuthLoginCallbacks, async () => credentials);
 
 const originalEnv = { ...process.env };
 const originalFetch = globalThis.fetch;
@@ -25,6 +38,15 @@ const deviceDiscoveryDocument = {
   ...discoveryDocument,
   device_authorization_endpoint: 'https://auth.x.ai/oauth/device/code',
 };
+function officialCredentials(expires: number): XaiOAuthCredentials {
+  return {
+    access: 'official-access',
+    refresh: 'official-refresh',
+    expires,
+    tokenEndpoint: 'https://auth.x.ai/oauth2/token',
+    baseUrl: 'https://cli-chat-proxy.grok.com/v1',
+  };
+}
 
 function deviceAuthorizationResponse(overrides: Record<string, unknown> = {}) {
   return Response.json({
@@ -43,6 +65,46 @@ function authorizeCallback(auth: { url: string }) {
   void originalFetch(
     `${url.searchParams.get('redirect_uri')}?code=callback-code&state=${url.searchParams.get('state')}`,
   );
+}
+
+function callbackUrl(auth: { url: string }, query: string) {
+  const url = new URL(auth.url);
+  return `${url.searchParams.get('redirect_uri')}?${query}`;
+}
+
+function mockBrowserLogin(
+  token: Record<string, unknown> = { access_token: 'access', refresh_token: 'refresh' },
+  discovery: Record<string, unknown> = discoveryDocument,
+) {
+  const fetchMock = vi.fn<typeof fetch>(async (input) =>
+    input === 'https://auth.x.ai/.well-known/openid-configuration'
+      ? Response.json(discovery)
+      : Response.json(token),
+  );
+  globalThis.fetch = fetchMock;
+  return fetchMock;
+}
+
+async function rejectCallbackThenAuthorize(auth: { url: string }, invalidQuery: string) {
+  await expect(originalFetch(callbackUrl(auth, invalidQuery))).resolves.toMatchObject({
+    status: 400,
+  });
+  await originalFetch(
+    callbackUrl(auth, `code=accepted&state=${new URL(auth.url).searchParams.get('state')}`),
+  );
+}
+
+function manualCallback(build: (auth: { url: string }) => string) {
+  let auth: { url: string } | undefined;
+  return {
+    onAuth: (value: { url: string }) => {
+      auth = value;
+    },
+    onManualCodeInput: async () => {
+      await vi.waitFor(() => expect(auth).toBeDefined());
+      return build(auth as { url: string });
+    },
+  };
 }
 
 afterEach(() => {
@@ -293,25 +355,18 @@ describe('OAuth helpers without network access', () => {
   });
 
   it('logs in with a loopback callback and exchanges the authorization code', async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(1_700_000_000_000);
-    const fetchMock = vi.fn<typeof fetch>(async (input) => {
-      if (input === 'https://auth.x.ai/.well-known/openid-configuration') {
-        return Response.json(discoveryDocument);
-      }
-      return Response.json({
-        access_token: 'login-access',
-        refresh_token: 'login-refresh',
-        expires_in: 900,
-        id_token: 'login-id',
-        token_type: 'Bearer',
-      });
+    vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
+    const fetchMock = mockBrowserLogin({
+      access_token: 'login-access',
+      refresh_token: 'login-refresh',
+      expires_in: 900,
+      id_token: 'login-id',
+      token_type: 'Bearer',
     });
-    globalThis.fetch = fetchMock;
 
     await expect(
       login({
-        onAuth: authorizeCallback,
+        onAuth: (auth) => setTimeout(() => authorizeCallback(auth), 0),
       } as OAuthLoginCallbacks),
     ).resolves.toMatchObject({
       access: 'login-access',
@@ -327,6 +382,325 @@ describe('OAuth helpers without network access', () => {
     expect((fetchMock.mock.calls[1]?.[1]?.body as URLSearchParams).get('code')).toBe(
       'callback-code',
     );
+  });
+
+  it('offers and returns fresh official Grok credentials without a network request', async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+    const onSelect = vi.fn(async () => 'existing');
+    globalThis.fetch = fetchMock;
+
+    await expect(
+      loginWithCredentialsForTest(
+        { onSelect, onDeviceCode: vi.fn() },
+        officialCredentials(Date.now() + 60_000),
+      ),
+    ).resolves.toMatchObject({
+      access: 'official-access',
+      refresh: 'official-refresh',
+      baseUrl: 'https://cli-chat-proxy.grok.com/v1',
+    });
+    expect(onSelect).toHaveBeenCalledWith({
+      message: 'Select Grok CLI login method:',
+      options: [
+        { id: 'browser', label: 'Browser login (default)' },
+        { id: 'device', label: 'Device code login (headless)' },
+        { id: 'existing', label: 'Use existing Grok Build login' },
+      ],
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('refreshes selected expired official Grok credentials through the normal token path', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      Response.json({ access_token: 'refreshed-access', refresh_token: 'refreshed-refresh' }),
+    );
+    globalThis.fetch = fetchMock;
+
+    await expect(
+      loginWithCredentialsForTest({ onSelect: async () => 'existing' }, officialCredentials(0)),
+    ).resolves.toMatchObject({
+      access: 'refreshed-access',
+      refresh: 'refreshed-refresh',
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://auth.x.ai/oauth2/token');
+  });
+
+  it('returns to fresh login after official credential refresh fails without exposing tokens', async () => {
+    const onProgress = vi.fn();
+    const onSelect = vi
+      .fn<CompleteOAuthLoginCallbacks['onSelect']>()
+      .mockResolvedValueOnce('existing')
+      .mockResolvedValueOnce('browser');
+    const fetchMock = vi.fn<typeof fetch>(async (input) => {
+      if (input === 'https://auth.x.ai/oauth2/token') {
+        return new Response('revoked official credential', { status: 401 });
+      }
+      if (input === 'https://auth.x.ai/.well-known/openid-configuration') {
+        return Response.json(deviceDiscoveryDocument);
+      }
+      return Response.json({ access_token: 'browser-access', refresh_token: 'browser-refresh' });
+    });
+    globalThis.fetch = fetchMock;
+
+    await expect(
+      loginWithCredentialsForTest(
+        { onSelect, onProgress, onDeviceCode: vi.fn(), onAuth: authorizeCallback },
+        officialCredentials(0),
+      ),
+    ).resolves.toMatchObject({ access: 'browser-access' });
+    expect(onProgress).toHaveBeenCalledWith(
+      'Existing Grok CLI login could not be refreshed. Choose a fresh login method.',
+    );
+    expect(JSON.stringify(onProgress.mock.calls)).not.toContain('official-access');
+    expect(JSON.stringify(onProgress.mock.calls)).not.toContain('official-refresh');
+  });
+
+  it('ignores official credentials when browser login is selected', async () => {
+    const fetchMock = mockBrowserLogin({
+      access_token: 'browser-access',
+      refresh_token: 'browser-refresh',
+    });
+
+    await expect(
+      loginWithCredentialsForTest(
+        { onSelect: async () => 'browser', onAuth: authorizeCallback },
+        officialCredentials(Date.now() + 60_000),
+      ),
+    ).resolves.toMatchObject({ access: 'browser-access' });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('ignores an invalid-state HTTP callback and accepts the next valid callback', async () => {
+    const fetchMock = mockBrowserLogin({
+      access_token: 'login-access',
+      refresh_token: 'login-refresh',
+      expires_in: 900,
+    });
+
+    await expect(
+      login({
+        onAuth: (auth) => rejectCallbackThenAuthorize(auth, 'code=bad&state=wrong'),
+      } as OAuthLoginCallbacks),
+    ).resolves.toMatchObject({ access: 'login-access' });
+    expect((fetchMock.mock.calls[1]?.[1]?.body as URLSearchParams).get('code')).toBe('accepted');
+  });
+
+  it('ignores an HTTP callback without state', async () => {
+    mockBrowserLogin();
+
+    await expect(
+      login({
+        onAuth: (auth) => rejectCallbackThenAuthorize(auth, 'code=ignored'),
+      } as OAuthLoginCallbacks),
+    ).resolves.toMatchObject({ access: 'access' });
+  });
+
+  it.each([
+    'other',
+    `callback?state=missing-code`,
+  ])('ignores an invalid HTTP callback path or payload: %s', async (suffix) => {
+    mockBrowserLogin();
+
+    await expect(
+      login({
+        onAuth: async (auth) => {
+          const redirect = new URL(new URL(auth.url).searchParams.get('redirect_uri') ?? '');
+          const invalid =
+            suffix === 'other'
+              ? `${redirect.origin}/other?code=ignored&state=${new URL(auth.url).searchParams.get('state')}`
+              : `${redirect.origin}/${suffix}`;
+          await expect(originalFetch(invalid)).resolves.toMatchObject({
+            status: suffix === 'other' ? 404 : 400,
+          });
+          authorizeCallback(auth);
+        },
+      } as OAuthLoginCallbacks),
+    ).resolves.toMatchObject({ access: 'access' });
+  });
+
+  it('surfaces a matching-state OAuth error without exchanging a code', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input) => {
+      if (input === 'https://auth.x.ai/.well-known/openid-configuration') {
+        return Response.json(discoveryDocument);
+      }
+      throw new Error(`Unexpected fetch URL: ${String(input)}`);
+    });
+    globalThis.fetch = fetchMock;
+
+    await expect(
+      login({
+        onAuth: (auth) => {
+          void originalFetch(
+            callbackUrl(
+              auth,
+              `error=access_denied&error_description=Denied&state=${new URL(auth.url).searchParams.get('state')}`,
+            ),
+          );
+        },
+      } as OAuthLoginCallbacks),
+    ).rejects.toMatchObject({
+      code: XaiErrorCode.AUTHORIZATION_FAILED,
+      message: 'Denied',
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it('exchanges only the first repeated valid HTTP callback', async () => {
+    const fetchMock = mockBrowserLogin();
+
+    await login({
+      onAuth: (auth) => {
+        const state = new URL(auth.url).searchParams.get('state');
+        void originalFetch(callbackUrl(auth, `code=first&state=${state}`))
+          .then(() => originalFetch(callbackUrl(auth, `code=second&state=${state}`)))
+          .catch(() => undefined);
+      },
+    } as OAuthLoginCallbacks);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect((fetchMock.mock.calls[1]?.[1]?.body as URLSearchParams).get('code')).toBe('first');
+  });
+
+  it.each([
+    [
+      'full callback URL',
+      (auth: { url: string }) =>
+        callbackUrl(auth, `code=manual&state=${new URL(auth.url).searchParams.get('state')}`),
+    ],
+    [
+      'callback query',
+      (auth: { url: string }) => `code=manual&state=${new URL(auth.url).searchParams.get('state')}`,
+    ],
+  ])('accepts a matching-state manual %s', async (_label, manualInput) => {
+    const fetchMock = mockBrowserLogin({
+      access_token: 'manual-access',
+      refresh_token: 'manual-refresh',
+    });
+    await expect(login(manualCallback(manualInput) as OAuthLoginCallbacks)).resolves.toMatchObject({
+      access: 'manual-access',
+    });
+    expect((fetchMock.mock.calls[1]?.[1]?.body as URLSearchParams).get('code')).toBe('manual');
+  });
+
+  it('accepts a verified raw authorization code from the manual input channel', async () => {
+    const authorizationCode =
+      'synthetic_7A9B2C4D6E8F1G3H5J7K9M2N4P6Q8R1S3T5V7W9X2Y4Z6A8B1C3D5E7F9G2H4J6K';
+    const controller = new AbortController();
+    const onProgress = vi.fn(() => controller.abort());
+    const fetchMock = mockBrowserLogin({
+      access_token: 'manual-access',
+      refresh_token: 'manual-refresh',
+    });
+    await expect(
+      login({
+        onAuth() {},
+        onManualCodeInput: async () => authorizationCode,
+        onProgress,
+        signal: controller.signal,
+      } as OAuthLoginCallbacks),
+    ).resolves.toMatchObject({ access: 'manual-access' });
+    expect(onProgress).not.toHaveBeenCalled();
+    expect((fetchMock.mock.calls[1]?.[1]?.body as URLSearchParams).get('code')).toBe(
+      authorizationCode,
+    );
+  });
+
+  it('reports and ignores invalid manual input while the HTTP callback remains active', async () => {
+    const onProgress = vi.fn();
+    mockBrowserLogin();
+
+    await expect(
+      login({
+        onAuth: (auth) => {
+          setTimeout(() => authorizeCallback(auth), 0);
+        },
+        onManualCodeInput: async () => 'code=ignored&state=wrong',
+        onProgress,
+      } as OAuthLoginCallbacks),
+    ).resolves.toMatchObject({ access: 'access' });
+    expect(onProgress).toHaveBeenCalledWith(
+      "Ignored pasted callback: OAuth state did not match. Paste the complete callback URL or xAI's one-time code.",
+    );
+  });
+
+  it.each([
+    ['', 'Pasted callback was empty.'],
+    ['not a callback', 'OAuth state is missing.'],
+  ])('reports and ignores malformed manual input: %j', async (input, reason) => {
+    const onProgress = vi.fn();
+    mockBrowserLogin();
+
+    await login({
+      onAuth: (auth) => setTimeout(() => authorizeCallback(auth), 0),
+      onManualCodeInput: async () => input,
+      onProgress,
+    } as OAuthLoginCallbacks);
+    expect(onProgress).toHaveBeenCalledWith(
+      `Ignored pasted callback: ${reason} Paste the complete callback URL or xAI's one-time code.`,
+    );
+  });
+
+  it('makes late manual input a no-op after the HTTP callback wins', async () => {
+    const onProgress = vi.fn();
+    let resolveManual: ((value: string) => void) | undefined;
+    mockBrowserLogin();
+
+    await login({
+      onAuth: (auth) => setTimeout(() => authorizeCallback(auth), 0),
+      onManualCodeInput: () =>
+        new Promise<string>((resolve) => {
+          resolveManual = resolve;
+        }),
+      onProgress,
+    } as OAuthLoginCallbacks);
+    resolveManual?.('malformed');
+    await Promise.resolve();
+    expect(onProgress).not.toHaveBeenCalled();
+  });
+
+  it('closes the HTTP callback listener after manual input wins', async () => {
+    let redirectUri = '';
+    mockBrowserLogin();
+
+    let authUrl = '';
+    await login({
+      onAuth: (auth) => {
+        authUrl = auth.url;
+        redirectUri = new URL(auth.url).searchParams.get('redirect_uri') ?? '';
+      },
+      onManualCodeInput: async () => {
+        await vi.waitFor(() => expect(authUrl).not.toBe(''));
+        return `${redirectUri}?code=manual&state=${new URL(authUrl).searchParams.get('state')}`;
+      },
+    } as OAuthLoginCallbacks);
+    await expect(originalFetch(redirectUri)).rejects.toThrow();
+  });
+
+  it('surfaces a matching-state manual OAuth error', async () => {
+    globalThis.fetch = vi.fn<typeof fetch>(async () => Response.json(discoveryDocument));
+    await expect(
+      login(
+        manualCallback(
+          (auth) =>
+            `error=access_denied&error_description=Denied&state=${new URL(auth.url).searchParams.get('state')}`,
+        ) as OAuthLoginCallbacks,
+      ),
+    ).rejects.toMatchObject({ code: XaiErrorCode.AUTHORIZATION_FAILED, message: 'Denied' });
+  });
+
+  it('aborts browser login while waiting for both callback paths', async () => {
+    const controller = new AbortController();
+    globalThis.fetch = vi.fn<typeof fetch>(async () => Response.json(discoveryDocument));
+    const onAuth = vi.fn(() => controller.abort());
+
+    await expect(
+      login({
+        onAuth,
+        onManualCodeInput: () => new Promise(() => undefined),
+        signal: controller.signal,
+      } as OAuthLoginCallbacks),
+    ).rejects.toThrow('Login cancelled');
   });
 
   it('logs in with device authorization for SSH/headless sessions', async () => {
@@ -423,8 +797,7 @@ describe('OAuth helpers without network access', () => {
   });
 
   it('falls back to browser login when the UI has no device-code callback', async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(1_700_000_000_000);
+    vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
     const onSelect = vi.fn(async () => 'device');
     const fetchMock = vi.fn<typeof fetch>(async (input) => {
       if (input === 'https://auth.x.ai/.well-known/openid-configuration') {
@@ -440,7 +813,7 @@ describe('OAuth helpers without network access', () => {
 
     await expect(
       login({
-        onAuth: authorizeCallback,
+        onAuth: (auth: { url: string }) => setTimeout(() => authorizeCallback(auth), 0),
         onSelect,
       } as unknown as OAuthLoginCallbacks),
     ).resolves.toMatchObject({
@@ -470,6 +843,16 @@ describe('OAuth helpers without network access', () => {
       code: XaiErrorCode.CALLBACK_TIMEOUT,
       message: 'Timed out waiting for xAI OAuth callback.',
     });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('closes callback servers idempotently', async () => {
+    const { createServer } = await import('node:http');
+    const server = createServer();
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const firstClose = closeCallbackServer(server);
+    expect(closeCallbackServer(server)).toBe(firstClose);
+    await expect(firstClose).resolves.toBeUndefined();
   });
 
   it('wraps token exchange transport and JSON failures', async () => {

@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { Api, Model, OAuthCredentials } from '@earendil-works/pi-ai';
+import type { Api, Model, OAuthCredentials, OAuthProviderInterface } from '@earendil-works/pi-ai';
 import type { ExtensionAPI, ProviderConfig } from '@earendil-works/pi-coding-agent';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GROK_SHIM_TOOL_NAMES, grokToolsToActivate } from '../../src/tools/register.js';
@@ -492,6 +492,7 @@ describe('Grok CLI provider registration', () => {
     expect(provider?.api).toBe('openai-responses');
     expect(provider?.apiKey).toBe('$GROK_CLI_OAUTH_TOKEN');
     expect(provider?.models?.map((model) => model.id)).toContain('grok-build');
+    expect((provider?.oauth as Omit<OAuthProviderInterface, 'id'>)?.usesCallbackServer).toBe(true);
     expect(provider?.oauth?.getApiKey({ access: 'access-token', refresh: '', expires: 0 })).toBe(
       'access-token',
     );

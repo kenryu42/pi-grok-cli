@@ -22,7 +22,7 @@
         "@earendil-works/pi-ai": ">=0.80.0",
         "@earendil-works/pi-coding-agent": ">=0.80.0",
         "@earendil-works/pi-tui": ">=0.80.0",
-        "pi-web-access": "*",
+        "pi-web-access": ">=0.13.0",
       },
       "optionalPeers": [
         "pi-web-access",

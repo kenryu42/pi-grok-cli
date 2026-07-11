@@ -11,7 +11,7 @@ describe('npm package manifest', () => {
     expect(packageJson.keywords).toContain('pi-package');
     expect(packageJson.pi?.extensions).toEqual(['./src/index.ts']);
     expect(packageJson.main).toBe('./src/index.ts');
-    expect(packageJson.files).toEqual(['README.md', 'src', 'tsconfig.json']);
+    expect(packageJson.files).toEqual(['README.md', 'SECURITY.md', 'src', 'tsconfig.json']);
   });
 
   it('runs publish checks before packing', () => {
@@ -31,6 +31,7 @@ describe('npm package manifest', () => {
     expect(packageJson.peerDependencies?.['@earendil-works/pi-ai']).toBe('>=0.80.0');
     expect(packageJson.peerDependencies?.['@earendil-works/pi-coding-agent']).toBe('>=0.80.0');
     expect(packageJson.peerDependencies?.['@earendil-works/pi-tui']).toBe('>=0.80.0');
+    expect(packageJson.peerDependencies?.['pi-web-access']).toBe('>=0.13.0');
     expect(packageJson.dependencies?.jiti).toBeUndefined();
     expect(packageJson.dependencies?.typebox).toBeUndefined();
   });
@@ -43,6 +44,8 @@ describe('repository layout', () => {
 
   it('contains the expected domain source files', () => {
     expect(globSync('src/**/*.ts').sort()).toEqual([
+      'src/auth/config.ts',
+      'src/auth/grokCredentials.ts',
       'src/auth/oauth.ts',
       'src/index.ts',
       'src/models/catalog.ts',

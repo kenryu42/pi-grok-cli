@@ -1,5 +1,11 @@
-import type { Api, Model, OAuthCredentials, OAuthLoginCallbacks } from '@earendil-works/pi-ai';
-import type { ExtensionAPI, ProviderConfig } from '@earendil-works/pi-coding-agent';
+import type {
+  Api,
+  Model,
+  OAuthCredentials,
+  OAuthLoginCallbacks,
+  OAuthProviderInterface,
+} from '@earendil-works/pi-ai';
+import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import * as oauth from '../auth/oauth.js';
 import { getBaseUrl, type XaiOAuthCredentials } from '../auth/oauth.js';
 import { type GrokCliModelConfig, resolveModels } from '../models/catalog.js';
@@ -27,6 +33,33 @@ export default function registerGrokCli(pi: ExtensionAPI) {
     syncGrokTools(pi, ctx.model?.provider);
   });
 
+  const oauthProvider = {
+    name: 'Grok CLI',
+    usesCallbackServer: true,
+
+    async login(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials> {
+      return oauth.login(callbacks);
+    },
+
+    async refreshToken(credentials: OAuthCredentials): Promise<OAuthCredentials> {
+      return oauth.refresh(credentials);
+    },
+
+    getApiKey(credentials: OAuthCredentials): string {
+      return credentials.access;
+    },
+
+    modifyModels(models: Model<Api>[], credentials: OAuthCredentials) {
+      const effectiveBaseUrl = String(
+        (credentials as XaiOAuthCredentials).baseUrl ?? getBaseUrl(),
+      ).replace(/\/+$/, '');
+
+      return models.map((model) =>
+        model.provider === 'grok-cli' ? { ...model, baseUrl: effectiveBaseUrl } : model,
+      );
+    },
+  } satisfies Omit<OAuthProviderInterface, 'id'>;
+
   pi.registerProvider('grok-cli', {
     name: 'Grok CLI',
     baseUrl,
@@ -46,31 +79,7 @@ export default function registerGrokCli(pi: ExtensionAPI) {
       // built-in openai-responses handler (see grokCliModelHeaders).
       headers: grokCliModelHeaders(m.id),
     })),
-    oauth: {
-      name: 'Grok CLI',
-
-      async login(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials> {
-        return oauth.login(callbacks);
-      },
-
-      async refreshToken(credentials: OAuthCredentials): Promise<OAuthCredentials> {
-        return oauth.refresh(credentials);
-      },
-
-      getApiKey(credentials: OAuthCredentials): string {
-        return credentials.access;
-      },
-
-      modifyModels(models: Model<Api>[], credentials: OAuthCredentials) {
-        const effectiveBaseUrl = String(
-          (credentials as XaiOAuthCredentials).baseUrl ?? getBaseUrl(),
-        ).replace(/\/+$/, '');
-
-        return models.map((m) =>
-          m.provider === 'grok-cli' ? { ...m, baseUrl: effectiveBaseUrl } : m,
-        );
-      },
-    } satisfies ProviderConfig['oauth'],
+    oauth: oauthProvider,
 
     streamSimple: streamGrokCli,
   });
