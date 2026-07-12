@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import packageJson from '../../package.json';
 import { generateImage } from '../../src/imagine/generate.js';
 
 afterEach(() => vi.useRealTimers());
@@ -21,7 +22,7 @@ describe('generateImage', () => {
           authorization: 'Bearer secret',
           'content-type': 'application/json',
           accept: 'application/json',
-          'user-agent': 'pi-grok-cli/0.3.4',
+          'user-agent': `pi-grok-cli/${packageJson.version}`,
           'x-grok-client-version': expect.any(String),
         }),
         body: JSON.stringify({
