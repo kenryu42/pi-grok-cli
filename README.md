@@ -7,6 +7,7 @@
 Use your X Premium or SuperGrok subscription in [pi](https://pi.dev).
 
 - **Vision for text-only models** — automatically describe images with a vision-capable Grok model and cache descriptions locally.
+- **Grok Imagine** — generate JPEGs from the TUI or let Grok call the `image_gen` tool, with inline previews.
 - **Subscription OAuth** — sign in through a browser or device code or reuse an official Grok Build login; tokens refresh automatically.
 - **Coding-tool compatibility** — use Grok models with the Cursor-style tools they were trained to call.
 - **Usage tracking** — check account limits, remaining credits, and reset times from pi.
@@ -116,6 +117,7 @@ Grok models are trained to call Cursor-style tools. pi-grok-cli registers compat
 | Search | `Grep`, `Glob` |
 | Terminal | `Shell` |
 | Web | `WebSearch` when [pi-web-access](https://www.npmjs.com/package/pi-web-access) is installed |
+| Image generation | `image_gen` |
 
 The shims activate only while the selected provider is `grok-cli`. Other providers retain their normal pi tool set.
 
@@ -139,6 +141,22 @@ Vision routing is enabled by default and handles up to four images per tool resu
 
 Descriptions are persisted by image hash, model, and prompt in `~/.pi/grok-cli-vision-cache.json`. A cache hit avoids another describer request, but the active model still processes the description text. The cache stores descriptions, hashes, and metadata—not raw image data.
 
+### Grok Imagine image generation
+
+Run `/grok-cli-imagine <prompt>` to generate a JPEG directly, or let a Grok model call the `image_gen` tool. Both paths use the current Grok CLI OAuth token with xAI's Imagine endpoint and save numbered images under the current pi session:
+
+```text
+~/.pi/agent/sessions/<encoded-cwd>/<sessionId>/images/1.jpg
+```
+
+The command accepts `--aspect` (or `--aspect-ratio`), `--out` (or `-o`), and the currently supported `--resolution 1k`. For example: `/grok-cli-imagine --aspect 16:9 a moonlit mountain lake`. Ephemeral sessions fall back to the system temporary directory. Inline previews require a terminal image protocol supported by pi and `terminal.showImages` to be enabled; the saved path remains available otherwise.
+
+Kitty-protocol terminals use internal PNG preview sidecars under `images/.previews/`; the generated JPEG remains the public output. A request for one image produces one `image_gen` call, while explicitly requesting multiple images allows parallel calls.
+
+The `image_gen` tool activates only for the `grok-cli` provider. Its model-facing result contains paths only, so generated image bytes are not added to subsequent model context.
+
+Use `/grok-cli-imagine:scope all` to make `image_gen` available to models from every provider, or `/grok-cli-imagine:scope grok-cli` to restore the default. The selection persists in `~/.pi/grok-cli-imagine.json` and applies immediately.
+
 ### Usage tracking
 
 `/grok-cli-usage` requests billing data each time it runs; it does not reuse stale quota data. It reports monthly usage and, when available, weekly utilization. Reset times use the system's local timezone.
@@ -148,6 +166,8 @@ Descriptions are persisted by image hash, model, and prompt in `~/.pi/grok-cli-v
 | Command | Description |
 | --- | --- |
 | `/grok-cli-usage` | Fetch current quota, remaining credits, and reset times. |
+| `/grok-cli-imagine <prompt>` | Generate and preview an image. Supports `--aspect`, `--out`, and `--resolution 1k`. |
+| `/grok-cli-imagine:scope grok-cli\|all` | Persist whether `image_gen` is available only to Grok CLI or to every provider. |
 | `/grok-cli-vision:status` | Show vision state, describer model, configuration path, and cache statistics. |
 | `/grok-cli-vision:on` / `/grok-cli-vision:off` | Enable or disable vision routing. |
 | `/grok-cli-vision:cache-clear` | Remove all cached image descriptions. |
@@ -188,6 +208,8 @@ Vision configuration is read from `~/.pi/grok-cli-vision.json`. The file is crea
 | `PI_GROK_CLI_CALLBACK_HOST` | `127.0.0.1` | Browser callback host. |
 | `PI_GROK_CLI_CALLBACK_PORT` | `56122` | Preferred callback port; falls back to an ephemeral port. |
 | `PI_GROK_CLI_TOKEN_TIMEOUT_MS` | `30000` | Timeout for OAuth token requests. |
+| `PI_GROK_CLI_IMAGINE_BASE_URL` | `https://api.x.ai/v1` | Override the Imagine API base URL. |
+| `PI_GROK_CLI_IMAGINE_MODEL` | `grok-imagine-image-quality` | Override the Imagine image model. |
 
 Only point the base URL overrides at an endpoint you trust. The configured endpoint receives the OAuth bearer token, prompts, and model context.
 
@@ -215,6 +237,7 @@ Like every pi extension, pi-grok-cli runs with the user's system permissions. It
 | Prompts, model context, tool definitions, and tool results | `cli-chat-proxy.grok.com`. |
 | Account usage requests | The Grok Build proxy's `/billing` endpoints. |
 | Images handled by vision routing | Sent to the configured Grok describer model through the proxy. |
+| Imagine prompts and generated images | Prompts are sent to `api.x.ai`; decoded JPEGs are saved under the pi session images directory or the requested output path. |
 | Vision cache | Local description text and hashes in `~/.pi/grok-cli-vision-cache.json`; raw images are not cached. |
 | Optional web searches | Delegated to pi-web-access and its configured search provider. |
 

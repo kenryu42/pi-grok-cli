@@ -86,6 +86,10 @@ const tempDirs: string[] = [];
 
 beforeEach(() => {
   process.env.TZ = 'America/New_York';
+  const dir = mkdtempSync(join(tmpdir(), 'pi-grok-cli-home-'));
+  mkdirSync(join(dir, '.pi'));
+  tempDirs.push(dir);
+  process.env.HOME = dir;
 });
 
 afterEach(() => {
@@ -131,6 +135,8 @@ async function setupExtension(initialActiveTools = ['read', 'bash'], piWebAccess
     registerCommand(name: string, config: unknown) {
       commands.set(name, config as CommandConfig);
     },
+    registerEntryRenderer() {},
+    appendEntry() {},
     registerTool(tool: RegisteredTool) {
       tools.set(tool.name, tool);
     },
@@ -604,7 +610,9 @@ describe('Grok CLI tool scoping', () => {
   it('does not register WebSearch when pi-web-access is not installed', async () => {
     const extension = await setupExtension(['read', 'bash'], false);
 
-    expect([...extension.tools.keys()].sort()).toEqual([...GROK_SHIM_TOOL_NAMES].sort());
+    expect([...extension.tools.keys()].sort()).toEqual(
+      [...GROK_SHIM_TOOL_NAMES, 'image_gen'].sort(),
+    );
     expect(extension.tools.has('WebSearch')).toBe(false);
   });
 

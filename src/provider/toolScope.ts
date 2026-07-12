@@ -1,5 +1,7 @@
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
+import { type ImagineToolScope, loadImagineConfig } from '../imagine/config.js';
 import {
+  GROK_IMAGINE_TOOL_NAMES,
   GROK_SUPPRESSED_TOOL_NAMES,
   GROK_TOOL_NAMES_FOR_SCOPE,
   grokToolsToActivate,
@@ -10,6 +12,7 @@ const preservedSuppressedTools = new WeakMap<object, string[]>();
 export function syncGrokTools(
   pi: Pick<ExtensionAPI, 'getActiveTools' | 'setActiveTools'>,
   provider: string | undefined,
+  imagineScope: ImagineToolScope = loadImagineConfig().config.scope,
 ) {
   const currentTools = pi.getActiveTools();
   const baseTools = currentTools.filter(
@@ -32,6 +35,7 @@ export function syncGrokTools(
           ...(preservedSuppressedTools.get(pi) ?? []).filter(
             (toolName) => !baseTools.includes(toolName),
           ),
+          ...(imagineScope === 'all' ? GROK_IMAGINE_TOOL_NAMES : []),
         ];
 
   if (provider !== 'grok-cli') preservedSuppressedTools.delete(pi);

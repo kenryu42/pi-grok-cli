@@ -19,13 +19,19 @@ export const GROK_SHIM_TOOL_NAMES = [
   'Shell',
 ] as const;
 
+export const GROK_IMAGINE_TOOL_NAMES = ['image_gen'] as const;
+
 /** All shim names used when reconciling the active tool set (includes optional WebSearch). */
-export const GROK_TOOL_NAMES_FOR_SCOPE = [...GROK_SHIM_TOOL_NAMES, 'WebSearch'] as const;
+export const GROK_TOOL_NAMES_FOR_SCOPE = [
+  ...GROK_SHIM_TOOL_NAMES,
+  ...GROK_IMAGINE_TOOL_NAMES,
+  'WebSearch',
+] as const;
 
 export const GROK_SUPPRESSED_TOOL_NAMES = ['web_search'] as const;
 
 export function grokToolsToActivate() {
-  const names: string[] = [...GROK_SHIM_TOOL_NAMES];
+  const names: string[] = [...GROK_SHIM_TOOL_NAMES, ...GROK_IMAGINE_TOOL_NAMES];
   if (isPiWebAccessInstalled()) names.push('WebSearch');
   return names;
 }

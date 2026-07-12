@@ -8,6 +8,7 @@ import type {
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import * as oauth from '../auth/oauth.js';
 import { getBaseUrl, type XaiOAuthCredentials } from '../auth/oauth.js';
+import { registerImagineFeature } from '../imagine/register.js';
 import { type GrokCliModelConfig, resolveModels } from '../models/catalog.js';
 import { sanitizePayload } from '../payload/sanitize.js';
 import { registerGrokTools } from '../tools/register.js';
@@ -85,6 +86,7 @@ export default function registerGrokCli(pi: ExtensionAPI) {
   });
 
   registerGrokTools(pi);
+  registerImagineFeature(pi);
 
   pi.on('session_start', async (_event, ctx) => {
     if (process.env.GROK_CLI_OAUTH_TOKEN) {

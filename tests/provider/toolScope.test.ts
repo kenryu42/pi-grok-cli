@@ -15,6 +15,7 @@ function syncForGrokCli(piWebAccessInstalled: boolean) {
       setActiveTools,
     },
     'grok-cli',
+    'grok-cli',
   );
   return setActiveTools.mock.calls[0][0] as string[];
 }
@@ -32,19 +33,35 @@ describe('syncGrokTools', () => {
     expect(next).not.toContain('web_search');
     expect(next).not.toContain('WebSearch');
     expect(next).toContain('Grep');
+    expect(next).toContain('image_gen');
   });
 
   it('removes Grok shims and leaves web_search available for other providers', () => {
     const setActiveTools = vi.fn();
     syncGrokTools(
       {
-        getActiveTools: () => ['read', 'web_search', 'Grep', 'WebSearch'],
+        getActiveTools: () => ['read', 'web_search', 'Grep', 'WebSearch', 'image_gen'],
         setActiveTools,
       },
       'openai',
+      'grok-cli',
     );
 
     expect(setActiveTools).toHaveBeenCalledWith(['read', 'web_search']);
+  });
+
+  it('keeps image_gen active for other providers when configured for all', () => {
+    const setActiveTools = vi.fn();
+    syncGrokTools(
+      {
+        getActiveTools: () => ['read', 'web_search', 'Grep', 'image_gen'],
+        setActiveTools,
+      },
+      'openai',
+      'all',
+    );
+
+    expect(setActiveTools).toHaveBeenCalledWith(['read', 'web_search', 'image_gen']);
   });
 
   it('restores suppressed tools after a provider round-trip', () => {
@@ -57,11 +74,11 @@ describe('syncGrokTools', () => {
       },
     };
 
-    syncGrokTools(pi, 'grok-cli');
+    syncGrokTools(pi, 'grok-cli', 'grok-cli');
     expect(activeTools).not.toContain('web_search');
     expect(activeTools).toContain('WebSearch');
 
-    syncGrokTools(pi, 'openai');
+    syncGrokTools(pi, 'openai', 'grok-cli');
     expect(activeTools).toContain('web_search');
     expect(activeTools).not.toContain('WebSearch');
   });
