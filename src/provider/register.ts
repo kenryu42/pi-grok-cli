@@ -18,7 +18,7 @@ import {
   isPiWebAccessInstalled,
 } from '../tools/webSearchDelegate.js';
 import { registerVisionFeature } from '../vision/register.js';
-import { grokCliModelHeaders, streamGrokCli } from './stream.js';
+import { grokCliModelHeaders } from './stream.js';
 import { syncGrokTools } from './toolScope.js';
 import { registerUsageCommand } from './usage.js';
 
@@ -81,8 +81,6 @@ export default function registerGrokCli(pi: ExtensionAPI) {
       headers: grokCliModelHeaders(m.id),
     })),
     oauth: oauthProvider,
-
-    streamSimple: streamGrokCli,
   });
 
   registerGrokTools(pi);
@@ -100,6 +98,11 @@ export default function registerGrokCli(pi: ExtensionAPI) {
 
     bindLivePiWebAccess(pi);
     await ensureWebSearchDelegate(pi);
+  });
+
+  pi.on('before_provider_headers', (event, ctx) => {
+    if (ctx.model?.provider !== 'grok-cli') return;
+    event.headers['x-grok-conv-id'] = ctx.sessionManager.getSessionId();
   });
 
   pi.on('before_provider_request', (event, ctx) => {

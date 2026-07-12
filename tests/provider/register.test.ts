@@ -7,34 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GROK_SHIM_TOOL_NAMES, grokToolsToActivate } from '../../src/tools/register.js';
 import * as webSearchDelegate from '../../src/tools/webSearchDelegate.js';
 
-const { streamSimpleOpenAIResponses, mockPiWebAccessInstalled } = vi.hoisted(() => ({
+const { mockPiWebAccessInstalled } = vi.hoisted(() => ({
   mockPiWebAccessInstalled: vi.fn(() => true),
-  streamSimpleOpenAIResponses: vi.fn(
-    (
-      _model: unknown,
-      _context: unknown,
-      options?: {
-        onResponse?: (response: { headers: Record<string, string> }) => void;
-      },
-    ) => {
-      options?.onResponse?.({
-        headers: {
-          'x-ratelimit-remaining-requests': '179',
-          'x-ratelimit-limit-requests': '180',
-          'x-ratelimit-remaining-tokens': '7500000',
-          'x-ratelimit-limit-tokens': '7500000',
-          'x-grok-context-window': '512000',
-          'x-zero-data-retention': 'true',
-        },
-      });
-      return {};
-    },
-  ),
-}));
-
-vi.mock('@earendil-works/pi-ai/compat', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@earendil-works/pi-ai/compat')>()),
-  streamSimpleOpenAIResponses,
 }));
 
 vi.mock('../../src/tools/webSearchDelegate.js', async (importOriginal) => {
@@ -94,7 +68,6 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.resetModules();
-  streamSimpleOpenAIResponses.mockClear();
   globalThis.fetch = originalFetch;
   if (originalHome === undefined) {
     delete process.env.HOME;
@@ -416,21 +389,6 @@ describe('Grok CLI status command', () => {
     );
   });
 
-  it('does not cache stream response rate-limit headers as quota', async () => {
-    delete process.env.GROK_CLI_OAUTH_TOKEN;
-    const home = setupHome();
-    const extension = await setupExtension();
-    extension.providers
-      .get('grok-cli')
-      ?.streamSimple?.(
-        { provider: 'grok-cli', id: 'grok-build' } as Model<Api>,
-        { messages: [] },
-        {},
-      );
-
-    expect(existsSync(join(home, '.pi', 'grok-cli-quota.json'))).toBe(false);
-  });
-
   it('warns when no Grok models are registered', async () => {
     const extension = await setupExtension();
     const notify = vi.fn();
@@ -511,6 +469,7 @@ describe('Grok CLI provider registration', () => {
     expect(provider?.name).toBe('Grok CLI');
     expect(provider?.api).toBe('openai-responses');
     expect(provider?.apiKey).toBe('$GROK_CLI_OAUTH_TOKEN');
+    expect(provider?.streamSimple).toBeUndefined();
     expect(provider?.models?.map((model) => model.id)).toContain('grok-build');
     expect((provider?.oauth as Omit<OAuthProviderInterface, 'id'>)?.usesCallbackServer).toBe(true);
     expect(provider?.oauth?.getApiKey({ access: 'access-token', refresh: '', expires: 0 })).toBe(
@@ -537,6 +496,29 @@ describe('Grok CLI provider registration', () => {
       },
       { provider: 'openai', id: 'gpt-4', baseUrl: 'keep' },
     ]);
+  });
+
+  it('adds conversation affinity headers only for Grok requests', async () => {
+    const extension = await setupExtension();
+    const grokEvent = { headers: { existing: 'keep' } as Record<string, string> };
+
+    extension.handlers.get('before_provider_headers')?.(grokEvent, {
+      ...contextForModel('grok-cli'),
+      sessionManager: { getSessionId: () => 'session-123' },
+    });
+
+    expect(grokEvent.headers).toEqual({
+      existing: 'keep',
+      'x-grok-conv-id': 'session-123',
+    });
+
+    const openAiEvent = { headers: { existing: 'keep' } as Record<string, string> };
+    extension.handlers.get('before_provider_headers')?.(openAiEvent, {
+      ...contextForModel('openai'),
+      sessionManager: { getSessionId: () => 'session-456' },
+    });
+
+    expect(openAiEvent.headers).toEqual({ existing: 'keep' });
   });
 
   it('sanitizes Grok provider requests with the current session id', async () => {
