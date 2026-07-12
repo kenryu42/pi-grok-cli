@@ -64,7 +64,8 @@ describe('image_gen tool', () => {
             path: '/sessions/id/images/1.jpg',
             filename: '1.jpg',
             relative_path: 'images/1.jpg',
-            message: 'Image generated and saved to images/1.jpg.',
+            message:
+              'Image generated successfully. Do not repeat the saved path unless the user asks.',
           }),
         },
       ],
@@ -88,6 +89,11 @@ describe('image_gen tool', () => {
     );
     expect(test.tool.promptGuidelines?.join(' ')).toContain(
       'For a request for one image, call image_gen exactly once',
+    );
+    expect(test.tool.description).not.toContain('When telling the user where it was saved');
+    expect(test.tool.promptGuidelines?.join(' ')).not.toContain('include its absolute path');
+    expect(test.tool.promptGuidelines?.join(' ')).toContain(
+      'Do not repeat the saved path unless the user asks',
     );
   });
 
@@ -148,6 +154,6 @@ describe('image_gen tool', () => {
         )
         .render(120)
         .join('\n'),
-    ).toContain('saved images/1.jpg');
+    ).toContain('saved images/1.jpg (/missing.jpg)');
   });
 });

@@ -45,9 +45,10 @@ export function registerImageGenTool(
     name: 'image_gen',
     label: 'Image Gen',
     description:
-      "Generate a new image from a text description using Imagine; returns the saved image's absolute path. When telling the user where it was saved, prefer the short session-relative path (e.g. `images/1.jpg`) when available. For a request for one image, call this tool exactly once. Call it multiple times only when the user explicitly requests multiple images. Do not re-read or re-display the image unless the user asks.",
+      "Generate a new image from a text description using Imagine; returns the saved image's absolute path. For a request for one image, call this tool exactly once. Call it multiple times only when the user explicitly requests multiple images. Do not re-read or re-display the image unless the user asks.",
     promptGuidelines: [
       'For a request for one image, call image_gen exactly once. Call it multiple times only when the user explicitly requests multiple images.',
+      'Do not repeat the saved path unless the user asks for it; the image_gen result already displays a copyable path.',
     ],
     parameters: ImageGenParams,
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
@@ -67,7 +68,8 @@ export function registerImageGenTool(
                 path: saved.absolutePath,
                 filename: saved.filename,
                 relative_path: saved.relativePath,
-                message: `Image generated and saved to ${saved.relativePath}.`,
+                message:
+                  'Image generated successfully. Do not repeat the saved path unless the user asks.',
               }),
             },
           ],
@@ -99,11 +101,15 @@ export function registerImageGenTool(
         return new Text(theme.fg('error', `Image Gen error: ${result.details.error}`), 0, 0);
       }
       if (!result.details.path) return new Text(theme.fg('error', 'Image path unavailable'), 0, 0);
+      const displayPath =
+        result.details.relativePath && result.details.relativePath !== result.details.path
+          ? `${result.details.relativePath} (${result.details.path})`
+          : result.details.path;
       return imagePreview({
         path: result.details.path,
         previewPath: result.details.previewPath,
         previewError: result.details.previewError,
-        label: `saved ${result.details.relativePath ?? result.details.path}`,
+        label: `saved ${displayPath}`,
         theme,
         showImage: context.showImages,
       });
