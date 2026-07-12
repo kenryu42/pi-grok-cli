@@ -90,22 +90,18 @@ export function registerImagineFeature(
   });
 
   pi.registerCommand('grok-cli-imagine:scope', {
-    description: 'Set image_gen availability to grok-cli or all providers',
+    description: 'Toggle image_gen availability between grok-cli and all providers',
     handler: async (args, ctx) => {
-      const value = args.trim();
-      if (!value) {
-        const loaded = loadImagineConfig();
-        if (loaded.warning) ctx.ui.notify(loaded.warning, 'warning');
-        ctx.ui.notify(`image_gen scope: ${scopeLabel(loaded.config.scope)}`, 'info');
+      if (args.trim()) {
+        ctx.ui.notify('Usage: /grok-cli-imagine:scope', 'error');
         return;
       }
-      if (value !== 'grok-cli' && value !== 'all') {
-        ctx.ui.notify('Usage: /grok-cli-imagine:scope grok-cli|all', 'error');
-        return;
-      }
-      saveImagineConfig({ scope: value });
-      syncGrokTools(pi, ctx.model?.provider, value);
-      ctx.ui.notify(`image_gen scope: ${scopeLabel(value)}`, 'info');
+      const loaded = loadImagineConfig();
+      if (loaded.warning) ctx.ui.notify(loaded.warning, 'warning');
+      const nextScope = loaded.config.scope === 'grok-cli' ? 'all' : 'grok-cli';
+      saveImagineConfig({ scope: nextScope });
+      syncGrokTools(pi, ctx.model?.provider, nextScope);
+      ctx.ui.notify(`image_gen scope: ${scopeLabel(nextScope)}`, 'info');
     },
   });
 

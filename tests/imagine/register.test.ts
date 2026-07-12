@@ -161,25 +161,21 @@ describe('registerImagineFeature command', () => {
     expect(missing.notify.mock.calls.at(-1)?.[0]).toContain('/login grok-cli');
   });
 
-  it('persists and immediately applies image_gen scope changes', async () => {
+  it('toggles, persists, and immediately applies image_gen scope without arguments', async () => {
     const extension = setup('token');
-    await extension.commands.get('grok-cli-imagine:scope')?.handler('all', extension.context);
+    await extension.commands.get('grok-cli-imagine:scope')?.handler('', extension.context);
     expect(extension.getActiveTools()).toContain('image_gen');
     expect(extension.notify).toHaveBeenLastCalledWith('image_gen scope: all providers', 'info');
 
-    await extension.commands.get('grok-cli-imagine:scope')?.handler('grok-cli', extension.context);
+    await extension.commands.get('grok-cli-imagine:scope')?.handler('', extension.context);
     expect(extension.getActiveTools()).not.toContain('image_gen');
     expect(extension.notify).toHaveBeenLastCalledWith('image_gen scope: grok-cli only', 'info');
   });
 
-  it('reports current scope and rejects invalid values', async () => {
+  it('rejects arguments because scope is a toggle', async () => {
     const extension = setup('token');
-    await extension.commands.get('grok-cli-imagine:scope')?.handler('', extension.context);
-    expect(extension.notify.mock.calls.at(-1)?.[0]).toContain('grok-cli only');
-    await extension.commands.get('grok-cli-imagine:scope')?.handler('invalid', extension.context);
-    expect(extension.notify).toHaveBeenLastCalledWith(
-      'Usage: /grok-cli-imagine:scope grok-cli|all',
-      'error',
-    );
+    await extension.commands.get('grok-cli-imagine:scope')?.handler('all', extension.context);
+    expect(extension.notify).toHaveBeenLastCalledWith('Usage: /grok-cli-imagine:scope', 'error');
+    expect(extension.getActiveTools()).not.toContain('image_gen');
   });
 });

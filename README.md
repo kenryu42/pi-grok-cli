@@ -155,7 +155,7 @@ Kitty-protocol terminals use internal PNG preview sidecars under `images/.previe
 
 The `image_gen` tool activates only for the `grok-cli` provider. Its model-facing result contains paths only, so generated image bytes are not added to subsequent model context.
 
-Use `/grok-cli-imagine:scope all` to make `image_gen` available to models from every provider, or `/grok-cli-imagine:scope grok-cli` to restore the default. The selection persists in `~/.pi/grok-cli-imagine.json` and applies immediately.
+Use `/grok-cli-imagine:scope` to toggle `image_gen` between Grok CLI-only and all-provider availability. The selection persists in `~/.pi/grok-cli-imagine.json` and applies immediately.
 
 ### Usage tracking
 
@@ -167,7 +167,7 @@ Use `/grok-cli-imagine:scope all` to make `image_gen` available to models from e
 | --- | --- |
 | `/grok-cli-usage` | Fetch current quota, remaining credits, and reset times. |
 | `/grok-cli-imagine <prompt>` | Generate and preview an image. Supports `--aspect`, `--out`, and `--resolution 1k`. |
-| `/grok-cli-imagine:scope grok-cli\|all` | Persist whether `image_gen` is available only to Grok CLI or to every provider. |
+| `/grok-cli-imagine:scope` | Toggle whether `image_gen` is available only to Grok CLI or to every provider. |
 | `/grok-cli-vision:status` | Show vision state, describer model, configuration path, and cache statistics. |
 | `/grok-cli-vision:on` / `/grok-cli-vision:off` | Enable or disable vision routing. |
 | `/grok-cli-vision:cache-clear` | Remove all cached image descriptions. |
