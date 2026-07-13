@@ -43,6 +43,13 @@ describe('tool display config', () => {
 
     expect(loadToolDisplayConfig(invalidJsonPath).warning).toMatch(/Could not read/);
 
+    const nonObjectPath = join(tempDir('pi-grok-cli-tools-config-'), 'array.json');
+    writeFileSync(nonObjectPath, '[]', 'utf-8');
+    expect(loadToolDisplayConfig(nonObjectPath)).toEqual({
+      config: DEFAULT_TOOL_DISPLAY_CONFIG,
+      warning: `Config ${nonObjectPath} must be a JSON object. Using defaults.`,
+    });
+
     const warnings: string[] = [];
     const config = normalizeToolDisplayConfig(
       { toolDisplay: 'maximal' as never, grepPreviewMatches: -1 },

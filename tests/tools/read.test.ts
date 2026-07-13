@@ -1,12 +1,14 @@
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { saveToolDisplayConfig } from '../../src/tools/displayConfig.js';
 import { createReadShim } from '../../src/tools/read.js';
 import {
   executePreparedTool,
   executeTool,
   firstText,
   prepareToolArguments,
+  renderToolResult,
   type ToolResult,
   tempDir,
 } from './toolTestHelpers.js';
@@ -68,5 +70,95 @@ describe('Read shim (native read alias)', () => {
       cwd,
     )) as ToolResult;
     expect(firstText(result)).toContain('once upon a time');
+  });
+
+  it('summarizes collapsed results with path, range, and optional preview', () => {
+    const result = {
+      content: [{ type: 'text', text: 'line 1\nline 2\nline 3' }],
+      details: {},
+    };
+
+    expect(
+      renderToolResult(
+        readShim,
+        result,
+        { expanded: false, isPartial: false },
+        {
+          args: { path: 'notes.txt' },
+        },
+      ),
+    ).toBe('Read notes.txt');
+
+    expect(
+      renderToolResult(
+        readShim,
+        result,
+        { expanded: false, isPartial: false },
+        {
+          args: { file_path: 'src/app.ts', offset: 10, limit: 20 },
+        },
+      ),
+    ).toBe('Read src/app.ts (offset=10, limit=20)');
+
+    expect(renderToolResult(readShim, result, { expanded: false, isPartial: false }, {})).toBe(
+      'Read complete',
+    );
+
+    expect(
+      renderToolResult(
+        readShim,
+        result,
+        { expanded: false, isPartial: true },
+        {
+          args: { path: 'notes.txt' },
+        },
+      ),
+    ).toBe('Running...');
+
+    const previousConfigPath = process.env.PI_GROK_CLI_TOOLS_CONFIG;
+    process.env.PI_GROK_CLI_TOOLS_CONFIG = join(tempDir('pi-grok-cli-read-config-'), 'tools.json');
+    try {
+      saveToolDisplayConfig({
+        toolDisplay: 'preview',
+        grepPreviewMatches: 10,
+        globPreviewFiles: 20,
+        lsPreviewEntries: 20,
+        shellTailLines: 20,
+        readPreviewLines: 2,
+        writeCallPreviewLines: 10,
+        webSearchPreviewChars: 500,
+      });
+
+      expect(
+        renderToolResult(
+          readShim,
+          result,
+          { expanded: false, isPartial: false },
+          {
+            args: { path: 'notes.txt' },
+          },
+        ),
+      ).toBe('Read notes.txt\nline 1\nline 2\n[Showing first 2 of 3 lines.]');
+    } finally {
+      process.env.PI_GROK_CLI_TOOLS_CONFIG = previousConfigPath;
+    }
+  });
+
+  it('delegates expanded results to the native read renderer', () => {
+    const result = {
+      content: [{ type: 'text', text: 'alpha\nbeta' }],
+      details: {},
+    };
+
+    expect(
+      renderToolResult(
+        readShim,
+        result,
+        { expanded: true, isPartial: false },
+        {
+          args: { path: 'notes.txt' },
+        },
+      ),
+    ).toContain('alpha');
   });
 });

@@ -202,6 +202,19 @@ describe('file tools', () => {
     expect(result.details.diff).toBe('-1 red blue red\n+1 green blue green');
   });
 
+  it('includes surrounding context lines in StrReplace diffs', async () => {
+    const cwd = tempDir('pi-grok-cli-files-');
+    writeFileSync(join(cwd, 'story.txt'), 'alpha\nbeta\ngamma\ndelta\nepsilon', 'utf-8');
+
+    const result = await executeTool(
+      collectTools(registerFileTools).get('StrReplace'),
+      { path: 'story.txt', old_str: 'gamma', new_str: 'GAMMA' },
+      cwd,
+    );
+
+    expect(result.details.diff).toBe(' 1 alpha\n 2 beta\n-3 gamma\n+3 GAMMA\n 4 delta\n 5 epsilon');
+  });
+
   it('rejects empty replacement search strings without changing files', async () => {
     const cwd = tempDir('pi-grok-cli-files-');
     writeFileSync(join(cwd, 'story.txt'), 'red blue red', 'utf-8');
@@ -476,7 +489,7 @@ describe('file tools', () => {
         content: [{ type: 'text', text: 'edited' }],
         details: { replacements: 2 },
       }),
-    ).toBe('2 replacement(s)');
+    ).toBe('2 replacements');
     expect(
       renderToolResult(
         tools.get('LS'),

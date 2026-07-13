@@ -127,11 +127,12 @@ export function renderToolResult(
   tool: RegisteredTool | undefined,
   result: ToolResult,
   state = { expanded: false, isPartial: false },
+  context: Record<string, unknown> = {},
 ) {
   if (!tool?.renderResult) {
     throw new Error('Tool result renderer was not registered');
   }
-  return renderText(tool.renderResult(result, state, plainTheme, {}));
+  return renderText(tool.renderResult(result, state, plainTheme, context));
 }
 
 export function tempDir(prefix: string) {

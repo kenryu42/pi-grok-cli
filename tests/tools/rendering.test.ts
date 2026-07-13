@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  argsFromRenderContext,
   booleanDetail,
   detailRecord,
   fileError,
@@ -8,8 +9,11 @@ import {
   MAX_LINES,
   MAX_OUTPUT_CHARS,
   numberDetail,
+  previewChars,
+  previewLines,
   renderResultSummary,
   renderResultText,
+  renderResultWithPreview,
   renderRunning,
   stringDetail,
   text,
@@ -17,7 +21,7 @@ import {
   truncateChars,
   truncateLines,
 } from '../../src/tools/rendering.js';
-import { renderText } from './toolTestHelpers.js';
+import { plainTheme, renderText } from './toolTestHelpers.js';
 
 describe('tool rendering helpers', () => {
   it('truncates long result lists and large output', () => {
@@ -54,6 +58,89 @@ describe('tool rendering helpers', () => {
     expect(renderText(renderRunning(true) ?? text(''))).toBe('Running...');
     expect(renderRunning(false)).toBeUndefined();
     expect(renderText(renderResultSummary(result, false, true, 'summary'))).toBe('Running...');
+  });
+
+  it('extracts args from render contexts and builds previews', () => {
+    expect(argsFromRenderContext({ args: { path: 'a.txt' } })).toEqual({ path: 'a.txt' });
+    expect(argsFromRenderContext({ path: 'b.txt' })).toEqual({ path: 'b.txt' });
+    expect(argsFromRenderContext(null)).toEqual({});
+
+    expect(previewLines('one\ntwo\nthree', 0)).toEqual([]);
+    expect(previewLines('one\ntwo\nthree', 10)).toEqual(['one', 'two', 'three']);
+    expect(previewLines('one\ntwo\nthree\nfour', 2)).toEqual([
+      'one',
+      'two',
+      '[Showing first 2 of 4 lines.]',
+    ]);
+    expect(previewLines('one\ntwo\nthree\nfour', 2, 'tail')).toEqual([
+      'three',
+      'four',
+      '[Showing last 2 of 4 lines.]',
+    ]);
+
+    expect(previewChars('short', 0)).toBe('');
+    expect(previewChars('short', 10)).toBe('short');
+    expect(previewChars('abcdefghij', 4)).toBe('abcd\n[Preview truncated at 4 characters.]');
+
+    const result = {
+      content: [{ type: 'text', text: 'full output' }],
+      details: {},
+    };
+    expect(
+      renderText(
+        renderResultWithPreview(
+          result,
+          { expanded: false, isPartial: true },
+          'summary',
+          ['preview'],
+          plainTheme,
+        ),
+      ),
+    ).toBe('Running...');
+    expect(
+      renderText(
+        renderResultWithPreview(
+          result,
+          { expanded: true, isPartial: false },
+          'summary',
+          ['preview'],
+          plainTheme,
+        ),
+      ),
+    ).toBe('full output');
+    expect(
+      renderText(
+        renderResultWithPreview(
+          result,
+          { expanded: false, isPartial: false },
+          'summary',
+          [],
+          plainTheme,
+        ),
+      ),
+    ).toBe('summary');
+    expect(
+      renderText(
+        renderResultWithPreview(
+          result,
+          { expanded: false, isPartial: false },
+          'summary',
+          ['line a', 'line b'],
+          plainTheme,
+        ),
+      ),
+    ).toBe('summary\nline a\nline b');
+    expect(
+      renderText(
+        renderResultWithPreview(
+          result,
+          { expanded: false, isPartial: false },
+          'summary',
+          'string preview',
+          plainTheme,
+        ),
+      ),
+    ).toBe('summary\nstring preview');
   });
 
   it('reads typed detail values with defaults for absent or invalid details', () => {
