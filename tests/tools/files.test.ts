@@ -215,6 +215,38 @@ describe('file tools', () => {
     expect(result.details.diff).toBe(' 1 alpha\n 2 beta\n-3 gamma\n+3 GAMMA\n 4 delta\n 5 epsilon');
   });
 
+  it('keeps non-contiguous StrReplace hunks separate with context', async () => {
+    const cwd = tempDir('pi-grok-cli-files-');
+    writeFileSync(
+      join(cwd, 'story.txt'),
+      ['a', 'target', 'b', 'c', 'd', 'e', 'f', 'g', 'target', 'h'].join('\n'),
+      'utf-8',
+    );
+
+    const result = await executeTool(
+      collectTools(registerFileTools).get('StrReplace'),
+      { path: 'story.txt', old_str: 'target', new_str: 'TARGET' },
+      cwd,
+    );
+
+    expect(result.details.replacements).toBe(2);
+    expect(result.details.diff).toBe(
+      [
+        ' 1 a',
+        '-2 target',
+        '+2 TARGET',
+        ' 3 b',
+        ' 4 c',
+        '...',
+        ' 7 f',
+        ' 8 g',
+        '-9 target',
+        '+9 TARGET',
+        ' 10 h',
+      ].join('\n'),
+    );
+  });
+
   it('rejects empty replacement search strings without changing files', async () => {
     const cwd = tempDir('pi-grok-cli-files-');
     writeFileSync(join(cwd, 'story.txt'), 'red blue red', 'utf-8');
@@ -505,6 +537,16 @@ describe('file tools', () => {
         content: [{ type: 'text', text: 'writing' }],
         details: { bytesWritten: 10 },
       }),
+    ).toBe('');
+    expect(
+      renderToolResult(
+        tools.get('Write'),
+        {
+          content: [{ type: 'text', text: 'Successfully wrote 10 bytes to notes.txt' }],
+          details: { bytesWritten: 10 },
+        },
+        { expanded: true, isPartial: false },
+      ),
     ).toBe('');
     expect(
       renderToolResult(tools.get('Write'), {

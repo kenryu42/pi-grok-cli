@@ -131,6 +131,40 @@ function generateDisplayDiff(oldContent: string, newContent: string, contextLine
   if (oldContent === newContent) return '';
   const oldLines = splitDisplayLines(oldContent);
   const newLines = splitDisplayLines(newContent);
+
+  // Equal-length edits (typical replaceAll on whole lines): emit separate hunks so
+  // unchanged lines between replacements stay context instead of one giant replace span.
+  if (oldLines.length === newLines.length) {
+    const changed = oldLines.flatMap((line, index) => (line === newLines[index] ? [] : [index]));
+    if (changed.length === 0) return '';
+
+    const show = new Set(
+      changed.flatMap((index) =>
+        Array.from(
+          {
+            length:
+              Math.min(oldLines.length - 1, index + contextLines) -
+              Math.max(0, index - contextLines) +
+              1,
+          },
+          (_, offset) => Math.max(0, index - contextLines) + offset,
+        ),
+      ),
+    );
+
+    return [...show]
+      .sort((a, b) => a - b)
+      .flatMap((index, position, indices) => {
+        const gap = position > 0 && index > (indices[position - 1] ?? index) + 1 ? ['...'] : [];
+        if (oldLines[index] !== newLines[index]) {
+          return [...gap, `-${index + 1} ${oldLines[index]}`, `+${index + 1} ${newLines[index]}`];
+        }
+        return [...gap, ` ${index + 1} ${oldLines[index]}`];
+      })
+      .join('\n');
+  }
+
+  // Unequal line counts: fall back to a single prefix/suffix span.
   const firstChanged = oldLines.findIndex((line, index) => line !== newLines[index]);
   const changeStart =
     firstChanged === -1 ? Math.min(oldLines.length, newLines.length) : firstChanged;
@@ -357,6 +391,8 @@ export function registerFileTools(pi: ExtensionAPI) {
     },
     renderResult(result, { expanded, isPartial }, theme, context) {
       if (isPartial) return text('Running...');
+      // Match native pi write: successful results stay empty in both collapsed and
+      // expanded views. Written content is shown on renderCall; result is for errors.
       if (!booleanDetail(result, 'failed') && recordFrom(context)?.isError !== true)
         return text('');
       return renderResultSummary(
