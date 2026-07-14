@@ -4,8 +4,9 @@ import { join } from 'node:path';
 import type { Api, Model, OAuthCredentials, OAuthProviderInterface } from '@earendil-works/pi-ai';
 import type { ExtensionAPI, ProviderConfig } from '@earendil-works/pi-coding-agent';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { GROK_SHIM_TOOL_NAMES, grokToolsToActivate } from '../../src/tools/register.js';
+import { GROK_SHIM_TOOL_NAMES } from '../../src/tools/register.js';
 import * as webSearchDelegate from '../../src/tools/webSearchDelegate.js';
+import { plainTheme as theme } from '../tools/toolTestHelpers.js';
 
 const { mockPiWebAccessInstalled } = vi.hoisted(() => ({
   mockPiWebAccessInstalled: vi.fn(() => true),
@@ -116,9 +117,32 @@ async function setupExtension(initialActiveTools = ['read', 'bash'], piWebAccess
     getActiveTools() {
       return activeTools;
     },
+    getAllTools() {
+      return [
+        'read',
+        'bash',
+        'edit',
+        'write',
+        'grep',
+        'find',
+        'ls',
+        'web_search',
+        ...tools.keys(),
+      ].map((name) => ({ name }));
+    },
     setActiveTools,
   } as unknown as ExtensionAPI);
-  return { commands, providers, tools, handlers, setActiveTools };
+  return {
+    commands,
+    providers,
+    tools,
+    handlers,
+    setActiveTools,
+    getActiveTools: () => activeTools,
+    replaceActiveTools(nextTools: string[]) {
+      activeTools = [...nextTools];
+    },
+  };
 }
 
 function statusContext(notify: TestContext['ui']['notify']): TestContext {
@@ -140,9 +164,9 @@ function emptyStatusContext(notify: TestContext['ui']['notify']): TestContext {
   };
 }
 
-function contextForModel(provider: string): TestContext {
+function contextForModel(provider: string, id = `${provider}-model`): TestContext {
   return {
-    model: { provider, id: `${provider}-model` },
+    model: { provider, id },
     modelRegistry: { getAll: () => [] },
     ui: { notify: vi.fn() },
   };
@@ -155,10 +179,22 @@ function renderText(component: Renderable): string {
     .join('\n');
 }
 
-const theme = {
-  bold: (text: string) => text,
-  fg: (_name: string, text: string) => text,
-};
+function renderContext(args: Record<string, unknown> = {}) {
+  return {
+    args,
+    toolCallId: 'tool-call-id',
+    invalidate: () => {},
+    lastComponent: undefined,
+    state: {},
+    cwd: '/project',
+    executionStarted: true,
+    argsComplete: true,
+    isPartial: false,
+    expanded: false,
+    showImages: true,
+    isError: false,
+  };
+}
 
 function setupHome() {
   const dir = mkdtempSync(join(tmpdir(), 'pi-grok-cli-home-'));
@@ -586,7 +622,9 @@ describe('Grok CLI tool scoping', () => {
   it('registers the Grok/Cursor-native tool shims', async () => {
     const extension = await setupExtension();
 
-    expect([...extension.tools.keys()].sort()).toEqual([...grokToolsToActivate()].sort());
+    expect([...extension.tools.keys()].sort()).toEqual(
+      [...GROK_SHIM_TOOL_NAMES, 'WebSearch', 'image_gen'].sort(),
+    );
   });
 
   it('does not register WebSearch when pi-web-access is not installed', async () => {
@@ -598,20 +636,21 @@ describe('Grok CLI tool scoping', () => {
     expect(extension.tools.has('WebSearch')).toBe(false);
   });
 
-  it('enables Grok tools for Grok models while preserving other active tools', async () => {
+  it('uses only enabled compatibility capabilities for exact legacy models', async () => {
     const extension = await setupExtension(['read', 'custom_tool', 'web_search']);
 
     await extension.handlers.get('model_select')?.(
       { model: { provider: 'grok-cli', id: 'grok-build' } },
-      contextForModel('grok-cli'),
+      contextForModel('grok-cli', 'grok-build'),
     );
 
     const next = extension.setActiveTools.mock.calls.at(-1)?.[0] as string[];
     expect(next).not.toContain('web_search');
-    expect(next).toEqual(['read', 'custom_tool', ...grokToolsToActivate()]);
+    expect(next).toEqual(['Read', 'custom_tool', 'WebSearch', 'image_gen']);
+    expect(next).not.toEqual(expect.arrayContaining(['Write', 'Delete', 'Shell']));
   });
 
-  it('removes Grok tools for non-Grok models while preserving other active tools', async () => {
+  it('translates compatibility names back to native tools for non-Grok models', async () => {
     const extension = await setupExtension(['read', 'Grep', 'custom_tool', 'Shell']);
 
     await extension.handlers.get('model_select')?.(
@@ -619,23 +658,92 @@ describe('Grok CLI tool scoping', () => {
       contextForModel('openai'),
     );
 
-    expect(extension.setActiveTools).toHaveBeenLastCalledWith(['read', 'custom_tool']);
+    expect(extension.setActiveTools).toHaveBeenLastCalledWith([
+      'read',
+      'grep',
+      'custom_tool',
+      'bash',
+      'image_gen',
+    ]);
   });
 
   it('syncs tool scope before each agent turn from the current context model', async () => {
     const extension = await setupExtension(['read']);
 
-    await extension.handlers.get('before_agent_start')?.({}, contextForModel('grok-cli'));
+    await extension.handlers.get('before_agent_start')?.(
+      {},
+      contextForModel('grok-cli', 'grok-build'),
+    );
 
-    expect(extension.setActiveTools).toHaveBeenLastCalledWith(['read', ...grokToolsToActivate()]);
+    expect(extension.setActiveTools).toHaveBeenLastCalledWith(['Read', 'image_gen']);
   });
 
   it('does not update active tools when the selection is already correct', async () => {
-    const extension = await setupExtension(['read', ...grokToolsToActivate()]);
+    const extension = await setupExtension(['Read', 'image_gen']);
 
-    await extension.handlers.get('before_agent_start')?.({}, contextForModel('grok-cli'));
+    await extension.handlers.get('before_agent_start')?.(
+      {},
+      contextForModel('grok-cli', 'grok-build'),
+    );
 
     expect(extension.setActiveTools).not.toHaveBeenCalled();
+  });
+
+  it('keeps modern and unknown Grok models on native tools', async () => {
+    for (const id of ['grok-4.5', 'future-model']) {
+      const extension = await setupExtension(['read', 'bash']);
+
+      await extension.handlers.get('model_select')?.(
+        { model: { provider: 'grok-cli', id } },
+        contextForModel('grok-cli', id),
+      );
+
+      expect(extension.getActiveTools()).toEqual(['read', 'bash', 'image_gen']);
+    }
+  });
+
+  it('captures Delete on first session start and restores native names on shutdown', async () => {
+    const extension = await setupExtension(['read', 'Delete']);
+
+    await extension.handlers.get('session_start')?.(
+      { type: 'session_start', reason: 'startup' },
+      contextForModel('grok-cli', 'grok-build'),
+    );
+    expect(extension.getActiveTools()).toEqual(['Read', 'Delete', 'image_gen']);
+
+    extension.replaceActiveTools(['Read', 'custom', 'image_gen']);
+    await extension.handlers.get('session_shutdown')?.(
+      { type: 'session_shutdown', reason: 'reload' },
+      contextForModel('grok-cli', 'grok-build'),
+    );
+    expect(extension.getActiveTools()).toEqual(['read', 'custom', 'image_gen']);
+  });
+
+  it('reconciles live tool changes before the next legacy prompt', async () => {
+    const extension = await setupExtension(['read']);
+    await extension.handlers.get('session_start')?.(
+      { type: 'session_start', reason: 'startup' },
+      contextForModel('grok-cli', 'grok-build'),
+    );
+    extension.replaceActiveTools(['Read', 'write', 'custom', 'image_gen']);
+
+    await extension.handlers.get('before_agent_start')?.(
+      {},
+      contextForModel('grok-cli', 'grok-build'),
+    );
+
+    expect(extension.getActiveTools()).toEqual(['Read', 'Write', 'custom', 'image_gen']);
+  });
+
+  it('leaves native web_search available when the optional adapter is unavailable', async () => {
+    const extension = await setupExtension(['web_search'], false);
+
+    await extension.handlers.get('session_start')?.(
+      { type: 'session_start', reason: 'startup' },
+      contextForModel('grok-cli', 'grok-build'),
+    );
+
+    expect(extension.getActiveTools()).toEqual(['web_search', 'image_gen']);
   });
 });
 
@@ -643,33 +751,43 @@ describe('Grok CLI tool rendering', () => {
   it('adds renderers to every Grok tool shim', async () => {
     const extension = await setupExtension();
 
-    for (const name of grokToolsToActivate()) {
+    for (const name of [...GROK_SHIM_TOOL_NAMES, 'WebSearch', 'image_gen']) {
       expect(extension.tools.get(name)?.renderCall).toBeTypeOf('function');
       expect(extension.tools.get(name)?.renderResult).toBeTypeOf('function');
     }
   });
 
-  it('keeps collapsed search output compact and expands to full output', async () => {
+  it('delegates collapsed and expanded search output rendering', async () => {
     const extension = await setupExtension();
     const grep = extension.tools.get('Grep');
     const result = {
       content: [{ type: 'text', text: 'src/a.ts:1:match\nsrc/b.ts:2:match' }],
-      details: { matchCount: 2 },
+      details: undefined,
     };
 
     const collapsed = renderText(
-      grep?.renderResult?.(result, { expanded: false, isPartial: false }, theme, {}) as Renderable,
+      grep?.renderResult?.(
+        result,
+        { expanded: false, isPartial: false },
+        theme,
+        renderContext({ pattern: 'match' }),
+      ) as Renderable,
     );
     const expanded = renderText(
-      grep?.renderResult?.(result, { expanded: true, isPartial: false }, theme, {}) as Renderable,
+      grep?.renderResult?.(
+        result,
+        { expanded: true, isPartial: false },
+        theme,
+        renderContext({ pattern: 'match' }),
+      ) as Renderable,
     );
 
-    expect(collapsed).toBe('2 match(es)');
-    expect(collapsed).not.toContain('src/a.ts');
+    expect(collapsed).toContain('src/a.ts:1:match');
+    expect(collapsed).toContain('src/b.ts:2:match');
     expect(expanded).toContain('src/a.ts:1:match');
   });
 
-  it('renders compact summaries for file mutations, delete, and shell tools', async () => {
+  it('uses native results for delegated tools and retained summaries for custom tools', async () => {
     const extension = await setupExtension();
 
     expect(
@@ -677,14 +795,14 @@ describe('Grok CLI tool rendering', () => {
         extension.tools.get('Write')?.renderResult?.(
           {
             content: [{ type: 'text', text: 'long write output' }],
-            details: { bytesWritten: 42 },
+            details: undefined,
           },
           { expanded: false, isPartial: false },
           theme,
-          {},
+          renderContext({ path: 'notes.txt', content: 'content' }),
         ) as Renderable,
       ),
-    ).toBe('42 bytes written');
+    ).toBe('');
     expect(
       renderText(
         extension.tools.get('StrReplace')?.renderResult?.(
@@ -694,7 +812,7 @@ describe('Grok CLI tool rendering', () => {
           },
           { expanded: false, isPartial: false },
           theme,
-          {},
+          renderContext({ path: 'notes.txt', old_str: 'old', new_str: 'new' }),
         ) as Renderable,
       ),
     ).toBe('3 replacement(s)');
@@ -707,7 +825,7 @@ describe('Grok CLI tool rendering', () => {
           },
           { expanded: false, isPartial: false },
           theme,
-          {},
+          renderContext({ path: 'notes.txt' }),
         ) as Renderable,
       ),
     ).toBe('Deleted');
@@ -716,13 +834,13 @@ describe('Grok CLI tool rendering', () => {
         extension.tools.get('Shell')?.renderResult?.(
           {
             content: [{ type: 'text', text: 'long shell output' }],
-            details: { exitCode: 2 },
+            details: undefined,
           },
           { expanded: false, isPartial: false },
           theme,
-          {},
+          renderContext({ command: 'printf output' }),
         ) as Renderable,
       ),
-    ).toBe('Exit 2');
+    ).toContain('long shell output');
   });
 });

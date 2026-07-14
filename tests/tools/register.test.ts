@@ -1,10 +1,6 @@
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import {
-  GROK_SHIM_TOOL_NAMES,
-  grokToolsToActivate,
-  registerGrokTools,
-} from '../../src/tools/register.js';
+import { GROK_SHIM_TOOL_NAMES, registerGrokTools } from '../../src/tools/register.js';
 import * as webSearchDelegate from '../../src/tools/webSearchDelegate.js';
 
 afterEach(() => {
@@ -41,6 +37,5 @@ describe('Grok tool registration', () => {
     } as unknown as ExtensionAPI);
 
     expect(toolNames).toContain('WebSearch');
-    expect(grokToolsToActivate()).toContain('WebSearch');
   });
 });

@@ -1,4 +1,4 @@
-import { writeFileSync } from 'node:fs';
+import { copyFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createReadShim } from '../../src/tools/read.js';
@@ -7,6 +7,8 @@ import {
   executeTool,
   firstText,
   prepareToolArguments,
+  renderToolCall,
+  renderToolResult,
   type ToolResult,
   tempDir,
 } from './toolTestHelpers.js';
@@ -68,5 +70,40 @@ describe('Read shim (native read alias)', () => {
       cwd,
     )) as ToolResult;
     expect(firstText(result)).toContain('once upon a time');
+  });
+
+  it('uses native path/range call rendering and expanded text results', async () => {
+    const cwd = tempDir('pi-grok-cli-read-');
+    writeFileSync(join(cwd, 'notes.txt'), 'alpha\nbeta\ngamma', 'utf8');
+    const args = { file_path: 'notes.txt', offset: 2, limit: 1 };
+    const result = (await executePreparedTool(readShim, args, cwd)) as ToolResult;
+
+    expect(renderToolCall(readShim, args)).toBe('read notes.txt:2-2');
+    expect(renderToolResult(readShim, result, { expanded: false, isPartial: false }, args)).toBe(
+      '',
+    );
+    expect(
+      renderToolResult(readShim, result, { expanded: true, isPartial: false }, args),
+    ).toContain('beta');
+  });
+
+  it('keeps native image result content intact', async () => {
+    const cwd = tempDir('pi-grok-cli-read-');
+    copyFileSync(
+      join(
+        process.cwd(),
+        'node_modules',
+        '@earendil-works',
+        'pi-coding-agent',
+        'docs',
+        'images',
+        'exy.png',
+      ),
+      join(cwd, 'pixel.png'),
+    );
+
+    const result = (await executeTool(readShim, { path: 'pixel.png' }, cwd)) as ToolResult;
+
+    expect(result.content.some((content) => content.type === 'image')).toBe(true);
   });
 });

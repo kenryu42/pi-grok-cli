@@ -6,7 +6,6 @@ import {
   ensureWebSearchDelegate,
   getWebSearchDelegate,
   getWebSearchLoadError,
-  PI_WEB_SEARCH_TOOL,
 } from './webSearchDelegate.js';
 
 const WEB_SEARCH_DESCRIPTION =
@@ -154,15 +153,5 @@ export function registerWebSearchTool(pi: ExtensionAPI) {
       const preview = textContent.length > 800 ? `${textContent.slice(0, 800)}...` : textContent;
       return new Text(`${summary}\n${theme.fg('dim', preview)}`, 0, 0);
     },
-  });
-
-  pi.on('tool_call', (event, ctx) => {
-    if (ctx.model?.provider !== 'grok-cli') return;
-    if (event.toolName !== PI_WEB_SEARCH_TOOL) return;
-    return {
-      block: true,
-      reason:
-        'web_search is disabled for Grok CLI; use WebSearch instead (same behavior as pi-web-access web_search).',
-    };
   });
 }

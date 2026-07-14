@@ -1,14 +1,16 @@
-import { mkdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { registerSearchTools, sortByModifiedNewest } from '../../src/tools/search.js';
+import { registerSearchTools } from '../../src/tools/search.js';
 import {
   collectTools,
   executePreparedTool,
   executeTool,
+  executeToolWithOptions,
   firstText,
-  plainTheme,
-  renderText,
+  prepareToolArguments,
+  renderToolCall,
+  renderToolResult,
   type ToolResult,
   tempDir,
 } from './toolTestHelpers.js';
@@ -22,33 +24,17 @@ function setupProject() {
   return dir;
 }
 
-function expectGrepResult(cwd: string, result: ToolResult) {
-  expect(firstText(result)).toContain(`${join(cwd, 'src', 'alpha.ts')}:1:needle`);
+function expectGrepResult(result: ToolResult) {
+  expect(firstText(result)).toContain('alpha.ts:1: needle');
   expect(firstText(result)).not.toContain('beta.md');
-  expect(result.details).toEqual({ matchCount: 1 });
+  expect(result.details).toBeUndefined();
 }
 
-function expectGlobResult(cwd: string, result: ToolResult) {
-  expect(firstText(result)).toContain(join(cwd, 'src', 'alpha.ts'));
-  expect(firstText(result)).toContain(join(cwd, 'src', 'gamma.ts'));
+function expectGlobResult(result: ToolResult) {
+  expect(firstText(result)).toContain('src/alpha.ts');
+  expect(firstText(result)).toContain('src/gamma.ts');
   expect(firstText(result)).not.toContain('beta.md');
-  expect(result.details).toEqual({ fileCount: 2 });
-}
-
-async function withFindFallbackTools(
-  run: (tools: ReturnType<typeof collectTools>) => Promise<void>,
-) {
-  const bin = tempDir('pi-grok-cli-search-bin-');
-  symlinkSync('/usr/bin/find', join(bin, 'find'));
-  const oldPath = process.env.PATH;
-  process.env.PATH = bin;
-  vi.resetModules();
-  try {
-    await run(collectTools((await import('../../src/tools/search.js')).registerSearchTools));
-  } finally {
-    process.env.PATH = oldPath;
-    vi.resetModules();
-  }
+  expect(result.details).toBeUndefined();
 }
 
 async function withNoSearchBinaries(
@@ -74,7 +60,7 @@ describe('search tools', () => {
       cwd,
     );
 
-    expectGrepResult(cwd, result);
+    expectGrepResult(result);
   });
 
   it('greps matching file contents with Cursor-style glob filters', async () => {
@@ -85,7 +71,7 @@ describe('search tools', () => {
       cwd,
     );
 
-    expectGrepResult(cwd, result);
+    expectGrepResult(result);
   });
 
   it('greps patterns that start with a dash', async () => {
@@ -98,8 +84,8 @@ describe('search tools', () => {
       cwd,
     );
 
-    expect(firstText(result)).toBe(`${join(cwd, 'src', 'dash.ts')}:1:-export const value = 1`);
-    expect(result.details).toEqual({ matchCount: 1 });
+    expect(firstText(result)).toBe('dash.ts:1: -export const value = 1');
+    expect(result.details).toBeUndefined();
   });
 
   it('includes file paths when grepping a single file', async () => {
@@ -110,8 +96,8 @@ describe('search tools', () => {
       cwd,
     );
 
-    expect(firstText(result)).toBe(`${join(cwd, 'src', 'alpha.ts')}:1:needle`);
-    expect(result.details).toEqual({ matchCount: 1 });
+    expect(firstText(result)).toBe('alpha.ts:1: needle');
+    expect(result.details).toBeUndefined();
   });
 
   it('reports no grep matches as an empty result', async () => {
@@ -123,23 +109,18 @@ describe('search tools', () => {
     );
 
     expect(firstText(result)).toBe('No matches found');
-    expect(result.details).toEqual({ matchCount: 0 });
+    expect(result.details).toBeUndefined();
   });
 
   it('reports grep command errors with empty match details', async () => {
     const cwd = setupProject();
-    const result = await executeTool(
-      collectTools(registerSearchTools).get('Grep'),
-      { pattern: '[', path: 'src' },
-      cwd,
-    );
-
-    expect(firstText(result).startsWith('Grep error:')).toBe(true);
-    expect(result.details).toEqual({
-      matchCount: 0,
-      failed: true,
-      error: expect.stringMatching(/regex parse error|Invalid regular expression/),
-    });
+    await expect(
+      executeTool(
+        collectTools(registerSearchTools).get('Grep'),
+        { pattern: '[', path: 'src' },
+        cwd,
+      ),
+    ).rejects.toThrow(/regex parse error|Invalid regular expression/);
   });
 
   it('globs files under the requested path', async () => {
@@ -150,7 +131,7 @@ describe('search tools', () => {
       cwd,
     );
 
-    expectGlobResult(cwd, result);
+    expectGlobResult(result);
   });
 
   it('globs files with Cursor-style glob pattern arguments', async () => {
@@ -161,7 +142,7 @@ describe('search tools', () => {
       cwd,
     );
 
-    expectGlobResult(cwd, result);
+    expectGlobResult(result);
   });
 
   it('reports empty glob command results', async () => {
@@ -173,72 +154,78 @@ describe('search tools', () => {
     );
 
     expect(firstText(result)).toBe('No files found');
-    expect(result.details).toEqual({ fileCount: 0 });
+    expect(result.details).toBeUndefined();
   });
 
   it('reports glob filesystem errors', async () => {
     const cwd = setupProject();
-    const result = await executeTool(
-      collectTools(registerSearchTools).get('Glob'),
-      { pattern: '**/*.ts', path: 'missing' },
-      cwd,
-    );
-
-    expect(firstText(result).startsWith('Glob error:')).toBe(true);
-    expect(result.details).toMatchObject({ fileCount: 0, failed: true });
+    await expect(
+      executeTool(
+        collectTools(registerSearchTools).get('Glob'),
+        { pattern: '**/*.ts', path: 'missing' },
+        cwd,
+      ),
+    ).rejects.toThrow(/Path not found/);
   });
 
-  it('globs path-containing patterns through the find fallback', async () => {
+  it('globs path-containing patterns without external search binaries', async () => {
     const cwd = setupProject();
-    await withFindFallbackTools(async (fallbackTools) => {
+    await withNoSearchBinaries(async (fallbackTools) => {
       const result = await executeTool(fallbackTools.get('Glob'), { pattern: 'src/**/*.ts' }, cwd);
 
-      expectGlobResult(cwd, result);
+      expectGlobResult(result);
     });
   });
 
-  it('globs basename-only patterns through the find fallback', async () => {
+  it('globs basename-only patterns relative to an explicit root', async () => {
     const cwd = setupProject();
-    await withFindFallbackTools(async (fallbackTools) => {
-      const result = await executeTool(fallbackTools.get('Glob'), { pattern: '*.ts' }, cwd);
+    await withNoSearchBinaries(async (fallbackTools) => {
+      const result = await executeTool(
+        fallbackTools.get('Glob'),
+        { pattern: '*.ts', path: 'src' },
+        cwd,
+      );
 
-      expectGlobResult(cwd, result);
+      expectGlobResult(result);
     });
   });
 
   it('globs files without ripgrep or Unix find on PATH', async () => {
     const cwd = setupProject();
-    await withNoSearchBinaries(async (fallbackTools) => {
-      const result = await executeTool(fallbackTools.get('Glob'), { pattern: 'src/**/*.ts' }, cwd);
-
-      expectGlobResult(cwd, result);
-    });
-  });
-
-  it('greps files without ripgrep or Unix grep on PATH', async () => {
-    const cwd = setupProject();
+    writeFileSync(join(cwd, '.hidden.ts'), '', 'utf8');
     await withNoSearchBinaries(async (fallbackTools) => {
       const result = await executeTool(
-        fallbackTools.get('Grep'),
-        { pattern: 'needle', path: 'src', include: '*.ts' },
+        fallbackTools.get('Glob'),
+        { pattern: '**/*.ts', path: '.' },
         cwd,
       );
 
-      expectGrepResult(cwd, result);
+      expect(firstText(result)).toContain('.hidden.ts');
+      expect(firstText(result)).toContain('src/alpha.ts');
     });
   });
 
-  it('greps with path-containing include patterns through the fallback', async () => {
+  it('greps literal metacharacters through the native engine', async () => {
     const cwd = setupProject();
-    await withNoSearchBinaries(async (fallbackTools) => {
-      const result = await executeTool(
-        fallbackTools.get('Grep'),
-        { pattern: 'needle', path: 'src', include: 'src/**/*.ts' },
-        cwd,
-      );
+    writeFileSync(join(cwd, 'src', 'literal.ts'), 'needle.[\n', 'utf8');
+    const result = await executeTool(
+      collectTools(registerSearchTools).get('Grep'),
+      { pattern: 'needle.[', path: 'src', glob: '*.ts', literal: true },
+      cwd,
+    );
 
-      expectGrepResult(cwd, result);
-    });
+    expect(firstText(result)).toBe('literal.ts:1: needle.[');
+  });
+
+  it('greps with path-containing native glob filters', async () => {
+    const cwd = setupProject();
+    const result = await executeTool(
+      collectTools(registerSearchTools).get('Grep'),
+      { pattern: 'needle', path: 'src', glob: '**/*.ts' },
+      cwd,
+    );
+
+    expect(firstText(result)).toBe('alpha.ts:1: needle');
   });
 
   it('sorts glob results by modification time newest first', async () => {
@@ -253,122 +240,194 @@ describe('search tools', () => {
       cwd,
     );
 
-    expect(firstText(result).split('\n')).toEqual([
-      join(cwd, 'src', 'gamma.ts'),
-      join(cwd, 'src', 'alpha.ts'),
-    ]);
+    expect(firstText(result).split('\n')).toEqual(['src/gamma.ts', 'src/alpha.ts']);
   });
 
-  it('sorts existing glob results when another match is deleted before stat', () => {
+  it('omits glob candidates deleted before traversal', async () => {
     const cwd = setupProject();
     const deleted = join(cwd, 'src', 'deleted.ts');
     writeFileSync(deleted, 'deleted\n', 'utf-8');
     rmSync(deleted);
 
-    expect(sortByModifiedNewest([deleted, join(cwd, 'src', 'alpha.ts')])).toEqual([
-      join(cwd, 'src', 'alpha.ts'),
-      deleted,
-    ]);
+    const result = await executeTool(
+      collectTools(registerSearchTools).get('Glob'),
+      { pattern: '**/*.ts', path: 'src' },
+      cwd,
+    );
+
+    expect(firstText(result)).not.toContain('deleted.ts');
   });
 
-  it('breaks modification time ties with alphabetical ordering', () => {
+  it('breaks modification time ties with alphabetical ordering', async () => {
     const cwd = setupProject();
     const sameTime = new Date('2024-06-01T00:00:00.000Z');
     utimesSync(join(cwd, 'src', 'gamma.ts'), sameTime, sameTime);
     utimesSync(join(cwd, 'src', 'alpha.ts'), sameTime, sameTime);
 
-    expect(
-      sortByModifiedNewest([join(cwd, 'src', 'gamma.ts'), join(cwd, 'src', 'alpha.ts')]),
-    ).toEqual([join(cwd, 'src', 'alpha.ts'), join(cwd, 'src', 'gamma.ts')]);
+    const result = await executeTool(
+      collectTools(registerSearchTools).get('Glob'),
+      { pattern: '**/*.ts', path: 'src' },
+      cwd,
+    );
+
+    expect(firstText(result).split('\n')).toEqual(['src/alpha.ts', 'src/gamma.ts']);
   });
 
   it('renders grep calls and result states', () => {
     const grep = collectTools(registerSearchTools).get('Grep');
     const result = {
-      content: [{ type: 'text', text: 'src/alpha.ts:1:needle' }],
-      details: { matchCount: 1 },
+      content: [{ type: 'text', text: 'src/alpha.ts:1: needle' }],
+      details: undefined,
     };
 
+    expect(renderToolCall(grep, { pattern: 'needle', path: 'src', include: '*.ts' })).toBe(
+      'grep /needle/ in src (*.ts)',
+    );
+    expect(renderToolResult(grep, result)).toContain('src/alpha.ts:1: needle');
+    expect(renderToolResult(grep, result, { expanded: true, isPartial: false })).toContain(
+      'src/alpha.ts:1: needle',
+    );
     expect(
-      renderText(
-        grep?.renderCall?.({ pattern: 'needle', path: 'src', include: '*.ts' }, plainTheme) ?? {
-          render: () => [],
-        },
-      ),
-    ).toBe('Grep "needle" in src [*.ts]');
-    expect(
-      renderText(
-        grep?.renderResult?.(result, { expanded: false, isPartial: false }, plainTheme, {}) ?? {
-          render: () => [],
-        },
-      ),
-    ).toBe('1 match(es)');
-    expect(
-      renderText(
-        grep?.renderResult?.(result, { expanded: true, isPartial: false }, plainTheme, {}) ?? {
-          render: () => [],
-        },
-      ),
-    ).toBe('src/alpha.ts:1:needle');
-    expect(
-      renderText(
-        grep?.renderResult?.(
-          {
-            content: [{ type: 'text', text: 'No matches found' }],
-            details: {},
-          },
-          { expanded: false, isPartial: false },
-          plainTheme,
-          {},
-        ) ?? { render: () => [] },
-      ),
-    ).toBe('No matches');
-    expect(
-      renderText(
-        grep?.renderResult?.(result, { expanded: false, isPartial: true }, plainTheme, {}) ?? {
-          render: () => [],
-        },
-      ),
-    ).toBe('Running...');
+      renderToolResult(grep, {
+        content: [{ type: 'text', text: 'No matches found' }],
+        details: undefined,
+      }),
+    ).toContain('No matches found');
+    expect(renderToolResult(grep, result, { expanded: false, isPartial: true })).toContain(
+      'src/alpha.ts:1: needle',
+    );
   });
 
   it('renders glob calls and result states', () => {
     const glob = collectTools(registerSearchTools).get('Glob');
     const result = {
       content: [{ type: 'text', text: 'src/alpha.ts\nsrc/gamma.ts' }],
-      details: { fileCount: 2 },
+      details: undefined,
     };
 
+    expect(renderToolCall(glob, { pattern: '**/*.ts', path: 'src' })).toBe('find **/*.ts in src');
+    expect(renderToolResult(glob, result)).toContain('src/alpha.ts');
     expect(
-      renderText(
-        glob?.renderCall?.({ pattern: '**/*.ts', path: 'src' }, plainTheme) ?? {
-          render: () => [],
-        },
-      ),
-    ).toBe('Glob **/*.ts in src');
+      renderToolResult(glob, {
+        content: [{ type: 'text', text: 'No files found' }],
+        details: undefined,
+      }),
+    ).toContain('No files found');
+    expect(renderToolResult(glob, result, { expanded: false, isPartial: true })).toContain(
+      'src/gamma.ts',
+    );
+  });
+});
+
+describe('native Grep adapter contracts', () => {
+  it('normalizes query and all observed glob aliases', () => {
+    const grep = collectTools(registerSearchTools).get('Grep');
+
     expect(
-      renderText(
-        glob?.renderResult?.(result, { expanded: false, isPartial: false }, plainTheme, {}) ?? {
-          render: () => [],
-        },
-      ),
-    ).toBe('2 file(s)');
-    expect(
-      renderText(
-        glob?.renderResult?.(
-          { content: [{ type: 'text', text: 'No files found' }], details: {} },
-          { expanded: false, isPartial: false },
-          plainTheme,
-          {},
-        ) ?? { render: () => [] },
-      ),
-    ).toBe('No files');
-    expect(
-      renderText(
-        glob?.renderResult?.(result, { expanded: false, isPartial: true }, plainTheme, {}) ?? {
-          render: () => [],
-        },
-      ),
-    ).toBe('Running...');
+      prepareToolArguments(grep, {
+        query: 'needle',
+        path: 'src',
+        include: '*.ts',
+        ignore_case: true,
+      }),
+    ).toEqual({
+      pattern: 'needle',
+      path: 'src',
+      glob: '*.ts',
+      ignoreCase: true,
+      literal: undefined,
+      context: undefined,
+      limit: undefined,
+    });
+    expect(prepareToolArguments(grep, { pattern: 'x', glob_filter: '**/*.md' })).toMatchObject({
+      pattern: 'x',
+      glob: '**/*.md',
+    });
+  });
+
+  it('delegates literal, ignore-case, context, and limit behavior to native grep', async () => {
+    const cwd = tempDir('pi-grok-cli-search-');
+    writeFileSync(join(cwd, 'sample.txt'), 'before\nNeedle.[\nafter\nneedle.[ again\n', 'utf8');
+
+    const result = await executePreparedTool(
+      collectTools(registerSearchTools).get('Grep'),
+      {
+        query: 'needle.[',
+        path: '.',
+        include: '*.txt',
+        ignoreCase: true,
+        literal: true,
+        context: 1,
+        limit: 1,
+      },
+      cwd,
+    );
+
+    expect(firstText(result)).toContain('sample.txt:2: Needle.[');
+    expect(firstText(result)).toContain('sample.txt-1- before');
+    expect(firstText(result)).toContain('1 matches limit reached');
+    expect(result.details).toMatchObject({ matchLimitReached: 1 });
+  });
+
+  it('uses native .gitignore handling', async () => {
+    const cwd = tempDir('pi-grok-cli-search-');
+    mkdirSync(join(cwd, '.git'));
+    writeFileSync(join(cwd, '.gitignore'), 'ignored.txt\n', 'utf8');
+    writeFileSync(join(cwd, 'ignored.txt'), 'needle\n', 'utf8');
+    writeFileSync(join(cwd, 'visible.txt'), 'haystack\n', 'utf8');
+
+    const result = await executeTool(
+      collectTools(registerSearchTools).get('Grep'),
+      { pattern: 'needle', path: '.' },
+      cwd,
+    );
+
+    expect(firstText(result)).toBe('No matches found');
+    expect(result.details).toBeUndefined();
+  });
+
+  it('reports native long-line and result truncation metadata', async () => {
+    const cwd = tempDir('pi-grok-cli-search-');
+    writeFileSync(join(cwd, 'long.txt'), `needle ${'x'.repeat(700)}\n`, 'utf8');
+
+    const result = await executeTool(
+      collectTools(registerSearchTools).get('Grep'),
+      { pattern: 'needle', path: '.' },
+      cwd,
+    );
+
+    expect(firstText(result)).toContain('Some lines truncated');
+    expect(result.details).toMatchObject({ linesTruncated: true });
+  });
+
+  it('throws native cancellation and invalid-regex errors', async () => {
+    const cwd = setupProject();
+    const grep = collectTools(registerSearchTools).get('Grep');
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      executeToolWithOptions(grep, { pattern: 'needle', path: 'src' }, cwd, {
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow(/aborted/i);
+    await expect(executeTool(grep, { pattern: '[', path: 'src' }, cwd)).rejects.toThrow(
+      /regex parse error|invalid regular expression/i,
+    );
+  });
+
+  it('uses native collapsed and expanded rendering with normalized aliases', async () => {
+    const cwd = setupProject();
+    const grep = collectTools(registerSearchTools).get('Grep');
+    const args = { query: 'needle', path: 'src', include: '*.ts' };
+    const result = await executePreparedTool(grep, args, cwd);
+
+    expect(renderToolCall(grep, args)).toBe('grep /needle/ in src (*.ts)');
+    expect(renderToolResult(grep, result, { expanded: false, isPartial: false }, args)).toContain(
+      'alpha.ts:1: needle',
+    );
+    expect(renderToolResult(grep, result, { expanded: true, isPartial: false }, args)).toContain(
+      'alpha.ts:1: needle',
+    );
   });
 });

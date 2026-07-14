@@ -1,37 +1,37 @@
-import {
-  existsSync,
-  promises as fs,
-  mkdirSync,
-  readFileSync,
-  unlinkSync,
-  writeFileSync,
-} from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { existsSync, promises as fs, unlinkSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { Type } from '@earendil-works/pi-ai';
-import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
+import {
+  createEditToolDefinition,
+  createLsToolDefinition,
+  createWriteToolDefinition,
+  type EditToolInput,
+  type ExtensionAPI,
+  type ExtensionContext,
+  generateUnifiedPatch,
+  type LsToolInput,
+  type WriteToolInput,
+  withFileMutationQueue,
+} from '@earendil-works/pi-coding-agent';
 import {
   booleanDetail,
   fileError,
   fileNotFound,
-  MAX_OUTPUT_CHARS,
+  nativeRenderContext,
   numberDetail,
   recordFrom,
   renderResultSummary,
-  stringDetail,
   stringFrom,
-  type ToolError,
   text,
 } from './rendering.js';
 
 type ReplacementEdit = { oldText: string; newText: string };
-type WriteArgs = { path: string; content: string };
 type StrReplaceArgs = { path: string; old_str: string; new_str: string };
-type EditArgs = {
+type StrReplaceDetails = {
   path: string;
-  edits?: ReplacementEdit[];
-  applyPatch?: { patchContent: string };
-  strReplace?: ReplacementEdit;
-  multiStrReplace?: { edits: ReplacementEdit[] };
+  replacements: number;
+  diff?: string;
+  diffTruncated?: boolean;
 };
 
 type ToolTheme = {
@@ -39,23 +39,8 @@ type ToolTheme = {
   fg: (name: 'accent' | 'toolTitle', text: string) => string;
 };
 
-function parseEditList(value: unknown): ReplacementEdit[] | undefined {
-  const editList = typeof value === 'string' ? parseJson(value) : value;
-  if (!Array.isArray(editList)) return undefined;
-  if (
-    !editList.every(
-      (edit) =>
-        typeof recordFrom(edit)?.oldText === 'string' &&
-        typeof recordFrom(edit)?.newText === 'string',
-    )
-  ) {
-    return undefined;
-  }
-  return editList.map((edit) => ({
-    oldText: stringFrom(recordFrom(edit)?.oldText) ?? '',
-    newText: stringFrom(recordFrom(edit)?.newText) ?? '',
-  }));
-}
+export const STR_REPLACE_DIFF_MAX_CHARS = 26_000;
+const STR_REPLACE_COLLAPSED_DIFF_MAX_CHARS = 4_000;
 
 function parseJson(value: string): unknown {
   try {
@@ -65,40 +50,95 @@ function parseJson(value: string): unknown {
   }
 }
 
-function editFromText(oldText: unknown, newText: unknown) {
-  if (typeof oldText !== 'string' || typeof newText !== 'string') return undefined;
-  return [{ oldText, newText }];
+function replacementEdit(value: unknown): ReplacementEdit | undefined {
+  const input = recordFrom(value);
+  if (!input) return undefined;
+  const oldText =
+    stringFrom(input.oldText) ?? stringFrom(input.old_string) ?? stringFrom(input.old_str);
+  const newText =
+    stringFrom(input.newText) ?? stringFrom(input.new_string) ?? stringFrom(input.new_str);
+  if (oldText === undefined || newText === undefined) return undefined;
+  return { oldText, newText };
 }
 
-function editsFromArgs(input: Record<string, unknown>) {
-  return (
-    parseEditList(input.edits) ??
-    parseEditList(recordFrom(input.multiStrReplace)?.edits) ??
-    editFromText(input.oldText, input.newText) ??
-    editFromText(recordFrom(input.strReplace)?.oldText, recordFrom(input.strReplace)?.newText)
-  );
+function editList(value: unknown): ReplacementEdit[] | undefined {
+  const list = typeof value === 'string' ? parseJson(value) : value;
+  if (!Array.isArray(list)) return undefined;
+  const edits = list.map(replacementEdit);
+  if (edits.some((edit) => edit === undefined)) return undefined;
+  return edits.filter((edit): edit is ReplacementEdit => edit !== undefined);
 }
 
-function applyEdits(content: string, edits: ReplacementEdit[]) {
-  return edits.reduce(
-    (result, edit) => {
-      const count = result.content.split(edit.oldText).length - 1;
-      return {
-        content:
-          count === 0
-            ? result.content
-            : result.content.replaceAll(edit.oldText, () => edit.newText),
-        replacements: result.replacements + count,
-      };
-    },
-    { content, replacements: 0 },
-  );
-}
-
-function replacementResult(text: string, filePath: string) {
+function normalizeWriteArgs(value: unknown): WriteToolInput {
+  const input = recordFrom(value);
   return {
-    content: [{ type: 'text' as const, text }],
-    details: { path: filePath, replacements: 0 },
+    path: stringFrom(input?.path) ?? stringFrom(input?.file_path) ?? '',
+    content: stringFrom(input?.content) ?? stringFrom(input?.contents) ?? '',
+  };
+}
+
+function normalizeLsArgs(value: unknown): LsToolInput {
+  const input = recordFrom(value);
+  return {
+    path: stringFrom(input?.path),
+    limit: typeof input?.limit === 'number' ? input.limit : undefined,
+  };
+}
+
+function normalizeEditArgs(value: unknown): EditToolInput {
+  const input = recordFrom(value);
+  const topLevel = replacementEdit(input);
+  const nested = replacementEdit(input?.strReplace);
+  return {
+    path: stringFrom(input?.path) ?? stringFrom(input?.file_path) ?? '',
+    edits:
+      editList(input?.edits) ??
+      editList(recordFrom(input?.multiStrReplace)?.edits) ??
+      (topLevel ? [topLevel] : undefined) ??
+      (nested ? [nested] : []),
+  };
+}
+
+function normalizeStrReplaceArgs(value: unknown): StrReplaceArgs {
+  const input = recordFrom(value);
+  return {
+    path: stringFrom(input?.path) ?? '',
+    old_str:
+      stringFrom(input?.old_str) ??
+      stringFrom(input?.old_string) ??
+      stringFrom(input?.oldText) ??
+      stringFrom(recordFrom(input?.strReplace)?.oldText) ??
+      '',
+    new_str:
+      stringFrom(input?.new_str) ??
+      stringFrom(input?.new_string) ??
+      stringFrom(input?.newText) ??
+      stringFrom(recordFrom(input?.strReplace)?.newText) ??
+      '',
+  };
+}
+
+function countOccurrences(content: string, search: string) {
+  let count = 0;
+  let offset = 0;
+  while (offset <= content.length - search.length) {
+    const match = content.indexOf(search, offset);
+    if (match === -1) return count;
+    count += 1;
+    offset = match + search.length;
+  }
+  return count;
+}
+
+function boundedDiff(filePath: string, before: string, after: string) {
+  const fullDiff = generateUnifiedPatch(filePath, before, after);
+  if (fullDiff.length <= STR_REPLACE_DIFF_MAX_CHARS) {
+    return { diff: fullDiff, diffTruncated: false };
+  }
+  const notice = '\n[Diff truncated at 26000 characters]';
+  return {
+    diff: `${fullDiff.slice(0, STR_REPLACE_DIFF_MAX_CHARS - notice.length)}${notice}`,
+    diffTruncated: true,
   };
 }
 
@@ -109,14 +149,17 @@ function renderReplacementResult(
   theme: { fg: (name: 'dim' | 'muted', text: string) => string },
 ) {
   const replacements = numberDetail(result, 'replacements');
-  return renderResultSummary(
-    result,
-    expanded,
-    isPartial,
+  const summary =
     replacements === 0
       ? theme.fg('dim', 'No replacements')
-      : theme.fg('muted', `${replacements} replacement(s)`),
-  );
+      : theme.fg('muted', `${replacements} replacement(s)`);
+  if (isPartial) return renderResultSummary(result, expanded, true, summary);
+  const details = recordFrom(result.details);
+  const diff = stringFrom(details?.diff);
+  if (!diff) return text(summary);
+  const limit = expanded ? STR_REPLACE_DIFF_MAX_CHARS : STR_REPLACE_COLLAPSED_DIFF_MAX_CHARS;
+  if (diff.length <= limit) return text(`${summary}\n${diff}`);
+  return text(`${summary}\n${diff.slice(0, limit)}\n[Diff preview truncated]`);
 }
 
 function renderPathToolCall(toolName: string, filePath: string, theme: ToolTheme) {
@@ -134,214 +177,151 @@ function existingPathOrNotFound<T extends FileDetails>(
   return existsSync(target) ? target : fileNotFound(target, extraDetails);
 }
 
-function replacementPathOrNotFound(cwd: string, requestedPath: string) {
-  return existingPathOrNotFound(cwd, requestedPath, { replacements: 0 });
-}
-
 export function registerFileTools(pi: ExtensionAPI) {
-  // ── LS tool ──────────────────────────────────────────────────────────
-
-  const LsParams = Type.Object({
-    path: Type.String({
-      description: 'Directory path to list',
-    }),
-  });
-
+  const nativeLs = createLsToolDefinition(process.cwd());
   pi.registerTool({
+    ...nativeLs,
     name: 'LS',
     label: 'LS',
-    description: 'List the contents of a directory, including hidden files.',
-    parameters: LsParams,
-
-    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-      const targetPath = resolve(ctx.cwd, params.path);
-
-      try {
-        if (signal?.aborted) throw new Error('The operation was aborted');
-
-        let output = (await fs.readdir(targetPath)).sort().join('\n');
-        if (output.length > MAX_OUTPUT_CHARS) {
-          output = `${output.slice(0, MAX_OUTPUT_CHARS)}\n\n[LS: output truncated at 50KB]`;
-        }
-
-        return {
-          content: [{ type: 'text', text: output }],
-          details: { path: targetPath },
-        };
-      } catch (error: unknown) {
-        const err = error as ToolError;
-        const message = err.message ?? 'Unknown error';
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `LS error: ${message}`,
-            },
-          ],
-          details: { path: targetPath, failed: true, error: message },
-        };
-      }
+    prepareArguments: normalizeLsArgs,
+    async execute(
+      toolCallId: string,
+      params: LsToolInput,
+      signal: AbortSignal | undefined,
+      onUpdate: Parameters<typeof nativeLs.execute>[3],
+      ctx: ExtensionContext,
+    ) {
+      return createLsToolDefinition(ctx.cwd).execute(
+        toolCallId,
+        normalizeLsArgs(params),
+        signal,
+        onUpdate,
+        ctx,
+      );
     },
-    renderCall(args, theme) {
-      return renderPathToolCall('LS', args.path, theme);
+    renderCall(
+      args: unknown,
+      theme: Parameters<NonNullable<typeof nativeLs.renderCall>>[1],
+      context: Parameters<NonNullable<typeof nativeLs.renderCall>>[2],
+    ) {
+      const normalized = normalizeLsArgs(args);
+      if (!nativeLs.renderCall) return text('');
+      return nativeLs.renderCall(normalized, theme, nativeRenderContext(context, normalized));
     },
-    renderResult(result, { expanded, isPartial }, theme) {
-      return renderResultSummary(
+    renderResult(
+      result: Parameters<NonNullable<typeof nativeLs.renderResult>>[0],
+      options: Parameters<NonNullable<typeof nativeLs.renderResult>>[1],
+      theme: Parameters<NonNullable<typeof nativeLs.renderResult>>[2],
+      context: Parameters<NonNullable<typeof nativeLs.renderResult>>[3],
+    ) {
+      const normalized = normalizeLsArgs(context.args);
+      if (!nativeLs.renderResult) return text('');
+      return nativeLs.renderResult(
         result,
-        expanded,
-        isPartial,
-        theme.fg('muted', stringDetail(result, 'path')),
+        options,
+        theme,
+        nativeRenderContext(context, normalized),
       );
     },
   });
 
-  // ── Write tool ───────────────────────────────────────────────────────
-
-  const WriteParams = Type.Object({
-    path: Type.String({
-      description: 'Path to the file to write',
-    }),
-    content: Type.String({
-      description: 'Content to write to the file',
-    }),
-  });
-
+  const nativeWrite = createWriteToolDefinition(process.cwd());
   pi.registerTool({
+    ...nativeWrite,
     name: 'Write',
     label: 'Write',
-    description:
-      'Create or overwrite a file with the given content. Creates parent directories if needed.',
-    parameters: WriteParams,
-
-    prepareArguments(args) {
-      const input = recordFrom(args);
-      if (!input) return args as WriteArgs;
-      return {
-        ...input,
-        content: stringFrom(input.content) ?? stringFrom(input.contents),
-      } as WriteArgs;
+    prepareArguments: normalizeWriteArgs,
+    async execute(
+      toolCallId: string,
+      params: WriteToolInput,
+      signal: AbortSignal | undefined,
+      onUpdate: Parameters<typeof nativeWrite.execute>[3],
+      ctx: ExtensionContext,
+    ) {
+      return createWriteToolDefinition(ctx.cwd).execute(
+        toolCallId,
+        normalizeWriteArgs(params),
+        signal,
+        onUpdate,
+        ctx,
+      );
     },
-
-    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const filePath = resolve(ctx.cwd, params.path);
-
-      try {
-        mkdirSync(dirname(filePath), { recursive: true });
-        writeFileSync(filePath, params.content, 'utf-8');
-        const bytesWritten = Buffer.byteLength(params.content, 'utf8');
-
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `Successfully wrote ${bytesWritten} bytes to ${params.path}`,
-            },
-          ],
-          details: { path: filePath, bytesWritten },
-        };
-      } catch (error: unknown) {
-        const err = error as ToolError;
-        const message = err.message ?? 'Unknown error';
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `Write error: ${message}`,
-            },
-          ],
-          details: { path: filePath, bytesWritten: 0, failed: true, error: message },
-        };
-      }
+    renderCall(
+      args: unknown,
+      theme: Parameters<NonNullable<typeof nativeWrite.renderCall>>[1],
+      context: Parameters<NonNullable<typeof nativeWrite.renderCall>>[2],
+    ) {
+      const normalized = normalizeWriteArgs(args);
+      if (!nativeWrite.renderCall) return text('');
+      return nativeWrite.renderCall(normalized, theme, nativeRenderContext(context, normalized));
     },
-    renderCall(args, theme) {
-      return renderPathToolCall('Write', args.path, theme);
-    },
-    renderResult(result, { expanded, isPartial }, theme) {
-      return renderResultSummary(
+    renderResult(
+      result: Parameters<NonNullable<typeof nativeWrite.renderResult>>[0],
+      options: Parameters<NonNullable<typeof nativeWrite.renderResult>>[1],
+      theme: Parameters<NonNullable<typeof nativeWrite.renderResult>>[2],
+      context: Parameters<NonNullable<typeof nativeWrite.renderResult>>[3],
+    ) {
+      const normalized = normalizeWriteArgs(context.args);
+      if (!nativeWrite.renderResult) return text('');
+      return nativeWrite.renderResult(
         result,
-        expanded,
-        isPartial,
-        theme.fg('muted', `${numberDetail(result, 'bytesWritten')} bytes written`),
+        options,
+        theme,
+        nativeRenderContext(context, normalized),
       );
     },
   });
 
-  // ── StrReplace tool ──────────────────────────────────────────────────
-
   const StrReplaceParams = Type.Object({
-    path: Type.String({
-      description: 'Path to the file to modify',
-    }),
-    old_str: Type.String({
-      description: 'String to search for (exact match)',
-    }),
-    new_str: Type.String({
-      description: 'String to replace with',
-    }),
+    path: Type.String({ description: 'Path to the file to modify' }),
+    old_str: Type.String({ description: 'String to search for (exact match)' }),
+    new_str: Type.String({ description: 'String to replace with' }),
   });
 
   pi.registerTool({
     name: 'StrReplace',
     label: 'StrReplace',
     description:
-      'Replace all occurrences of a string in a file. The old_str must be an exact match.',
+      'Replace all literal occurrences of a string in a file. old_str must not be empty.',
     parameters: StrReplaceParams,
+    prepareArguments: normalizeStrReplaceArgs,
 
-    prepareArguments(args) {
-      const input = recordFrom(args);
-      if (!input) return args as StrReplaceArgs;
-      return {
-        ...input,
-        old_str:
-          stringFrom(input.old_str) ??
-          stringFrom(input.old_string) ??
-          stringFrom(input.oldText) ??
-          stringFrom(recordFrom(input.strReplace)?.oldText),
-        new_str:
-          stringFrom(input.new_str) ??
-          stringFrom(input.new_string) ??
-          stringFrom(input.newText) ??
-          stringFrom(recordFrom(input.strReplace)?.newText),
-      } as StrReplaceArgs;
-    },
-
-    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const requestedPath = params.path;
-      const filePath = resolve(ctx.cwd, requestedPath);
-
-      try {
-        const resolved = replacementPathOrNotFound(ctx.cwd, requestedPath);
-        if (typeof resolved !== 'string') return resolved;
-
-        const content = readFileSync(resolved, 'utf-8');
-        if (params.old_str === '') {
-          return replacementResult('StrReplace error: old_str must not be empty', resolved);
+    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+      if (signal?.aborted) throw new Error('Operation aborted');
+      if (params.old_str === '') throw new Error('old_str must not be empty');
+      const filePath = resolve(ctx.cwd, params.path);
+      return withFileMutationQueue(filePath, async () => {
+        if (signal?.aborted) throw new Error('Operation aborted');
+        const content = await fs.readFile(filePath, 'utf8');
+        if (signal?.aborted) throw new Error('Operation aborted');
+        const replacements = countOccurrences(content, params.old_str);
+        if (replacements === 0) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: `String not found in ${params.path}: "${params.old_str}"`,
+              },
+            ],
+            details: { path: filePath, replacements: 0 },
+          };
         }
 
-        const count = content.split(params.old_str).length - 1;
-
-        if (count === 0) {
-          return replacementResult(
-            `String not found in ${params.path}: "${params.old_str}"`,
-            resolved,
-          );
-        }
-
-        const newContent = content.replaceAll(params.old_str, () => params.new_str);
-        writeFileSync(resolved, newContent, 'utf-8');
-
+        const nextContent = content.replaceAll(params.old_str, () => params.new_str);
+        const diff = boundedDiff(params.path, content, nextContent);
+        if (signal?.aborted) throw new Error('Operation aborted');
+        await fs.writeFile(filePath, nextContent, 'utf8');
+        if (signal?.aborted) throw new Error('Operation aborted');
         return {
           content: [
             {
-              type: 'text',
-              text: `Replaced ${count} occurrence(s) in ${params.path}`,
+              type: 'text' as const,
+              text: `Replaced ${replacements} occurrence(s) in ${params.path}`,
             },
           ],
-          details: { path: resolved, replacements: count },
+          details: { path: filePath, replacements, ...diff } satisfies StrReplaceDetails,
         };
-      } catch (error: unknown) {
-        return fileError(error, 'StrReplace', filePath, { replacements: 0 });
-      }
+      });
     },
     renderCall(args, theme) {
       return renderPathToolCall('StrReplace', args.path, theme);
@@ -351,121 +331,57 @@ export function registerFileTools(pi: ExtensionAPI) {
     },
   });
 
-  // ── Edit tool ────────────────────────────────────────────────────────
-
-  const EditItemParams = Type.Object({
-    oldText: Type.String({
-      description: 'String to search for (exact match)',
-    }),
-    newText: Type.String({
-      description: 'String to replace with',
-    }),
-    replaceAll: Type.Optional(
-      Type.Boolean({
-        description:
-          'Accepted for Cursor compatibility. Replacements are always applied to all matches.',
-      }),
-    ),
-  });
-
-  const EditParams = Type.Object({
-    path: Type.String({
-      description: 'Path to the file to modify',
-    }),
-    edits: Type.Optional(
-      Type.Array(EditItemParams, {
-        description: 'Exact text replacements to apply sequentially',
-      }),
-    ),
-    applyPatch: Type.Optional(
-      Type.Object({
-        patchContent: Type.String({
-          description: 'Unsupported unified patch content',
-        }),
-      }),
-    ),
-    strReplace: Type.Optional(EditItemParams),
-    multiStrReplace: Type.Optional(
-      Type.Object({
-        edits: Type.Array(EditItemParams),
-      }),
-    ),
-  });
-
+  const nativeEdit = createEditToolDefinition(process.cwd());
   pi.registerTool({
+    ...nativeEdit,
     name: 'Edit',
     label: 'Edit',
     description:
-      'Modify a file with exact text replacement. applyPatch is not supported by this Grok tool shim.',
-    parameters: EditParams,
-
-    prepareArguments(args) {
-      const input = recordFrom(args);
-      if (!input) return args as EditArgs;
-      return {
-        ...input,
-        edits: editsFromArgs(input),
-      } as EditArgs;
+      'Modify a file with exact text replacements. Every oldText must identify one unique, non-overlapping region in the original file. Use StrReplace for replace-all.',
+    prepareArguments: normalizeEditArgs,
+    async execute(
+      toolCallId: string,
+      params: EditToolInput,
+      signal: AbortSignal | undefined,
+      onUpdate: Parameters<typeof nativeEdit.execute>[3],
+      ctx: ExtensionContext,
+    ) {
+      return createEditToolDefinition(ctx.cwd).execute(
+        toolCallId,
+        normalizeEditArgs(params),
+        signal,
+        onUpdate,
+        ctx,
+      );
     },
-
-    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const filePath = resolve(ctx.cwd, params.path);
-
-      try {
-        const resolved = replacementPathOrNotFound(ctx.cwd, params.path);
-        if (typeof resolved !== 'string') return resolved;
-        if (!params.edits?.length) {
-          return {
-            content: [
-              {
-                type: 'text',
-                text: params.applyPatch
-                  ? 'Edit error: applyPatch is not supported by this Grok tool shim'
-                  : 'Edit error: provide at least one exact text replacement',
-              },
-            ],
-            details: { path: resolved, replacements: 0 },
-          };
-        }
-        if (params.edits.some((edit) => edit.oldText === '')) {
-          return replacementResult('Edit error: oldText must not be empty', resolved);
-        }
-
-        const result = applyEdits(readFileSync(resolved, 'utf-8'), params.edits);
-
-        if (result.replacements === 0) {
-          return replacementResult(`No replacement strings found in ${params.path}`, resolved);
-        }
-
-        writeFileSync(resolved, result.content, 'utf-8');
-
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `Applied ${result.replacements} replacement(s) in ${params.path}`,
-            },
-          ],
-          details: { path: resolved, replacements: result.replacements },
-        };
-      } catch (error: unknown) {
-        return fileError(error, 'Edit', filePath, { replacements: 0 });
-      }
+    renderCall(
+      args: unknown,
+      theme: Parameters<NonNullable<typeof nativeEdit.renderCall>>[1],
+      context: Parameters<NonNullable<typeof nativeEdit.renderCall>>[2],
+    ) {
+      const normalized = normalizeEditArgs(args);
+      if (!nativeEdit.renderCall) return text('');
+      return nativeEdit.renderCall(normalized, theme, nativeRenderContext(context, normalized));
     },
-    renderCall(args, theme) {
-      return renderPathToolCall('Edit', args.path, theme);
-    },
-    renderResult(result, { expanded, isPartial }, theme) {
-      return renderReplacementResult(result, expanded, isPartial, theme);
+    renderResult(
+      result: Parameters<NonNullable<typeof nativeEdit.renderResult>>[0],
+      options: Parameters<NonNullable<typeof nativeEdit.renderResult>>[1],
+      theme: Parameters<NonNullable<typeof nativeEdit.renderResult>>[2],
+      context: Parameters<NonNullable<typeof nativeEdit.renderResult>>[3],
+    ) {
+      const normalized = normalizeEditArgs(context.args);
+      if (!nativeEdit.renderResult) return text('');
+      return nativeEdit.renderResult(
+        result,
+        options,
+        theme,
+        nativeRenderContext(context, normalized),
+      );
     },
   });
 
-  // ── Delete tool ──────────────────────────────────────────────────────
-
   const DeleteParams = Type.Object({
-    path: Type.String({
-      description: 'Path to the file to delete',
-    }),
+    path: Type.String({ description: 'Path to the file to delete' }),
   });
 
   pi.registerTool({
@@ -480,9 +396,7 @@ export function registerFileTools(pi: ExtensionAPI) {
       try {
         const resolved = existingPathOrNotFound(ctx.cwd, params.path, { deleted: false });
         if (typeof resolved !== 'string') return resolved;
-
         unlinkSync(resolved);
-
         return {
           content: [{ type: 'text', text: `Successfully deleted ${params.path}` }],
           details: { path: resolved, deleted: true },

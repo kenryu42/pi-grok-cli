@@ -2,10 +2,9 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-export type ImagineToolScope = 'grok-cli' | 'all';
-export type ImagineConfig = { scope: ImagineToolScope };
+export type ImagineConfig = { enabled: boolean };
 
-export const DEFAULT_IMAGINE_CONFIG: ImagineConfig = { scope: 'grok-cli' };
+export const DEFAULT_IMAGINE_CONFIG: ImagineConfig = { enabled: true };
 
 export const getImagineConfigPath = () =>
   join(process.env.HOME || homedir(), '.pi', 'grok-cli-imagine.json');
@@ -23,11 +22,11 @@ export function loadImagineConfig(configPath = getImagineConfigPath()): {
         warning: `Config ${configPath} must be a JSON object. Using defaults.`,
       };
     }
-    const scope = (parsed as { scope?: unknown }).scope;
-    if (scope === 'grok-cli' || scope === 'all') return { config: { scope } };
+    const enabled = (parsed as { enabled?: unknown }).enabled;
+    if (typeof enabled === 'boolean') return { config: { enabled } };
     return {
       config: { ...DEFAULT_IMAGINE_CONFIG },
-      warning: `Invalid ${configPath}: scope must be "grok-cli" or "all". Using grok-cli.`,
+      warning: `Invalid ${configPath}: enabled must be a boolean. Using enabled: true.`,
     };
   } catch (error) {
     return {

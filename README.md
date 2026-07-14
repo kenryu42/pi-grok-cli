@@ -81,15 +81,15 @@ The Grok Build and public API catalogs can overlap. Use the provider that matche
 
 The table describes metadata bundled with this extension, not live model discovery. Context limits are the values registered in pi; xAI may enforce different limits or change availability without notice.
 
-| Model ID | Registered context | Reasoning | Input |
-| --- | ---: | --- | --- |
-| `grok-composer-2.5-fast` | 200K | no | text; images can be described through vision routing |
-| `grok-build` | 512K | yes | text + image |
-| `grok-4.3` | 1M | yes | text + image |
-| `grok-4.5` | 500K | yes | text + image |
-| `grok-4.20-0309-reasoning` | 2M | yes | text + image |
-| `grok-4.20-0309-non-reasoning` | 2M | no | text + image |
-| `grok-4.20-multi-agent-0309` | 2M | yes | text + image |
+| Model ID | Registered context | Reasoning | Input | Coding tools |
+| --- | ---: | --- | --- | --- |
+| `grok-composer-2.5-fast` | 200K | no | text; images can be described through vision routing | Cursor-compatible names |
+| `grok-build` | 512K | yes | text + image | Cursor-compatible names |
+| `grok-4.3` | 1M | yes | text + image | native pi names |
+| `grok-4.5` | 500K | yes | text + image | native pi names |
+| `grok-4.20-0309-reasoning` | 2M | yes | text + image | native pi names |
+| `grok-4.20-0309-non-reasoning` | 2M | no | text + image | native pi names |
+| `grok-4.20-multi-agent-0309` | 2M | yes | text + image | native pi names |
 
 Pi's thinking-level control is forwarded to `grok-4.3`, `grok-4.5`, and `grok-4.20-multi-agent-0309`. Unsupported models have reasoning parameters removed before the request.
 
@@ -117,9 +117,12 @@ Grok models are trained to call Cursor-style tools. pi-grok-cli registers compat
 | Search | `Grep`, `Glob` |
 | Terminal | `Shell` |
 | Web | `WebSearch` when [pi-web-access](https://www.npmjs.com/package/pi-web-access) is installed |
-| Image generation | `image_gen` |
 
-The shims activate only while the selected provider is `grok-cli`. Other providers retain their normal pi tool set.
+The shims activate only for the exact `grok-cli/grok-build` and `grok-cli/grok-composer-2.5-fast` selections. A normal pi launch enables the complete compatibility set, including `Grep`, `Glob`, and `LS`; no `--tools` flag or separate tool-selector extension is required. Other Grok CLI models, unknown future model IDs, and other providers keep native pi tool names.
+
+Pi filters `--tools` and `--exclude-tools` by exact name. When using those advanced restrictions, include the compatibility form or both forms—for example, `--tools read,Read,grep,Grep` or `--exclude-tools grep,Grep`. `--no-tools` disables both vocabularies.
+
+`Read`, `Write`, `Edit`, `Grep`, `LS`, and `Shell` delegate execution and rendering to pi's native tools. `StrReplace` keeps literal replace-all behavior, while `Glob` keeps newest-first Cursor ordering and returns workspace-relative or absolute paths suitable for a follow-up `Read`.
 
 Install optional web search support with:
 
@@ -127,7 +130,7 @@ Install optional web search support with:
 pi install npm:pi-web-access@^0.13.0
 ```
 
-pi-web-access 0.13.0 or newer is required. When `grok-cli` is active, `WebSearch` delegates through pi-web-access's public extension entry and replaces pi's native `web_search` tool. Other providers are unaffected. Restart pi or run `/reload` after installing it in an existing session.
+pi-web-access 0.13.0 or newer is required. On the two Cursor-compatible models, `WebSearch` delegates through pi-web-access's public extension entry and replaces an already-enabled native `web_search` capability. Modern Grok CLI models and other providers retain native `web_search`. Restart pi or run `/reload` after installing it in an existing session.
 
 ### Vision routing for text-only models
 
@@ -153,9 +156,9 @@ The command accepts `--aspect` (or `--aspect-ratio`), `--out` (or `-o`), and the
 
 Kitty-protocol terminals use internal PNG preview sidecars under `images/.previews/`; the generated JPEG remains the public output. A request for one image produces one `image_gen` call, while explicitly requesting multiple images allows parallel calls.
 
-The `image_gen` tool activates only for the `grok-cli` provider. Its model-facing result contains paths only, so generated image bytes are not added to subsequent model context.
+The model-callable `image_gen` tool is enabled by default across providers and is independent of Cursor tool compatibility. Its result contains paths only, so generated image bytes are not added to subsequent model context.
 
-Use `/grok-cli-imagine:scope` to toggle `image_gen` between Grok CLI-only and all-provider availability. The selection persists in `~/.pi/grok-cli-imagine.json` and applies immediately.
+Use `/grok-cli-imagine:tool [on|off|status]` to enable, disable, or inspect `image_gen`. Calling it without an argument toggles the tool. The setting persists in `~/.pi/grok-cli-imagine.json`, applies immediately across providers, and does not disable the `/grok-cli-imagine <prompt>` command.
 
 ### Usage tracking
 
@@ -167,7 +170,7 @@ Use `/grok-cli-imagine:scope` to toggle `image_gen` between Grok CLI-only and al
 | --- | --- |
 | `/grok-cli-usage` | Fetch current quota, remaining credits, and reset times. |
 | `/grok-cli-imagine <prompt>` | Generate and preview an image. Supports `--aspect`, `--out`, and `--resolution 1k`. |
-| `/grok-cli-imagine:scope` | Toggle whether `image_gen` is available only to Grok CLI or to every provider. |
+| `/grok-cli-imagine:tool [on\|off\|status]` | Toggle, set, or report persistent model-callable `image_gen` availability. |
 | `/grok-cli-vision:status` | Show vision state, describer model, configuration path, and cache statistics. |
 | `/grok-cli-vision:on` / `/grok-cli-vision:off` | Enable or disable vision routing. |
 | `/grok-cli-vision:cache-clear` | Remove all cached image descriptions. |

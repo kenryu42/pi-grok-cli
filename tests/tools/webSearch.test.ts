@@ -5,7 +5,6 @@ import { registerWebSearchTool } from '../../src/tools/webSearch.js';
 import * as webSearchDelegate from '../../src/tools/webSearchDelegate.js';
 import {
   clearWebSearchDelegateForTests,
-  PI_WEB_SEARCH_TOOL,
   setWebSearchDelegateForTests,
 } from '../../src/tools/webSearchDelegate.js';
 import {
@@ -207,52 +206,15 @@ describe('WebSearch tool', () => {
     });
   });
 
-  describe('tool_call interceptor', () => {
-    function getHandler() {
-      const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
-      registerWebSearchTool({
-        registerTool() {},
-        on(event: string, handler: (event: unknown, ctx: unknown) => unknown) {
-          handlers.set(event, handler);
-        },
-      } as unknown as ExtensionAPI);
-      const handler = handlers.get('tool_call');
-      if (!handler) throw new Error('tool_call handler not registered');
-      return handler;
-    }
+  it('does not register a provider-wide native web_search blocker', () => {
+    const events: string[] = [];
+    registerWebSearchTool({
+      registerTool() {},
+      on(event: string) {
+        events.push(event);
+      },
+    } as unknown as ExtensionAPI);
 
-    it('blocks web_search for Grok CLI models', () => {
-      const result = getHandler()(
-        { toolName: PI_WEB_SEARCH_TOOL },
-        { model: { provider: 'grok-cli' } },
-      ) as { block?: boolean; reason?: string } | undefined;
-
-      expect(result?.block).toBe(true);
-      expect(result?.reason).toContain('web_search is disabled for Grok CLI');
-    });
-
-    it('allows web_search for non-Grok CLI models', () => {
-      const result = getHandler()(
-        { toolName: PI_WEB_SEARCH_TOOL },
-        { model: { provider: 'openai' } },
-      );
-
-      expect(result).toBeUndefined();
-    });
-
-    it('does not block other tools for Grok CLI', () => {
-      const result = getHandler()(
-        { toolName: 'some_other_tool' },
-        { model: { provider: 'grok-cli' } },
-      );
-
-      expect(result).toBeUndefined();
-    });
-
-    it('does not block web_search when model context is missing', () => {
-      const result = getHandler()({ toolName: PI_WEB_SEARCH_TOOL }, {});
-
-      expect(result).toBeUndefined();
-    });
+    expect(events).not.toContain('tool_call');
   });
 });

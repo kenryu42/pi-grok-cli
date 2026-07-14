@@ -34,6 +34,8 @@ describe('npm package manifest', () => {
     expect(packageJson.peerDependencies?.['pi-web-access']).toBe('>=0.13.0');
     expect(packageJson.dependencies?.jiti).toBeUndefined();
     expect(packageJson.dependencies?.typebox).toBeUndefined();
+    expect(packageJson.dependencies?.ignore).toBe('7.0.5');
+    expect(packageJson.dependencies?.minimatch).toBe('10.2.5');
   });
 });
 
@@ -67,6 +69,7 @@ describe('repository layout', () => {
       'src/provider/usage.ts',
       'src/shared/errors.ts',
       'src/tools/files.ts',
+      'src/tools/glob.ts',
       'src/tools/read.ts',
       'src/tools/register.ts',
       'src/tools/rendering.ts',

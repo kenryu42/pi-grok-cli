@@ -1,20 +1,25 @@
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { describe, expect, it, vi } from 'vitest';
+import { loadImagineConfig, saveImagineConfig } from '../../src/imagine/config.js';
 import { registerImagineFeature } from '../../src/imagine/register.js';
 import { useTempHome } from '../vision/helpers.js';
 import { imagineDependencies } from './helpers.js';
 
 const setupHome = useTempHome();
 
-function setup(token?: string) {
-  setupHome();
+function setup(token?: string, initialActiveTools: readonly string[] = ['read']) {
+  const home = setupHome();
   const commands = new Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>();
   const renderers = new Map<string, unknown>();
   const entries: { type: string; data: unknown }[] = [];
   const tools: { name: string }[] = [];
   const dependencies = imagineDependencies();
-  let activeTools = ['read'];
+  let activeTools = [...initialActiveTools];
+  const setActiveTools = vi.fn((toolsToActivate: string[]) => {
+    activeTools = [...toolsToActivate];
+  });
   registerImagineFeature(
     {
       registerCommand(name: string, command: unknown) {
@@ -32,9 +37,7 @@ function setup(token?: string) {
       getActiveTools() {
         return activeTools;
       },
-      setActiveTools(toolsToActivate: string[]) {
-        activeTools = toolsToActivate;
-      },
+      setActiveTools,
     } as unknown as ExtensionAPI,
     dependencies,
   );
@@ -61,6 +64,8 @@ function setup(token?: string) {
     savePreview: dependencies.savePreviewImage,
     notify,
     context,
+    home,
+    setActiveTools,
     getActiveTools: () => activeTools,
   };
 }
@@ -161,21 +166,73 @@ describe('registerImagineFeature command', () => {
     expect(missing.notify.mock.calls.at(-1)?.[0]).toContain('/login grok-cli');
   });
 
-  it('toggles, persists, and immediately applies image_gen scope without arguments', async () => {
+  it('registers the persistent image_gen tool command instead of the scope command', () => {
     const extension = setup('token');
-    await extension.commands.get('grok-cli-imagine:scope')?.handler('', extension.context);
-    expect(extension.getActiveTools()).toContain('image_gen');
-    expect(extension.notify).toHaveBeenLastCalledWith('image_gen scope: all providers', 'info');
-
-    await extension.commands.get('grok-cli-imagine:scope')?.handler('', extension.context);
-    expect(extension.getActiveTools()).not.toContain('image_gen');
-    expect(extension.notify).toHaveBeenLastCalledWith('image_gen scope: grok-cli only', 'info');
+    expect(extension.commands.has('grok-cli-imagine:tool')).toBe(true);
+    expect(extension.commands.has('grok-cli-imagine:scope')).toBe(false);
   });
 
-  it('rejects arguments because scope is a toggle', async () => {
-    const extension = setup('token');
-    await extension.commands.get('grok-cli-imagine:scope')?.handler('all', extension.context);
-    expect(extension.notify).toHaveBeenLastCalledWith('Usage: /grok-cli-imagine:scope', 'error');
-    expect(extension.getActiveTools()).not.toContain('image_gen');
+  it('toggles and persists image_gen without disturbing unrelated tools', async () => {
+    const extension = setup('token', ['read', 'custom', 'image_gen']);
+    await extension.commands.get('grok-cli-imagine:tool')?.handler('', extension.context);
+    expect(extension.getActiveTools()).toEqual(['read', 'custom']);
+    expect(loadImagineConfig()).toEqual({ config: { enabled: false } });
+    expect(extension.notify).toHaveBeenLastCalledWith('image_gen: off', 'info');
+
+    await extension.commands.get('grok-cli-imagine:tool')?.handler('', extension.context);
+    expect(extension.getActiveTools()).toEqual(['read', 'custom', 'image_gen']);
+    expect(loadImagineConfig()).toEqual({ config: { enabled: true } });
+    expect(extension.notify).toHaveBeenLastCalledWith('image_gen: on', 'info');
+  });
+
+  it.each([
+    ['on', true, ['read', 'custom', 'image_gen']],
+    ['off', false, ['read', 'custom']],
+  ] as const)('applies explicit %s idempotently and persists', async (argument, enabled, expected) => {
+    const extension = setup('token', expected);
+
+    await extension.commands.get('grok-cli-imagine:tool')?.handler(argument, extension.context);
+
+    expect(extension.getActiveTools()).toEqual(expected);
+    expect(loadImagineConfig()).toEqual({ config: { enabled } });
+    expect(extension.setActiveTools).not.toHaveBeenCalled();
+  });
+
+  it('reports persisted and active state without mutation', async () => {
+    const extension = setup('token', ['read']);
+    saveImagineConfig({ enabled: true });
+
+    await extension.commands.get('grok-cli-imagine:tool')?.handler('status', extension.context);
+
+    expect(extension.notify).toHaveBeenLastCalledWith(
+      'image_gen persisted: on; active: off',
+      'info',
+    );
+    expect(extension.setActiveTools).not.toHaveBeenCalled();
+    expect(loadImagineConfig()).toEqual({ config: { enabled: true } });
+  });
+
+  it('rejects invalid arguments without changing config or tools', async () => {
+    const extension = setup('token', ['read', 'custom']);
+    await extension.commands.get('grok-cli-imagine:tool')?.handler('all', extension.context);
+    expect(extension.notify).toHaveBeenLastCalledWith(
+      'Usage: /grok-cli-imagine:tool [on|off|status]',
+      'error',
+    );
+    expect(extension.getActiveTools()).toEqual(['read', 'custom']);
+    expect(extension.setActiveTools).not.toHaveBeenCalled();
+    expect(loadImagineConfig()).toEqual({ config: { enabled: true } });
+  });
+
+  it('leaves active tools unchanged when persistence fails', async () => {
+    const extension = setup('token', ['read', 'custom', 'image_gen']);
+    writeFileSync(join(extension.home, '.pi'), 'not a directory');
+
+    await extension.commands.get('grok-cli-imagine:tool')?.handler('off', extension.context);
+
+    expect(extension.getActiveTools()).toEqual(['read', 'custom', 'image_gen']);
+    expect(extension.setActiveTools).not.toHaveBeenCalled();
+    expect(extension.notify.mock.calls.at(-1)?.[0]).toContain('Could not save image_gen setting:');
+    expect(extension.notify.mock.calls.at(-1)?.[1]).toBe('error');
   });
 });

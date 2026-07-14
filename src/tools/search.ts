@@ -1,133 +1,76 @@
-import { execFile } from 'node:child_process';
-import { statSync } from 'node:fs';
-import { basename, relative, resolve } from 'node:path';
-import { promisify } from 'node:util';
 import { Type } from '@earendil-works/pi-ai';
-import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import {
-  execWithRgFallback,
-  globToRegExp,
-  hasRipgrep,
-  listFilesRecursive,
-  MAX_OUTPUT_BYTES,
-  normalizePath,
-  numberDetail,
-  recordFrom,
-  renderResultText,
-  renderRunning,
-  stringFrom,
-  text,
-  toolError,
-  truncateChars,
-  truncateLines,
-} from './rendering.js';
+  createFindToolDefinition,
+  createGrepToolDefinition,
+  type ExtensionAPI,
+  type ExtensionContext,
+  type GrepToolInput,
+} from '@earendil-works/pi-coding-agent';
+import { executeGlob, normalizeGlobArgs } from './glob.js';
+import { nativeRenderContext, recordFrom, stringFrom, text } from './rendering.js';
 
-const execFileAsync = promisify(execFile);
-
-type GrepArgs = { pattern: string; path?: string; include?: string };
-type GlobArgs = { pattern: string; path?: string };
-
-function modifiedTimeMs(file: string) {
-  try {
-    return statSync(file).mtimeMs;
-  } catch {
-    return 0;
-  }
-}
-
-export function sortByModifiedNewest(files: string[]) {
-  return files.sort((a, b) => {
-    const delta = modifiedTimeMs(b) - modifiedTimeMs(a);
-    if (delta !== 0) return delta;
-    return a.localeCompare(b);
-  });
+function normalizeGrepArgs(value: unknown): GrepToolInput {
+  const input = recordFrom(value);
+  return {
+    pattern: stringFrom(input?.pattern) ?? stringFrom(input?.query) ?? '',
+    path: stringFrom(input?.path),
+    glob: stringFrom(input?.glob) ?? stringFrom(input?.include) ?? stringFrom(input?.glob_filter),
+    ignoreCase:
+      typeof input?.ignoreCase === 'boolean'
+        ? input.ignoreCase
+        : typeof input?.ignore_case === 'boolean'
+          ? input.ignore_case
+          : undefined,
+    literal: typeof input?.literal === 'boolean' ? input.literal : undefined,
+    context: typeof input?.context === 'number' ? input.context : undefined,
+    limit: typeof input?.limit === 'number' ? input.limit : undefined,
+  };
 }
 
 export function registerSearchTools(pi: ExtensionAPI) {
-  const GrepParams = Type.Object({
-    pattern: Type.String({
-      description: 'Regex pattern to search for in file contents',
-    }),
-    path: Type.Optional(
-      Type.String({
-        description: 'Directory or file to search. Defaults to current working directory.',
-      }),
-    ),
-    include: Type.Optional(
-      Type.String({
-        description: 'Glob pattern to filter which files are searched (e.g. *.ts, **/*.md)',
-      }),
-    ),
-  });
-
+  const nativeGrep = createGrepToolDefinition(process.cwd());
   pi.registerTool({
+    ...nativeGrep,
     name: 'Grep',
     label: 'Grep',
-    description:
-      'Search for a regex pattern in file contents. Returns matching lines with file path and line number. Use the include parameter to filter by file type.',
-    parameters: GrepParams,
-
-    prepareArguments(args) {
-      const input = recordFrom(args);
-      if (!input) return args as GrepArgs;
-      return {
-        ...input,
-        include: stringFrom(input.include) ?? stringFrom(input.glob_filter),
-      } as GrepArgs;
-    },
-
-    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-      const searchPath = resolve(ctx.cwd, params.path ?? '.');
-
-      try {
-        const rgArgs = ['-n', '-H', '--no-heading', '--color=never'];
-        if (params.include) rgArgs.push('--glob', params.include);
-        rgArgs.push('--', params.pattern, searchPath);
-
-        const stdout = await execWithRgFallback(rgArgs, {
-          cwd: ctx.cwd,
-          signal,
-          pattern: params.pattern,
-          searchPath,
-          include: params.include,
-        });
-
-        const lines = stdout.trim().split('\n').filter(Boolean);
-        if (lines.length === 0) {
-          return {
-            content: [{ type: 'text', text: 'No matches found' }],
-            details: { matchCount: 0 },
-          };
-        }
-
-        return {
-          content: [{ type: 'text', text: truncateChars(truncateLines(lines)) }],
-          details: { matchCount: lines.length },
-        };
-      } catch (error: unknown) {
-        return toolError(error, 'Grep', { matchCount: 0 });
-      }
-    },
-    renderCall(args, theme) {
-      const path = args.path ? theme.fg('muted', ` in ${args.path}`) : '';
-      const include = args.include ? theme.fg('dim', ` [${args.include}]`) : '';
-      return text(
-        theme.fg('toolTitle', theme.bold('Grep ')) +
-          theme.fg('accent', `"${args.pattern}"`) +
-          path +
-          include,
+    prepareArguments: normalizeGrepArgs,
+    async execute(
+      toolCallId: string,
+      params: GrepToolInput,
+      signal: AbortSignal | undefined,
+      onUpdate: Parameters<typeof nativeGrep.execute>[3],
+      ctx: ExtensionContext,
+    ) {
+      return createGrepToolDefinition(ctx.cwd).execute(
+        toolCallId,
+        normalizeGrepArgs(params),
+        signal,
+        onUpdate,
+        ctx,
       );
     },
-    renderResult(result, { expanded, isPartial }, theme) {
-      const running = renderRunning(isPartial);
-      if (running) return running;
-      const matchCount = numberDetail(result, 'matchCount');
-      return renderResultText(
+    renderCall(
+      args: unknown,
+      theme: Parameters<NonNullable<typeof nativeGrep.renderCall>>[1],
+      context: Parameters<NonNullable<typeof nativeGrep.renderCall>>[2],
+    ) {
+      const normalized = normalizeGrepArgs(args);
+      if (!nativeGrep.renderCall) return text('');
+      return nativeGrep.renderCall(normalized, theme, nativeRenderContext(context, normalized));
+    },
+    renderResult(
+      result: Parameters<NonNullable<typeof nativeGrep.renderResult>>[0],
+      options: Parameters<NonNullable<typeof nativeGrep.renderResult>>[1],
+      theme: Parameters<NonNullable<typeof nativeGrep.renderResult>>[2],
+      context: Parameters<NonNullable<typeof nativeGrep.renderResult>>[3],
+    ) {
+      const normalized = normalizeGrepArgs(context.args);
+      if (!nativeGrep.renderResult) return text('');
+      return nativeGrep.renderResult(
         result,
-        expanded,
-        matchCount === 0
-          ? theme.fg('dim', 'No matches')
-          : theme.fg('muted', `${matchCount} match(es)`),
+        options,
+        theme,
+        nativeRenderContext(context, normalized),
       );
     },
   });
@@ -141,83 +84,41 @@ export function registerSearchTools(pi: ExtensionAPI) {
         description: 'Directory to search within. Defaults to current working directory.',
       }),
     ),
+    limit: Type.Optional(Type.Number({ description: 'Maximum number of files to return.' })),
   });
-
+  const nativeFind = createFindToolDefinition(process.cwd());
   pi.registerTool({
     name: 'Glob',
     label: 'Glob',
     description:
-      'Find files matching a glob pattern. Returns a list of matching file paths sorted by modification time (newest first).',
+      'Find files matching a glob pattern, newest first. Returns workspace-relative or absolute paths.',
     parameters: GlobParams,
-
-    prepareArguments(args) {
-      const input = recordFrom(args);
-      if (!input) return args as GlobArgs;
-      return {
-        ...input,
-        pattern: stringFrom(input.pattern) ?? stringFrom(input.glob_pattern),
-      } as GlobArgs;
-    },
-
+    prepareArguments: normalizeGlobArgs,
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-      const searchPath = resolve(ctx.cwd, params.path ?? '.');
-
-      try {
-        let files: string[];
-
-        if (await hasRipgrep()) {
-          const result = await execFileAsync(
-            'rg',
-            ['--files', '--color=never', '--glob', params.pattern, searchPath],
-            { cwd: ctx.cwd, maxBuffer: MAX_OUTPUT_BYTES, signal },
-          );
-          files = result.stdout.trim().split('\n').filter(Boolean);
-        } else {
-          const normalizedPattern = normalizePath(params.pattern);
-          const matcher = globToRegExp(normalizedPattern);
-          const matchesFile = normalizedPattern.includes('/')
-            ? (file: string) => matcher.test(normalizePath(relative(ctx.cwd, file)))
-            : (file: string) => matcher.test(basename(file));
-          files = (await listFilesRecursive(searchPath, signal)).filter(matchesFile);
-        }
-        files = sortByModifiedNewest(files);
-
-        if (files.length === 0) {
-          return {
-            content: [{ type: 'text', text: 'No files found' }],
-            details: { fileCount: 0 },
-          };
-        }
-
-        return {
-          content: [{ type: 'text', text: truncateChars(truncateLines(files)) }],
-          details: { fileCount: files.length },
-        };
-      } catch (error: unknown) {
-        const err = error as { code?: unknown; stderr?: string };
-        if (err.code === 1 && !err.stderr) {
-          return {
-            content: [{ type: 'text', text: 'No files found' }],
-            details: { fileCount: 0 },
-          };
-        }
-        return toolError(error, 'Glob', { fileCount: 0 });
-      }
+      return executeGlob(normalizeGlobArgs(params), ctx.cwd, signal);
     },
-    renderCall(args, theme) {
-      const path = args.path ? theme.fg('muted', ` in ${args.path}`) : '';
-      return text(
-        theme.fg('toolTitle', theme.bold('Glob ')) + theme.fg('accent', args.pattern) + path,
-      );
+    renderCall(
+      args: unknown,
+      theme: Parameters<NonNullable<typeof nativeFind.renderCall>>[1],
+      context: Parameters<NonNullable<typeof nativeFind.renderCall>>[2],
+    ) {
+      const normalized = normalizeGlobArgs(args);
+      if (!nativeFind.renderCall) return text('');
+      return nativeFind.renderCall(normalized, theme, nativeRenderContext(context, normalized));
     },
-    renderResult(result, { expanded, isPartial }, theme) {
-      const running = renderRunning(isPartial);
-      if (running) return running;
-      const fileCount = numberDetail(result, 'fileCount');
-      return renderResultText(
+    renderResult(
+      result: Parameters<NonNullable<typeof nativeFind.renderResult>>[0],
+      options: Parameters<NonNullable<typeof nativeFind.renderResult>>[1],
+      theme: Parameters<NonNullable<typeof nativeFind.renderResult>>[2],
+      context: Parameters<NonNullable<typeof nativeFind.renderResult>>[3],
+    ) {
+      const normalized = normalizeGlobArgs(context.args);
+      if (!nativeFind.renderResult) return text('');
+      return nativeFind.renderResult(
         result,
-        expanded,
-        fileCount === 0 ? theme.fg('dim', 'No files') : theme.fg('muted', `${fileCount} file(s)`),
+        options,
+        theme,
+        nativeRenderContext(context, normalized),
       );
     },
   });

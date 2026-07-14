@@ -12,27 +12,15 @@ import { registerImagineFeature } from '../imagine/register.js';
 import { type GrokCliModelConfig, resolveModels } from '../models/catalog.js';
 import { sanitizePayload } from '../payload/sanitize.js';
 import { registerGrokTools } from '../tools/register.js';
-import {
-  bindLivePiWebAccess,
-  ensureWebSearchDelegate,
-  isPiWebAccessInstalled,
-} from '../tools/webSearchDelegate.js';
+import { bindLivePiWebAccess, ensureWebSearchDelegate } from '../tools/webSearchDelegate.js';
 import { registerVisionFeature } from '../vision/register.js';
 import { grokCliModelHeaders } from './stream.js';
-import { syncGrokTools } from './toolScope.js';
+import { handoffGrokTools, restoreGrokTools, syncGrokTools } from './toolScope.js';
 import { registerUsageCommand } from './usage.js';
 
 export default function registerGrokCli(pi: ExtensionAPI) {
   const baseUrl = getBaseUrl();
   const models = resolveModels();
-
-  pi.on('model_select', (event) => {
-    syncGrokTools(pi, event.model.provider);
-  });
-
-  pi.on('before_agent_start', (_event, ctx) => {
-    syncGrokTools(pi, ctx.model?.provider);
-  });
 
   const oauthProvider = {
     name: 'Grok CLI',
@@ -83,10 +71,25 @@ export default function registerGrokCli(pi: ExtensionAPI) {
     oauth: oauthProvider,
   });
 
-  registerGrokTools(pi);
+  const { webSearchRegistered } = registerGrokTools(pi);
   registerImagineFeature(pi);
 
-  pi.on('session_start', async (_event, ctx) => {
+  const syncTools = (model: { provider: string; id: string } | undefined, captureDelete = false) =>
+    syncGrokTools(pi, model, { captureDelete, webSearchRegistered });
+
+  pi.on('model_select', (event) => {
+    syncTools(event.model);
+  });
+
+  pi.on('before_agent_start', (_event, ctx) => {
+    syncTools(ctx.model);
+  });
+
+  pi.on('session_start', async (event, ctx) => {
+    if (event.reason === 'new' || event.reason === 'resume' || event.reason === 'fork') {
+      restoreGrokTools(pi, ctx.sessionManager.getSessionFile());
+    }
+    syncTools(ctx.model, true);
     if (process.env.GROK_CLI_OAUTH_TOKEN) {
       ctx.ui.notify(
         '[pi-grok-cli] Using GROK_CLI_OAUTH_TOKEN bypass — no auto-refresh, no model discovery',
@@ -94,10 +97,18 @@ export default function registerGrokCli(pi: ExtensionAPI) {
       );
     }
 
-    if (!isPiWebAccessInstalled()) return;
+    if (!webSearchRegistered) return;
 
     bindLivePiWebAccess(pi);
     await ensureWebSearchDelegate(pi);
+    syncTools(ctx.model);
+  });
+
+  pi.on('session_shutdown', (event) => {
+    syncTools(undefined);
+    if (event.reason === 'new' || event.reason === 'resume' || event.reason === 'fork') {
+      handoffGrokTools(pi, event.targetSessionFile);
+    }
   });
 
   pi.on('before_provider_headers', (event, ctx) => {

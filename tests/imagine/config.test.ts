@@ -12,24 +12,25 @@ import { useTempHome } from '../vision/helpers.js';
 const setupHome = useTempHome();
 
 describe('Imagine configuration', () => {
-  it('defaults to grok-cli scope', () => {
+  it('defaults to enabled', () => {
     setupHome();
     expect(loadImagineConfig()).toEqual({ config: DEFAULT_IMAGINE_CONFIG });
+    expect(DEFAULT_IMAGINE_CONFIG).toEqual({ enabled: true });
   });
 
-  it('persists all-provider scope', () => {
+  it.each([true, false])('persists enabled: %s across loads', (enabled) => {
     setupHome();
-    saveImagineConfig({ scope: 'all' });
-    expect(loadImagineConfig()).toEqual({ config: { scope: 'all' } });
+    saveImagineConfig({ enabled });
+    expect(loadImagineConfig()).toEqual({ config: { enabled } });
   });
 
   it('falls back safely for invalid configuration', () => {
     setupHome();
     mkdirSync(dirname(getImagineConfigPath()), { recursive: true });
-    writeFileSync(getImagineConfigPath(), JSON.stringify({ scope: 'somewhere' }));
+    writeFileSync(getImagineConfigPath(), JSON.stringify({ enabled: 'yes' }));
     const loaded = loadImagineConfig();
     expect(loaded.config).toEqual(DEFAULT_IMAGINE_CONFIG);
-    expect(loaded.warning).toContain('scope must be');
+    expect(loaded.warning).toContain('enabled must be a boolean');
   });
 
   it('falls back safely for malformed JSON', () => {
