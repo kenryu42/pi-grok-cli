@@ -467,6 +467,33 @@ describe('file tools', () => {
       ),
     ).toBe('');
   });
+
+  it('renders StrReplace removed and added diff lines with the theme diff colors', () => {
+    const theme = {
+      bold: (text: string) => text,
+      bg: (_name: string, text: string) => text,
+      fg: (name: string, text: string) => `<${name}>${text}</${name}>`,
+      inverse: (text: string) => text,
+    };
+
+    const rendered = renderToolResult(
+      collectTools(registerFileTools).get('StrReplace'),
+      {
+        content: [{ type: 'text', text: 'replaced' }],
+        details: {
+          replacements: 1,
+          diff: ['--- notes.txt', '+++ notes.txt', '@@ -1 +1 @@', '-old', '+new'].join('\n'),
+        },
+      },
+      { expanded: true, isPartial: false },
+      {},
+      {},
+      theme,
+    );
+
+    expect(rendered).toContain('<toolDiffRemoved>-old</toolDiffRemoved>');
+    expect(rendered).toContain('<toolDiffAdded>+new</toolDiffAdded>');
+  });
 });
 
 describe('native file adapter contracts', () => {

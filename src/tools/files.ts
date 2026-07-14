@@ -146,7 +146,9 @@ function renderReplacementResult(
   result: { content: { type: string; text?: string }[]; details: unknown },
   expanded: boolean,
   isPartial: boolean,
-  theme: { fg: (name: 'dim' | 'muted', text: string) => string },
+  theme: {
+    fg: (name: 'dim' | 'muted' | 'toolDiffAdded' | 'toolDiffRemoved', text: string) => string;
+  },
 ) {
   const replacements = numberDetail(result, 'replacements');
   const summary =
@@ -158,8 +160,21 @@ function renderReplacementResult(
   const diff = stringFrom(details?.diff);
   if (!diff) return text(summary);
   const limit = expanded ? STR_REPLACE_DIFF_MAX_CHARS : STR_REPLACE_COLLAPSED_DIFF_MAX_CHARS;
-  if (diff.length <= limit) return text(`${summary}\n${diff}`);
-  return text(`${summary}\n${diff.slice(0, limit)}\n[Diff preview truncated]`);
+  const preview = diff.length <= limit ? diff : `${diff.slice(0, limit)}\n[Diff preview truncated]`;
+  return text(
+    `${summary}\n${preview
+      .split('\n')
+      .map((line) => {
+        if (line.startsWith('+') && !line.startsWith('+++')) {
+          return theme.fg('toolDiffAdded', line);
+        }
+        if (line.startsWith('-') && !line.startsWith('---')) {
+          return theme.fg('toolDiffRemoved', line);
+        }
+        return line;
+      })
+      .join('\n')}`,
+  );
 }
 
 function renderPathToolCall(toolName: string, filePath: string, theme: ToolTheme) {

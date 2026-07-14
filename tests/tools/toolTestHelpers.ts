@@ -185,12 +185,13 @@ export function renderToolResult(
   state = { expanded: false, isPartial: false },
   args: Record<string, unknown> = {},
   options: RenderContextOptions = {},
+  theme: ToolTheme = plainTheme,
 ) {
   if (!tool?.renderResult) {
     throw new Error('Tool result renderer was not registered');
   }
   return renderText(
-    tool.renderResult(result, state, plainTheme, renderContext(args, state, result, options)),
+    tool.renderResult(result, state, theme, renderContext(args, state, result, options)),
   );
 }
 
