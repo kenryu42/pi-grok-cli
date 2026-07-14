@@ -64,19 +64,6 @@ pi update npm:pi-grok-cli
 pi remove npm:pi-grok-cli
 ```
 
-## Why pi-grok-cli?
-
-pi already includes an xAI provider for the public API. This extension targets the backend used by Grok Build instead.
-
-| | pi's built-in `xai` provider | `pi-grok-cli` |
-| --- | --- | --- |
-| Authentication | `XAI_API_KEY` | xAI OAuth or an externally supplied OAuth token |
-| Endpoint | `api.x.ai` | `cli-chat-proxy.grok.com` |
-| Usage accounting | Public API billing | Grok account allowance and credits |
-| Best fit | Public API access and API-key billing | Grok Build model access, Composer 2.5, and Cursor-tool compatibility |
-
-The Grok Build and public API catalogs can overlap. Use the provider that matches the account access and billing model you intend to use.
-
 ## Models
 
 The table describes metadata bundled with this extension, not live model discovery. Context limits are the values registered in pi; xAI may enforce different limits or change availability without notice.
@@ -107,22 +94,26 @@ When the official Grok Build has a verified `~/.grok/auth.json` entry for the bu
 
 For automation that already has an OAuth access token, `GROK_CLI_OAUTH_TOKEN` skips interactive login. Direct tokens are not refreshed; replace them before they expire.
 
-### Cursor tool compatibility
+### Model-scoped Cursor compatibility
 
-Grok models are trained to call Cursor-style tools. pi-grok-cli registers compatible names and argument normalization so those calls work in pi.
+Pi's native tool vocabulary remains the default. Cursor-compatible tool names are exposed only when one of these exact models is selected:
 
-| Category | Tools |
+- `grok-cli/grok-build`
+- `grok-cli/grok-composer-2.5-fast`
+
+These models were trained to call Cursor-style tools. While either model is active, pi-grok-cli replaces the corresponding native tool names with the compatibility names the model expects. It does not expose both vocabularies at once or add unrelated tools to the model's active tool set.
+
+Every other Grok CLI model, including Grok 4.5, as well as unknown future models and other providers, continues to see Pi's native tool names. The compatibility shims do not pollute their available tools.
+
+| Compatibility tools | Implementation |
 | --- | --- |
-| File | `Read`, `Write`, `StrReplace`, `Edit`, `Delete`, `LS` |
-| Search | `Grep`, `Glob` |
-| Terminal | `Shell` |
-| Web | `WebSearch` when [pi-web-access](https://www.npmjs.com/package/pi-web-access) is installed |
+| `Read`, `Write`, `Edit`, `Grep`, `LS`, `Shell` | Delegate execution and rendering to Pi's native tools. |
+| `StrReplace` | Preserves Cursor's literal replace-all behavior. |
+| `Glob` | Preserves Cursor's newest-first path ordering. |
+| `Delete` | Provides the file-deletion operation expected by these models. |
+| `WebSearch` | Optionally replaces an active `web_search` tool when pi-web-access is installed. |
 
-The shims activate only for the exact `grok-cli/grok-build` and `grok-cli/grok-composer-2.5-fast` selections. A normal pi launch enables the complete compatibility set, including `Grep`, `Glob`, and `LS`; no `--tools` flag or separate tool-selector extension is required. Other Grok CLI models, unknown future model IDs, and other providers keep native pi tool names.
-
-Pi filters `--tools` and `--exclude-tools` by exact name. When using those advanced restrictions, include the compatibility form or both forms—for example, `--tools read,Read,grep,Grep` or `--exclude-tools grep,Grep`. `--no-tools` disables both vocabularies.
-
-`Read`, `Write`, `Edit`, `Grep`, `LS`, and `Shell` delegate execution and rendering to pi's native tools. `StrReplace` keeps literal replace-all behavior, while `Glob` keeps newest-first Cursor ordering and returns workspace-relative or absolute paths suitable for a follow-up `Read`.
+Pi applies `--tools` and `--exclude-tools` by exact name. When restricting one of the two compatible models, include its compatibility names—for example, `--tools Read,Grep` or `--exclude-tools Grep`. `--no-tools` disables all tools.
 
 Install optional web search support with:
 
@@ -130,7 +121,7 @@ Install optional web search support with:
 pi install npm:pi-web-access@^0.13.0
 ```
 
-pi-web-access 0.13.0 or newer is required. On the two Cursor-compatible models, `WebSearch` delegates through pi-web-access's public extension entry and replaces an already-enabled native `web_search` capability. Modern Grok CLI models and other providers retain native `web_search`. Restart pi or run `/reload` after installing it in an existing session.
+pi-web-access 0.13.0 or newer is required. `WebSearch` is used only by the two Cursor-compatible models. Other models and providers retain the native `web_search` tool. Restart Pi or run `/reload` after installing it in an existing session.
 
 ### Vision routing for text-only models
 
@@ -229,7 +220,6 @@ Only point the base URL overrides at an endpoint you trust. The configured endpo
 | grok-cli is missing from `/model` | Confirm the package appears in `pi list`, run `/login`, choose **Grok CLI**, then restart pi or run `/reload`. |
 | Browser login cannot bind or complete | Paste the complete callback URL into pi when prompted. If xAI displays a one-time code instead, paste it into the same prompt. Otherwise, use device-code login or adjust `PI_GROK_CLI_CALLBACK_HOST` and `PI_GROK_CLI_CALLBACK_PORT`. Never post the callback URL or authorization code publicly. |
 | Authentication returns HTTP 401 or 403 | Run `/login` again and confirm the account can access the selected model. Replace an expired `GROK_CLI_OAUTH_TOKEN` if using the bypass. |
-| Inference returns HTTP 426 | Update the extension with `pi update npm:pi-grok-cli`; the Grok Build endpoint enforces client-version headers. |
 | A listed model is unavailable | Availability can differ by account or region, and the catalog is bundled rather than discovered live. Try another model or update the extension. |
 | `/grok-cli-usage` reports a billing refresh failure | Retry later. A billing-endpoint failure does not necessarily mean inference is unavailable. |
 | `WebSearch` is unavailable | Install pi-web-access, then restart pi or run `/reload`. |
