@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Api, Model, OAuthCredentials, OAuthProviderInterface } from '@earendil-works/pi-ai';
@@ -643,6 +643,38 @@ describe('Grok CLI provider registration', () => {
 });
 
 describe('Grok CLI tool scoping', () => {
+  it('migrates legacy configuration when the extension loads', async () => {
+    const piDir = join(process.env.HOME as string, '.pi');
+    writeFileSync(join(piDir, 'grok-cli-imagine.json'), JSON.stringify({ enabled: false }));
+
+    await setupExtension();
+
+    expect(existsSync(join(piDir, 'grok-cli.json'))).toBe(true);
+    expect(existsSync(join(piDir, 'grok-cli-imagine.json'))).toBe(false);
+  });
+
+  it('reports a migration failure only once at session start', async () => {
+    const piDir = join(process.env.HOME as string, '.pi');
+    writeFileSync(join(piDir, 'grok-cli-imagine.json'), '{ nope');
+    const extension = await setupExtension();
+    const context = contextForModel('grok-cli', 'grok-build');
+
+    await extension.handlers.get('session_start')?.(
+      { type: 'session_start', reason: 'startup' },
+      context,
+    );
+    await extension.handlers.get('session_start')?.(
+      { type: 'session_start', reason: 'startup' },
+      context,
+    );
+
+    expect(context.ui.notify).toHaveBeenCalledTimes(1);
+    expect(context.ui.notify).toHaveBeenCalledWith(
+      expect.stringContaining('Could not read'),
+      'warning',
+    );
+  });
+
   it('registers the Grok/Cursor-native tool shims', async () => {
     const extension = await setupExtension();
 

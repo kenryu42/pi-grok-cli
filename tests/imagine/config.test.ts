@@ -1,12 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import {
-  DEFAULT_IMAGINE_CONFIG,
-  getImagineConfigPath,
-  loadImagineConfig,
-  saveImagineConfig,
-} from '../../src/imagine/config.js';
+import { DEFAULT_CONFIG, getConfigPath, loadConfig, saveConfig } from '../../src/config.js';
 import { useTempHome } from '../vision/helpers.js';
 
 const setupHome = useTempHome();
@@ -14,29 +9,28 @@ const setupHome = useTempHome();
 describe('Imagine configuration', () => {
   it('defaults to enabled', () => {
     setupHome();
-    expect(loadImagineConfig()).toEqual({ config: DEFAULT_IMAGINE_CONFIG });
-    expect(DEFAULT_IMAGINE_CONFIG).toEqual({ enabled: true });
+    expect(loadConfig().config.imagine).toEqual({ enabled: true });
   });
 
   it.each([true, false])('persists enabled: %s across loads', (enabled) => {
     setupHome();
-    saveImagineConfig({ enabled });
-    expect(loadImagineConfig()).toEqual({ config: { enabled } });
+    saveConfig({ ...DEFAULT_CONFIG, imagine: { enabled } });
+    expect(loadConfig().config.imagine).toEqual({ enabled });
   });
 
   it('falls back safely for invalid configuration', () => {
     setupHome();
-    mkdirSync(dirname(getImagineConfigPath()), { recursive: true });
-    writeFileSync(getImagineConfigPath(), JSON.stringify({ enabled: 'yes' }));
-    const loaded = loadImagineConfig();
-    expect(loaded.config).toEqual(DEFAULT_IMAGINE_CONFIG);
-    expect(loaded.warning).toContain('enabled must be a boolean');
+    mkdirSync(dirname(getConfigPath()), { recursive: true });
+    writeFileSync(getConfigPath(), JSON.stringify({ version: 1, imagine: { enabled: 'yes' } }));
+    const loaded = loadConfig();
+    expect(loaded.config.imagine).toEqual(DEFAULT_CONFIG.imagine);
+    expect(loaded.warning).toContain('imagine.enabled must be true or false');
   });
 
   it('falls back safely for malformed JSON', () => {
     const home = setupHome();
     mkdirSync(join(home, '.pi'), { recursive: true });
-    writeFileSync(getImagineConfigPath(), '{ nope');
-    expect(loadImagineConfig().warning).toContain('Could not read');
+    writeFileSync(getConfigPath(), '{ nope');
+    expect(loadConfig().warning).toContain('Could not read');
   });
 });

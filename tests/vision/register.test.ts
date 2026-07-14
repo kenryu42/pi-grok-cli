@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { describe, expect, it, vi } from 'vitest';
+import { DEFAULT_CONFIG, loadConfig, saveConfig } from '../../src/config.js';
 import { useTempHome } from './helpers.js';
 
 const setupHome = useTempHome();
@@ -57,20 +58,21 @@ describe('registerVisionFeature', () => {
   it('on/off persist enabled state to the config file', async () => {
     setupHome();
     const { commands } = await setupExtension();
+    saveConfig({ ...DEFAULT_CONFIG, imagine: { enabled: false } });
 
     await commands.get('grok-cli-vision:off')?.handler([], { ui: { notify: vi.fn() } });
-    const { loadConfig } = await import('../../src/vision/config.js');
-    expect(loadConfig().config.enabled).toBe(false);
+    expect(loadConfig().config.vision.enabled).toBe(false);
+    expect(loadConfig().config.imagine.enabled).toBe(false);
 
     await commands.get('grok-cli-vision:on')?.handler([], { ui: { notify: vi.fn() } });
-    expect(loadConfig().config.enabled).toBe(true);
+    expect(loadConfig().config.vision.enabled).toBe(true);
+    expect(loadConfig().config.imagine.enabled).toBe(false);
   });
 
   it('clears cached vision descriptions and notifies the user', async () => {
     setupHome();
     const { commands } = await setupExtension();
-    const { getCachePath } = await import('../../src/vision/config.js');
-    const { loadCache, saveCache } = await import('../../src/vision/cache.js');
+    const { getCachePath, loadCache, saveCache } = await import('../../src/vision/cache.js');
     const notify = vi.fn();
     saveCache(
       {

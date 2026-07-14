@@ -1,0 +1,397 @@
+import { randomUUID } from 'node:crypto';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { homedir } from 'node:os';
+import { basename, dirname, join } from 'node:path';
+import { resolveModels } from './models/catalog.js';
+
+export const CONFIG_VERSION = 1 as const;
+export const DEFAULT_DESCRIBE_MODEL = 'grok-build';
+export const DEFAULT_MAX_IMAGES = 4;
+export const DEFAULT_CACHE_MAX_ENTRIES = 100;
+
+export type ImagineConfig = { enabled: boolean };
+
+export interface VisionConfig {
+  enabled: boolean;
+  model: string;
+  maxImages: number;
+  cacheEnabled: boolean;
+  cacheMaxEntries: number;
+}
+
+export interface GrokCliConfig {
+  version: typeof CONFIG_VERSION;
+  imagine: ImagineConfig;
+  vision: VisionConfig;
+}
+
+export const DEFAULT_IMAGINE_CONFIG: ImagineConfig = { enabled: true };
+
+export const DEFAULT_VISION_CONFIG: VisionConfig = {
+  enabled: true,
+  model: DEFAULT_DESCRIBE_MODEL,
+  maxImages: DEFAULT_MAX_IMAGES,
+  cacheEnabled: true,
+  cacheMaxEntries: DEFAULT_CACHE_MAX_ENTRIES,
+};
+
+export const DEFAULT_CONFIG: GrokCliConfig = {
+  version: CONFIG_VERSION,
+  imagine: DEFAULT_IMAGINE_CONFIG,
+  vision: DEFAULT_VISION_CONFIG,
+};
+
+export interface LoadedConfig {
+  config: GrokCliConfig;
+  warning?: string;
+}
+
+type ParsedConfig = LoadedConfig & { valid: boolean };
+
+type LegacyConfig = LoadedConfig & {
+  existingPaths: string[];
+  recognizedPaths: string[];
+};
+
+const homePath = () => process.env.HOME || homedir();
+
+export const getConfigPath = () => join(homePath(), '.pi', 'grok-cli.json');
+export const getLegacyImagineConfigPath = () => join(homePath(), '.pi', 'grok-cli-imagine.json');
+export const getLegacyVisionConfigPath = () => join(homePath(), '.pi', 'grok-cli-vision.json');
+
+function defaultConfig(): GrokCliConfig {
+  return {
+    version: CONFIG_VERSION,
+    imagine: { ...DEFAULT_IMAGINE_CONFIG },
+    vision: { ...DEFAULT_VISION_CONFIG },
+  };
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function combineWarnings(warnings: (string | undefined)[]) {
+  const combined = warnings.filter((warning): warning is string => Boolean(warning));
+  return combined.length ? combined.join(' ') : undefined;
+}
+
+export function describableModels(): string[] {
+  return resolveModels()
+    .filter((model) => model.input.includes('image'))
+    .map((model) => model.id);
+}
+
+function normalizeImagineConfig(raw: unknown, warnings: string[]): ImagineConfig {
+  if (raw === undefined) return { ...DEFAULT_IMAGINE_CONFIG };
+  if (!isObject(raw)) {
+    warnings.push('imagine must be a JSON object. Using defaults.');
+    return { ...DEFAULT_IMAGINE_CONFIG };
+  }
+  if (typeof raw.enabled === 'boolean') return { enabled: raw.enabled };
+  if (raw.enabled !== undefined) {
+    warnings.push('imagine.enabled must be true or false. Using enabled=true.');
+  }
+  return { ...DEFAULT_IMAGINE_CONFIG };
+}
+
+export function normalizeVisionConfig(
+  raw: Partial<VisionConfig>,
+  warnings: string[] = [],
+): VisionConfig {
+  const config: VisionConfig = { ...DEFAULT_VISION_CONFIG };
+
+  if ('enabled' in raw) {
+    if (typeof raw.enabled === 'boolean') {
+      config.enabled = raw.enabled;
+    } else if (raw.enabled !== undefined) {
+      warnings.push('enabled must be true or false. Using enabled=true.');
+    }
+  }
+
+  if ('model' in raw) {
+    if (typeof raw.model === 'string' && describableModels().includes(raw.model)) {
+      config.model = raw.model;
+    } else if (raw.model !== undefined) {
+      warnings.push(
+        `Unknown model "${String(raw.model)}". Available: ${describableModels().join(', ')}. Using ${DEFAULT_DESCRIBE_MODEL}.`,
+      );
+    }
+  }
+
+  if ('maxImages' in raw) {
+    if (
+      typeof raw.maxImages === 'number' &&
+      Number.isFinite(raw.maxImages) &&
+      raw.maxImages > 0 &&
+      Number.isInteger(raw.maxImages)
+    ) {
+      config.maxImages = raw.maxImages;
+    } else if (raw.maxImages !== undefined) {
+      warnings.push(`maxImages must be a positive integer. Using ${DEFAULT_MAX_IMAGES}.`);
+    }
+  }
+
+  if ('cacheEnabled' in raw) {
+    if (typeof raw.cacheEnabled === 'boolean') {
+      config.cacheEnabled = raw.cacheEnabled;
+    } else if (raw.cacheEnabled !== undefined) {
+      warnings.push('cacheEnabled must be true or false. Using cacheEnabled=true.');
+    }
+  }
+
+  if ('cacheMaxEntries' in raw) {
+    if (
+      typeof raw.cacheMaxEntries === 'number' &&
+      Number.isInteger(raw.cacheMaxEntries) &&
+      raw.cacheMaxEntries > 0
+    ) {
+      config.cacheMaxEntries = raw.cacheMaxEntries;
+    } else if (raw.cacheMaxEntries !== undefined) {
+      warnings.push(
+        `cacheMaxEntries must be a positive integer. Using ${DEFAULT_CACHE_MAX_ENTRIES}.`,
+      );
+    }
+  }
+
+  return config;
+}
+
+function normalizeConfig(
+  raw: { imagine?: unknown; vision?: unknown },
+  warnings: string[],
+): GrokCliConfig {
+  const vision = raw.vision;
+  if (vision !== undefined && !isObject(vision)) {
+    warnings.push('vision must be a JSON object. Using defaults.');
+  }
+  return {
+    version: CONFIG_VERSION,
+    imagine: normalizeImagineConfig(raw.imagine, warnings),
+    vision: normalizeVisionConfig(isObject(vision) ? vision : {}, warnings),
+  };
+}
+
+function parseConfig(configPath: string): ParsedConfig {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(configPath, 'utf8'));
+    if (!isObject(parsed)) {
+      return {
+        config: defaultConfig(),
+        valid: false,
+        warning: `Config ${configPath} must be a JSON object. Using legacy settings or defaults.`,
+      };
+    }
+    if (parsed.version !== CONFIG_VERSION) {
+      return {
+        config: defaultConfig(),
+        valid: false,
+        warning: `Unsupported config version ${String(parsed.version)} in ${configPath}. Using legacy settings or defaults.`,
+      };
+    }
+    const warnings: string[] = [];
+    return {
+      config: normalizeConfig(parsed, warnings),
+      valid: true,
+      warning: warnings.length ? `Invalid ${configPath}: ${warnings.join(' ')}` : undefined,
+    };
+  } catch (error) {
+    return {
+      config: defaultConfig(),
+      valid: false,
+      warning: `Could not read ${configPath}: ${errorMessage(error)}. Using legacy settings or defaults.`,
+    };
+  }
+}
+
+function parseLegacyImagine(configPath: string): {
+  config: ImagineConfig;
+  recognized: boolean;
+  warning?: string;
+} {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(configPath, 'utf8'));
+    if (!isObject(parsed)) {
+      return {
+        config: { ...DEFAULT_IMAGINE_CONFIG },
+        recognized: false,
+        warning: `Legacy config ${configPath} must be a JSON object.`,
+      };
+    }
+    if ('enabled' in parsed) {
+      if (typeof parsed.enabled === 'boolean') {
+        return { config: { enabled: parsed.enabled }, recognized: true };
+      }
+      return {
+        config: { ...DEFAULT_IMAGINE_CONFIG },
+        recognized: false,
+        warning: `Invalid ${configPath}: enabled must be a boolean.`,
+      };
+    }
+    if (parsed.scope === 'grok-cli' || parsed.scope === 'all') {
+      return { config: { enabled: true }, recognized: true };
+    }
+    return {
+      config: { ...DEFAULT_IMAGINE_CONFIG },
+      recognized: false,
+      warning: `Invalid ${configPath}: expected enabled or a recognized scope.`,
+    };
+  } catch (error) {
+    return {
+      config: { ...DEFAULT_IMAGINE_CONFIG },
+      recognized: false,
+      warning: `Could not read ${configPath}: ${errorMessage(error)}.`,
+    };
+  }
+}
+
+function parseLegacyVision(configPath: string): {
+  config: VisionConfig;
+  recognized: boolean;
+  warning?: string;
+} {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(configPath, 'utf8'));
+    if (!isObject(parsed)) {
+      return {
+        config: { ...DEFAULT_VISION_CONFIG },
+        recognized: false,
+        warning: `Legacy config ${configPath} must be a JSON object.`,
+      };
+    }
+    const warnings: string[] = [];
+    const config = normalizeVisionConfig(parsed, warnings);
+    return {
+      config,
+      recognized: warnings.length === 0,
+      warning: warnings.length ? `Invalid ${configPath}: ${warnings.join(' ')}` : undefined,
+    };
+  } catch (error) {
+    return {
+      config: { ...DEFAULT_VISION_CONFIG },
+      recognized: false,
+      warning: `Could not read ${configPath}: ${errorMessage(error)}.`,
+    };
+  }
+}
+
+function loadLegacyConfig(): LegacyConfig {
+  const imaginePath = getLegacyImagineConfigPath();
+  const visionPath = getLegacyVisionConfigPath();
+  const imagine = existsSync(imaginePath) ? parseLegacyImagine(imaginePath) : undefined;
+  const vision = existsSync(visionPath) ? parseLegacyVision(visionPath) : undefined;
+  return {
+    config: {
+      version: CONFIG_VERSION,
+      imagine: imagine?.config ?? { ...DEFAULT_IMAGINE_CONFIG },
+      vision: vision?.config ?? { ...DEFAULT_VISION_CONFIG },
+    },
+    existingPaths: [imagine ? imaginePath : undefined, vision ? visionPath : undefined].filter(
+      (path): path is string => Boolean(path),
+    ),
+    recognizedPaths: [
+      imagine?.recognized ? imaginePath : undefined,
+      vision?.recognized ? visionPath : undefined,
+    ].filter((path): path is string => Boolean(path)),
+    warning: combineWarnings([imagine?.warning, vision?.warning]),
+  };
+}
+
+export function loadConfig(): LoadedConfig {
+  if (!existsSync(getConfigPath())) {
+    const legacy = loadLegacyConfig();
+    return legacy.warning
+      ? { config: legacy.config, warning: legacy.warning }
+      : { config: legacy.config };
+  }
+  const loaded = parseConfig(getConfigPath());
+  if (loaded.valid) {
+    return loaded.warning
+      ? { config: loaded.config, warning: loaded.warning }
+      : { config: loaded.config };
+  }
+  const legacy = loadLegacyConfig();
+  return {
+    config: legacy.config,
+    warning: combineWarnings([loaded.warning, legacy.warning]),
+  };
+}
+
+export function saveConfig(config: GrokCliConfig) {
+  const configPath = getConfigPath();
+  const tempPath = join(
+    dirname(configPath),
+    `.${basename(configPath)}.${process.pid}.${randomUUID()}.tmp`,
+  );
+  mkdirSync(dirname(configPath), { recursive: true });
+  try {
+    writeFileSync(tempPath, `${JSON.stringify(normalizeConfig(config, []), null, 2)}\n`, {
+      encoding: 'utf8',
+      flag: 'wx',
+    });
+    renameSync(tempPath, configPath);
+  } catch (error) {
+    rmSync(tempPath, { force: true });
+    throw error;
+  }
+}
+
+function removeLegacyConfigs(paths: string[]) {
+  return combineWarnings(
+    paths.flatMap((path) => {
+      try {
+        unlinkSync(path);
+        return [];
+      } catch (error) {
+        return [`Could not remove legacy config ${path}: ${errorMessage(error)}.`];
+      }
+    }),
+  );
+}
+
+export function migrateLegacyConfig(): { warning?: string } {
+  const legacy = loadLegacyConfig();
+  if (existsSync(getConfigPath())) {
+    const loaded = parseConfig(getConfigPath());
+    if (!loaded.valid) {
+      return { warning: combineWarnings([loaded.warning, legacy.warning]) };
+    }
+    const cleanupWarning = removeLegacyConfigs(legacy.recognizedPaths);
+    const warning = combineWarnings([loaded.warning, legacy.warning, cleanupWarning]);
+    return warning ? { warning } : {};
+  }
+  if (legacy.existingPaths.length === 0) return {};
+  if (legacy.recognizedPaths.length !== legacy.existingPaths.length) {
+    return { warning: legacy.warning };
+  }
+  try {
+    saveConfig(legacy.config);
+    const verified = parseConfig(getConfigPath());
+    if (!verified.valid || JSON.stringify(verified.config) !== JSON.stringify(legacy.config)) {
+      return {
+        warning: combineWarnings([
+          verified.warning,
+          `Could not verify migrated config ${getConfigPath()}. Legacy files were preserved.`,
+        ]),
+      };
+    }
+  } catch (error) {
+    return {
+      warning: `Could not migrate legacy configuration to ${getConfigPath()}: ${errorMessage(error)}. Legacy files were preserved.`,
+    };
+  }
+  const warning = removeLegacyConfigs(legacy.recognizedPaths);
+  return warning ? { warning } : {};
+}

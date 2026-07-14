@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
-import { loadImagineConfig } from '../imagine/config.js';
+import { loadConfig } from '../config.js';
 
 export const SHIM_MODEL_IDS = new Set(['grok-build', 'grok-composer-2.5-fast']);
 
@@ -121,7 +121,7 @@ export function syncGrokTools(
     legacy: false,
   };
   const legacy = isLegacyModel(model);
-  const imagineEnabled = options.imagineEnabled ?? loadImagineConfig().config.enabled;
+  const imagineEnabled = options.imagineEnabled ?? loadConfig().config.imagine.enabled;
   const groups = options.webSearchRegistered ? [...TOOL_GROUPS, WEB_SEARCH_GROUP] : TOOL_GROUPS;
   const registeredTools = new Set(pi.getAllTools().map((tool) => tool.name));
   const registeredCompatibilityTools = groups.flatMap((group) =>

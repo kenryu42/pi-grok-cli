@@ -2,7 +2,7 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { describe, expect, it, vi } from 'vitest';
-import { loadImagineConfig, saveImagineConfig } from '../../src/imagine/config.js';
+import { DEFAULT_CONFIG, loadConfig, saveConfig } from '../../src/config.js';
 import { registerImagineFeature } from '../../src/imagine/register.js';
 import { useTempHome } from '../vision/helpers.js';
 import { imagineDependencies } from './helpers.js';
@@ -176,12 +176,12 @@ describe('registerImagineFeature command', () => {
     const extension = setup('token', ['read', 'custom', 'image_gen']);
     await extension.commands.get('grok-cli-imagine:tool')?.handler('', extension.context);
     expect(extension.getActiveTools()).toEqual(['read', 'custom']);
-    expect(loadImagineConfig()).toEqual({ config: { enabled: false } });
+    expect(loadConfig().config.imagine).toEqual({ enabled: false });
     expect(extension.notify).toHaveBeenLastCalledWith('image_gen: off', 'info');
 
     await extension.commands.get('grok-cli-imagine:tool')?.handler('', extension.context);
     expect(extension.getActiveTools()).toEqual(['read', 'custom', 'image_gen']);
-    expect(loadImagineConfig()).toEqual({ config: { enabled: true } });
+    expect(loadConfig().config.imagine).toEqual({ enabled: true });
     expect(extension.notify).toHaveBeenLastCalledWith('image_gen: on', 'info');
   });
 
@@ -194,13 +194,13 @@ describe('registerImagineFeature command', () => {
     await extension.commands.get('grok-cli-imagine:tool')?.handler(argument, extension.context);
 
     expect(extension.getActiveTools()).toEqual(expected);
-    expect(loadImagineConfig()).toEqual({ config: { enabled } });
+    expect(loadConfig().config.imagine).toEqual({ enabled });
     expect(extension.setActiveTools).not.toHaveBeenCalled();
   });
 
   it('reports persisted and active state without mutation', async () => {
     const extension = setup('token', ['read']);
-    saveImagineConfig({ enabled: true });
+    saveConfig({ ...DEFAULT_CONFIG, imagine: { enabled: true } });
 
     await extension.commands.get('grok-cli-imagine:tool')?.handler('status', extension.context);
 
@@ -209,7 +209,7 @@ describe('registerImagineFeature command', () => {
       'info',
     );
     expect(extension.setActiveTools).not.toHaveBeenCalled();
-    expect(loadImagineConfig()).toEqual({ config: { enabled: true } });
+    expect(loadConfig().config.imagine).toEqual({ enabled: true });
   });
 
   it('rejects invalid arguments without changing config or tools', async () => {
@@ -221,7 +221,23 @@ describe('registerImagineFeature command', () => {
     );
     expect(extension.getActiveTools()).toEqual(['read', 'custom']);
     expect(extension.setActiveTools).not.toHaveBeenCalled();
-    expect(loadImagineConfig()).toEqual({ config: { enabled: true } });
+    expect(loadConfig().config.imagine).toEqual({ enabled: true });
+  });
+
+  it('preserves vision settings when image_gen persistence changes', async () => {
+    const extension = setup('token', ['read', 'image_gen']);
+    saveConfig({
+      ...DEFAULT_CONFIG,
+      vision: { ...DEFAULT_CONFIG.vision, enabled: false, maxImages: 2 },
+    });
+
+    await extension.commands.get('grok-cli-imagine:tool')?.handler('off', extension.context);
+
+    expect(loadConfig().config).toEqual({
+      ...DEFAULT_CONFIG,
+      imagine: { enabled: false },
+      vision: { ...DEFAULT_CONFIG.vision, enabled: false, maxImages: 2 },
+    });
   });
 
   it('leaves active tools unchanged when persistence fails', async () => {

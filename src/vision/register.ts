@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
-import { cacheStats, clearCache } from './cache.js';
-import { getCachePath, getConfigPath, loadConfig, saveConfig } from './config.js';
+import { getConfigPath, loadConfig, saveConfig } from '../config.js';
+import { cacheStats, clearCache, getCachePath } from './cache.js';
 import { handleReadResult } from './describe.js';
 
 export function registerVisionFeature(pi: ExtensionAPI) {
@@ -9,7 +9,8 @@ export function registerVisionFeature(pi: ExtensionAPI) {
   pi.registerCommand('grok-cli-vision:status', {
     description: 'Show grok-cli-vision status, describer model, and cache stats',
     handler: async (_args, ctx) => {
-      const { config, warning } = loadConfig();
+      const loaded = loadConfig();
+      const config = loaded.config.vision;
       const stats = cacheStats(getCachePath());
       ctx.ui.notify(
         [
@@ -19,11 +20,11 @@ export function registerVisionFeature(pi: ExtensionAPI) {
           `cache: ${config.cacheEnabled ? 'ON' : 'OFF'} (${stats.entries} entries, max ${config.cacheMaxEntries})`,
           `config: ${getConfigPath()}`,
           `cache file: ${stats.path}`,
-          warning ? `warning: ${warning}` : undefined,
+          loaded.warning ? `warning: ${loaded.warning}` : undefined,
         ]
           .filter(Boolean)
           .join('\n'),
-        warning ? 'warning' : 'info',
+        loaded.warning ? 'warning' : 'info',
       );
     },
   });
@@ -31,17 +32,23 @@ export function registerVisionFeature(pi: ExtensionAPI) {
   pi.registerCommand('grok-cli-vision:on', {
     description: 'Enable grok-cli-vision image routing',
     handler: async (_args, ctx) => {
-      const { config } = loadConfig();
-      saveConfig({ ...config, enabled: true });
-      ctx.ui.notify(`grok-cli-vision: ON (${config.model})`, 'info');
+      const loaded = loadConfig();
+      saveConfig({
+        ...loaded.config,
+        vision: { ...loaded.config.vision, enabled: true },
+      });
+      ctx.ui.notify(`grok-cli-vision: ON (${loaded.config.vision.model})`, 'info');
     },
   });
 
   pi.registerCommand('grok-cli-vision:off', {
     description: 'Disable grok-cli-vision image routing',
     handler: async (_args, ctx) => {
-      const { config } = loadConfig();
-      saveConfig({ ...config, enabled: false });
+      const loaded = loadConfig();
+      saveConfig({
+        ...loaded.config,
+        vision: { ...loaded.config.vision, enabled: false },
+      });
       ctx.ui.notify('grok-cli-vision: OFF', 'info');
     },
   });

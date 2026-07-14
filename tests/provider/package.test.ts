@@ -49,9 +49,9 @@ describe('repository layout', () => {
       'src/auth/config.ts',
       'src/auth/grokCredentials.ts',
       'src/auth/oauth.ts',
+      'src/config.ts',
       'src/imagine/aspect.ts',
       'src/imagine/auth.ts',
-      'src/imagine/config.ts',
       'src/imagine/generate.ts',
       'src/imagine/parseArgs.ts',
       'src/imagine/preview.ts',
@@ -78,7 +78,6 @@ describe('repository layout', () => {
       'src/tools/webSearch.ts',
       'src/tools/webSearchDelegate.ts',
       'src/vision/cache.ts',
-      'src/vision/config.ts',
       'src/vision/describe.ts',
       'src/vision/register.ts',
     ]);

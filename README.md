@@ -158,7 +158,7 @@ Kitty-protocol terminals use internal PNG preview sidecars under `images/.previe
 
 The model-callable `image_gen` tool is enabled by default across providers and is independent of Cursor tool compatibility. Its result contains paths only, so generated image bytes are not added to subsequent model context.
 
-Use `/grok-cli-imagine:tool [on|off|status]` to enable, disable, or inspect `image_gen`. Calling it without an argument toggles the tool. The setting persists in `~/.pi/grok-cli-imagine.json`, applies immediately across providers, and does not disable the `/grok-cli-imagine <prompt>` command.
+Use `/grok-cli-imagine:tool [on|off|status]` to enable, disable, or inspect `image_gen`. Calling it without an argument toggles the tool. The setting persists in `~/.pi/grok-cli.json`, applies immediately across providers, and does not disable the `/grok-cli-imagine <prompt>` command.
 
 ### Usage tracking
 
@@ -177,19 +177,25 @@ Use `/grok-cli-imagine:tool [on|off|status]` to enable, disable, or inspect `ima
 
 ## Configuration
 
-### Vision routing
-
-Vision configuration is read from `~/.pi/grok-cli-vision.json`. The file is created after the first setting change and defaults to:
+All extension settings are read from `~/.pi/grok-cli.json`. The file is created after the first setting change and defaults to:
 
 ```json
 {
-  "enabled": true,
-  "model": "grok-build",
-  "maxImages": 4,
-  "cacheEnabled": true,
-  "cacheMaxEntries": 100
+  "version": 1,
+  "imagine": {
+    "enabled": true
+  },
+  "vision": {
+    "enabled": true,
+    "model": "grok-build",
+    "maxImages": 4,
+    "cacheEnabled": true,
+    "cacheMaxEntries": 100
+  }
 }
 ```
+
+When the extension loads, recognized `~/.pi/grok-cli-imagine.json` and `~/.pi/grok-cli-vision.json` files are migrated into the consolidated file. Legacy files are removed only after the new file is atomically written and verified. Invalid or unreadable files are preserved and reported as warnings. The vision cache remains separate at `~/.pi/grok-cli-vision-cache.json`.
 
 `model` must identify an image-capable model. Invalid values are reported and replaced with safe defaults. Manual changes apply on the next image read.
 
@@ -237,6 +243,7 @@ Like every pi extension, pi-grok-cli runs with the user's system permissions. It
 | --- | --- |
 | OAuth authorization and token exchange | `auth.x.ai`; credentials are stored by pi in `~/.pi/agent/auth.json` by default. |
 | Optional official Grok Build credential reuse | Read from the verified entry in `~/.grok/auth.json`; pi-grok-cli does not write this file. |
+| Extension configuration | Local settings in `~/.pi/grok-cli.json`. |
 | Prompts, model context, tool definitions, and tool results | `cli-chat-proxy.grok.com`. |
 | Account usage requests | The Grok Build proxy's `/billing` endpoints. |
 | Images handled by vision routing | Sent to the configured Grok describer model through the proxy. |

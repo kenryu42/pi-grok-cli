@@ -1,7 +1,7 @@
 import { isAbsolute, resolve } from 'node:path';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { Container, Text } from '@earendil-works/pi-tui';
-import { loadImagineConfig, saveImagineConfig } from './config.js';
+import { loadConfig, saveConfig } from '../config.js';
 import { parseImagineArgs } from './parseArgs.js';
 import { imagePreview } from './preview.js';
 import { registerImageGenTool } from './tool.js';
@@ -108,19 +108,19 @@ export function registerImagineFeature(
         ctx.ui.notify('Usage: /grok-cli-imagine:tool [on|off|status]', 'error');
         return;
       }
-      const loaded = loadImagineConfig();
+      const loaded = loadConfig();
       if (loaded.warning) ctx.ui.notify(loaded.warning, 'warning');
       if (argument === 'status') {
         ctx.ui.notify(
-          `image_gen persisted: ${loaded.config.enabled ? 'on' : 'off'}; active: ${pi.getActiveTools().includes('image_gen') ? 'on' : 'off'}`,
+          `image_gen persisted: ${loaded.config.imagine.enabled ? 'on' : 'off'}; active: ${pi.getActiveTools().includes('image_gen') ? 'on' : 'off'}`,
           'info',
         );
         return;
       }
 
-      const enabled = argument ? argument === 'on' : !loaded.config.enabled;
+      const enabled = argument ? argument === 'on' : !loaded.config.imagine.enabled;
       try {
-        saveImagineConfig({ enabled });
+        saveConfig({ ...loaded.config, imagine: { enabled } });
       } catch (error) {
         ctx.ui.notify(
           `Could not save image_gen setting: ${error instanceof Error ? error.message : String(error)}`,

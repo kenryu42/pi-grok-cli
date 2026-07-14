@@ -1,8 +1,10 @@
 import type { ImageContent, TextContent } from '@earendil-works/pi-ai';
 import type { ExtensionContext, ToolResultEvent } from '@earendil-works/pi-coding-agent';
 import { getBaseUrl } from '../auth/oauth.js';
+import { loadConfig, type VisionConfig } from '../config.js';
 import { grokCliModelHeaders } from '../provider/stream.js';
 import {
+  getCachePath,
   loadCache,
   makeCacheEntry,
   makeCacheKey,
@@ -10,11 +12,14 @@ import {
   updateCache,
   type VisionImage,
 } from './cache.js';
-import { DEFAULT_PROMPT, getCachePath, loadConfig, type VisionConfig } from './config.js';
 
 const REQUEST_TIMEOUT_MS = 30_000;
 const MAX_ATTEMPTS = 3;
 const RETRY_BASE_DELAY_MS = 500;
+const DEFAULT_PROMPT =
+  'Describe this image in detail. If it contains text, transcribe it exactly. ' +
+  'If it shows code, reproduce it. If it shows a UI, describe layout and elements. ' +
+  'Respond in the same language as any text in the image.';
 
 function asObject(value: unknown): Record<string, unknown> | undefined {
   return typeof value === 'object' && value !== null
@@ -306,7 +311,8 @@ export async function handleReadResult(
   const modelInput = ctx.model?.input;
   if (!modelInput || modelInput.includes('image')) return;
 
-  const { config, warning } = loadConfig();
+  const loaded = loadConfig();
+  const config = loaded.config.vision;
   if (config.enabled === false) return;
 
   const images = event.content.filter((c): c is ImageContent => c.type === 'image');
@@ -336,7 +342,7 @@ export async function handleReadResult(
     };
   }
 
-  if (warning) ctx.ui.notify(`[grok-cli-vision] ${warning}`, 'warning');
+  if (loaded.warning) ctx.ui.notify(`[grok-cli-vision] ${loaded.warning}`, 'warning');
 
   const cachePath = getCachePath();
   const descriptions = await Promise.all(

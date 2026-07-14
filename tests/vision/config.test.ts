@@ -5,24 +5,24 @@ import {
   DEFAULT_CONFIG,
   describableModels,
   loadConfig,
-  normalizeConfig,
+  normalizeVisionConfig,
   saveConfig,
-} from '../../src/vision/config.js';
+} from '../../src/config.js';
 import { useTempHome } from './helpers.js';
 
 const setupHome = useTempHome();
 
 function writeConfig(config: unknown) {
-  const configPath = join(process.env.HOME as string, '.pi', 'grok-cli-vision.json');
+  const configPath = join(process.env.HOME as string, '.pi', 'grok-cli.json');
   mkdirSync(dirname(configPath), { recursive: true });
-  writeFileSync(configPath, JSON.stringify(config));
+  writeFileSync(configPath, JSON.stringify({ version: 1, vision: config }));
 }
 
 describe('grok-cli-vision config', () => {
   it('returns defaults when no config file exists', () => {
     setupHome();
     const { config, warning } = loadConfig();
-    expect(config).toEqual(DEFAULT_CONFIG);
+    expect(config.vision).toEqual(DEFAULT_CONFIG.vision);
     expect(warning).toBeUndefined();
   });
 
@@ -37,7 +37,7 @@ describe('grok-cli-vision config', () => {
     });
 
     const { config, warning } = loadConfig();
-    expect(config).toEqual({
+    expect(config.vision).toEqual({
       enabled: false,
       model: 'grok-build',
       maxImages: 2,
@@ -58,7 +58,7 @@ describe('grok-cli-vision config', () => {
     });
 
     const { config, warning } = loadConfig();
-    expect(config).toEqual(DEFAULT_CONFIG);
+    expect(config.vision).toEqual(DEFAULT_CONFIG.vision);
     expect(warning).toMatch(/enabled must be true or false/);
     expect(warning).toMatch(/Unknown model "not-a-model"/);
     expect(warning).toMatch(/maxImages must be a positive integer/);
@@ -67,8 +67,10 @@ describe('grok-cli-vision config', () => {
   });
 
   it('warns when the config file is not a JSON object', () => {
-    setupHome();
-    writeConfig([1, 2, 3]);
+    const home = setupHome();
+    const configPath = join(home, '.pi', 'grok-cli.json');
+    mkdirSync(dirname(configPath), { recursive: true });
+    writeFileSync(configPath, JSON.stringify([1, 2, 3]));
 
     const { config, warning } = loadConfig();
     expect(config).toEqual(DEFAULT_CONFIG);
@@ -77,7 +79,7 @@ describe('grok-cli-vision config', () => {
 
   it('warns on invalid JSON', () => {
     setupHome();
-    const configPath = join(process.env.HOME as string, '.pi', 'grok-cli-vision.json');
+    const configPath = join(process.env.HOME as string, '.pi', 'grok-cli.json');
     mkdirSync(dirname(configPath), { recursive: true });
     writeFileSync(configPath, '{ not json');
 
@@ -88,17 +90,20 @@ describe('grok-cli-vision config', () => {
 
   it('saveConfig writes normalized values and round-trips through loadConfig', () => {
     setupHome();
-    saveConfig({ ...DEFAULT_CONFIG, enabled: false, maxImages: 3 });
+    saveConfig({
+      ...DEFAULT_CONFIG,
+      vision: { ...DEFAULT_CONFIG.vision, enabled: false, maxImages: 3 },
+    });
 
     const { config } = loadConfig();
-    expect(config.enabled).toBe(false);
-    expect(config.maxImages).toBe(3);
-    expect(config.model).toBe('grok-build');
+    expect(config.vision.enabled).toBe(false);
+    expect(config.vision.maxImages).toBe(3);
+    expect(config.vision.model).toBe('grok-build');
   });
 
   it('normalizeConfig rejects a describer model that lacks image input', () => {
     const warnings: string[] = [];
-    const config = normalizeConfig({ model: 'grok-composer-2.5-fast' }, warnings);
+    const config = normalizeVisionConfig({ model: 'grok-composer-2.5-fast' }, warnings);
     expect(config.model).toBe('grok-build');
     expect(warnings.join(' ')).toMatch(/Unknown model "grok-composer-2.5-fast"/);
   });

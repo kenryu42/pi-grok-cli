@@ -1,6 +1,10 @@
 import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { homedir } from 'node:os';
+import { dirname, join } from 'node:path';
+
+export const getCachePath = () =>
+  join(process.env.HOME || homedir(), '.pi', 'grok-cli-vision-cache.json');
 
 export interface CacheEntry {
   createdAt: string;

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { ExtensionContext, ToolResultEvent } from '@earendil-works/pi-coding-agent';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { DEFAULT_CONFIG } from '../../src/config.js';
 import { handleReadResult } from '../../src/vision/describe.js';
 
 const BASE_URL = 'https://cli-chat-proxy.grok.com/v1';
@@ -108,9 +109,15 @@ describe('handleReadResult — no-op cases', () => {
   });
 
   it('does nothing when routing is disabled via config', async () => {
-    const configPath = join(process.env.HOME as string, '.pi', 'grok-cli-vision.json');
+    const configPath = join(process.env.HOME as string, '.pi', 'grok-cli.json');
     mkdirSync(join(process.env.HOME as string, '.pi'), { recursive: true });
-    writeFileSync(configPath, JSON.stringify({ enabled: false }));
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        ...DEFAULT_CONFIG,
+        vision: { ...DEFAULT_CONFIG.vision, enabled: false },
+      }),
+    );
 
     const result = await handleReadResult(readEvent([imageBlock()]), buildCtx());
     expect(result).toBeUndefined();
@@ -378,9 +385,15 @@ describe('handleReadResult — response shapes and resilience', () => {
   });
 
   it('caps described images at maxImages and notes the skipped remainder', async () => {
-    const configPath = join(process.env.HOME as string, '.pi', 'grok-cli-vision.json');
+    const configPath = join(process.env.HOME as string, '.pi', 'grok-cli.json');
     mkdirSync(dirname(configPath), { recursive: true });
-    writeFileSync(configPath, JSON.stringify({ maxImages: 1 }));
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        ...DEFAULT_CONFIG,
+        vision: { ...DEFAULT_CONFIG.vision, maxImages: 1 },
+      }),
+    );
 
     const result = await handleReadResult(
       readEvent([

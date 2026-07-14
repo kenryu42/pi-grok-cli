@@ -8,6 +8,7 @@ import type {
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import * as oauth from '../auth/oauth.js';
 import { getBaseUrl, type XaiOAuthCredentials } from '../auth/oauth.js';
+import { migrateLegacyConfig } from '../config.js';
 import { registerImagineFeature } from '../imagine/register.js';
 import { type GrokCliModelConfig, resolveModels } from '../models/catalog.js';
 import { sanitizePayload } from '../payload/sanitize.js';
@@ -19,6 +20,7 @@ import { handoffGrokTools, restoreGrokTools, syncGrokTools } from './toolScope.j
 import { registerUsageCommand } from './usage.js';
 
 export default function registerGrokCli(pi: ExtensionAPI) {
+  const migration = migrateLegacyConfig();
   const baseUrl = getBaseUrl();
   const models = resolveModels();
 
@@ -86,6 +88,10 @@ export default function registerGrokCli(pi: ExtensionAPI) {
   });
 
   pi.on('session_start', async (event, ctx) => {
+    if (migration.warning) {
+      ctx.ui.notify(`[pi-grok-cli] ${migration.warning}`, 'warning');
+      delete migration.warning;
+    }
     if (event.reason === 'new' || event.reason === 'resume' || event.reason === 'fork') {
       restoreGrokTools(pi, ctx.sessionManager.getSessionFile());
     }
