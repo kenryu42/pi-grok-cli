@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Only the latest published `pi-grok-cli` release receives security fixes. The current supported release is `0.3.4`; earlier releases are unsupported. Upgrade with:
+Only the latest published `pi-grok-cli` release receives security fixes; earlier releases are unsupported. Upgrade with:
 
 ```bash
 pi update npm:pi-grok-cli
