@@ -304,18 +304,42 @@ describe('Grok CLI status command', () => {
     );
   });
 
-  it('omits malformed weekly billing data while preserving monthly usage', async () => {
+  it('omits the weekly block when the reset timestamp is malformed', async () => {
     process.env.GROK_CLI_OAUTH_TOKEN = 'env-token';
     setupHome();
     globalThis.fetch = billingFetchMock(
       billingResponse(4000, 172, '2026-01-01T00:00:00+00:00'),
-      creditsResponse('invalid', 'not-a-date'),
+      creditsResponse(1.0, 'not-a-date'),
     );
     const notify = await runStatus(await setupExtension());
     const message = notify.mock.calls.at(-1)?.[0] as string;
 
     expect(message).toContain('172 / 4,000 used  4%');
     expect(message).not.toContain('Weekly');
+  });
+
+  it('shows 0% weekly usage when creditUsagePercent is omitted at fresh-period start', async () => {
+    process.env.GROK_CLI_OAUTH_TOKEN = 'env-token';
+    setupHome();
+    globalThis.fetch = billingFetchMock(
+      billingResponse(4000, 172, '2026-01-01T00:00:00+00:00'),
+      creditsResponse(undefined, '2026-07-14T00:19:56+00:00'),
+    );
+    const notify = await runStatus(await setupExtension());
+
+    expect(notify.mock.calls.at(-1)?.[0]).toBe(
+      [
+        '  Usage:',
+        '    Monthly',
+        '      Credits    172 / 4,000 used  4%',
+        '      Remaining  3,828 credits',
+        '      Reset      Dec 31, 19:00 EST America/New_York',
+        '',
+        '    Weekly',
+        '      Limit      0% used',
+        '      Reset      Jul 13, 20:19 EDT America/New_York',
+      ].join('\n'),
+    );
   });
 
   it('uses the registered provider token when no env token is set', async () => {

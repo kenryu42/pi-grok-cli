@@ -62,16 +62,16 @@ function parseWeeklyUsage(payload: unknown): WeeklyUsage | undefined {
     | Record<string, unknown>
     | undefined;
   if (currentPeriod?.type !== 'USAGE_PERIOD_TYPE_WEEKLY') return undefined;
-  const creditUsagePercent = (config as Record<string, unknown>).creditUsagePercent;
   const billingPeriodEnd = (config as Record<string, unknown>).billingPeriodEnd;
   if (
-    typeof creditUsagePercent !== 'number' ||
-    !Number.isFinite(creditUsagePercent) ||
     typeof billingPeriodEnd !== 'string' ||
     !Number.isFinite(new Date(billingPeriodEnd).getTime())
   ) {
     return undefined;
   }
+  // Endpoint omits creditUsagePercent at fresh-period start (0% usage); default to 0.
+  const raw = (config as Record<string, unknown>).creditUsagePercent;
+  const creditUsagePercent = typeof raw === 'number' && Number.isFinite(raw) ? raw : 0;
   return { creditUsagePercent, billingPeriodEnd };
 }
 
