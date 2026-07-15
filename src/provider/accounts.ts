@@ -3,13 +3,22 @@ import type {
   ExtensionCommandContext,
   ExtensionContext,
 } from '@earendil-works/pi-coding-agent';
+import { matchesKey, SelectList } from '@earendil-works/pi-tui';
 import {
+  findAvailableAccountNumber,
   type GrokCliAccount,
   type GrokCliConfig,
   hasTerminalControlCharacters,
   loadConfig,
   saveConfig,
 } from '../config.js';
+import { fetchBillingUsage } from './billing.js';
+import {
+  formatCachedQuota,
+  loadQuotaCache,
+  removeQuotaUsage,
+  saveQuotaUsage,
+} from './quotaCache.js';
 
 export const GROK_CLI_PROVIDER = 'grok-cli';
 export const DEFAULT_GROK_MODEL = 'grok-build';
@@ -94,15 +103,207 @@ function accountStatus(ctx: ExtensionContext, config: GrokCliConfig, provider: s
   return hasStoredAuth(ctx, provider) ? 'Logged in' : 'Login required';
 }
 
-function accountRows(ctx: ExtensionContext, config: GrokCliConfig) {
-  return config.accounts.items.map((account) => ({
-    account,
-    row: `${account.label} — ${accountStatus(ctx, config, account.provider)}`,
-  }));
+async function resolveAccountToken(ctx: ExtensionContext, provider: string) {
+  if (provider === GROK_CLI_PROVIDER && process.env.GROK_CLI_OAUTH_TOKEN) {
+    return process.env.GROK_CLI_OAUTH_TOKEN;
+  }
+  try {
+    return await ctx.modelRegistry.getApiKeyForProvider(provider);
+  } catch {
+    return undefined;
+  }
+}
+
+async function refreshAccountBatches(
+  accounts: GrokCliAccount[],
+  refresh: (account: GrokCliAccount) => Promise<void>,
+  signal: AbortSignal,
+): Promise<void> {
+  if (signal.aborted) return;
+  const batch = accounts.slice(0, 3);
+  if (!batch.length) return;
+  await Promise.all(batch.map(refresh));
+  await refreshAccountBatches(accounts.slice(3), refresh, signal);
+}
+
+function showAccountSelector(
+  ctx: ExtensionCommandContext,
+  config: GrokCliConfig,
+  mode: 'main' | 'manage',
+) {
+  return ctx.ui.custom<string | undefined>((tui, theme, _keybindings, done) => {
+    const accountItems = new Map(
+      config.accounts.items.map((account) => [
+        account.provider,
+        {
+          value: account.provider,
+          label: `${account.label} — ${accountStatus(ctx, config, account.provider)}`,
+          description: '',
+        },
+      ]),
+    );
+    const items = [
+      ...accountItems.values(),
+      ...(mode === 'main'
+        ? [
+            { value: 'action:add', label: '＋ Add account', description: '' },
+            { value: 'action:manage', label: 'Manage accounts', description: '' },
+          ]
+        : []),
+    ];
+    const selectList = new SelectList(
+      items,
+      Math.min(items.length, 10),
+      {
+        selectedPrefix: (text) => theme.fg('accent', text),
+        selectedText: (text) => theme.fg('accent', text),
+        description: (text) => theme.fg('dim', text),
+        scrollInfo: (text) => theme.fg('dim', text),
+        noMatch: (text) => theme.fg('warning', text),
+      },
+      { minPrimaryColumnWidth: 24, maxPrimaryColumnWidth: 40 },
+    );
+    const refreshingProviders = new Set<string>();
+    const failedProviders = new Set<string>();
+    const controller = new AbortController();
+    let cache = loadQuotaCache();
+    let status: string | undefined;
+    let refreshing = false;
+    let disposed = false;
+
+    const updateDescriptions = () => {
+      for (const account of config.accounts.items) {
+        const item = accountItems.get(account.provider);
+        if (!item) continue;
+        const cached = cache.accounts[account.provider];
+        item.description = !hasAccountAuth(ctx, account.provider)
+          ? 'Quota unavailable · login required'
+          : refreshingProviders.has(account.provider)
+            ? 'Refreshing…'
+            : failedProviders.has(account.provider)
+              ? cached
+                ? `${formatCachedQuota(cached)} · refresh failed`
+                : 'Refresh failed · press r to retry'
+              : cached
+                ? formatCachedQuota(cached)
+                : 'Quota not fetched · press r';
+      }
+      selectList.invalidate();
+    };
+
+    const close = (value: string | undefined) => {
+      if (disposed) return;
+      disposed = true;
+      controller.abort();
+      done(value);
+    };
+
+    const startRefresh = async () => {
+      if (refreshing || disposed) return;
+      const accounts = config.accounts.items.filter((account) =>
+        hasAccountAuth(ctx, account.provider),
+      );
+      if (!accounts.length) {
+        status = 'No logged-in accounts to refresh';
+        tui.requestRender();
+        return;
+      }
+      refreshing = true;
+      failedProviders.clear();
+      for (const account of accounts) refreshingProviders.add(account.provider);
+      status = `Refreshing quotas… 0/${accounts.length}`;
+      updateDescriptions();
+      tui.requestRender();
+      let completed = 0;
+      let updated = 0;
+      let failed = 0;
+
+      await refreshAccountBatches(
+        accounts,
+        async (account) => {
+          try {
+            const token = await resolveAccountToken(ctx, account.provider);
+            if (!token) throw new Error('authentication unavailable');
+            const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]);
+            await saveQuotaUsage(account.provider, await fetchBillingUsage(token, signal));
+            updated += 1;
+          } catch {
+            if (!controller.signal.aborted) {
+              failedProviders.add(account.provider);
+              failed += 1;
+            }
+          } finally {
+            refreshingProviders.delete(account.provider);
+            completed += 1;
+            cache = loadQuotaCache();
+            status = `Refreshing quotas… ${completed}/${accounts.length}`;
+            updateDescriptions();
+            if (!disposed) tui.requestRender();
+          }
+        },
+        controller.signal,
+      );
+
+      refreshing = false;
+      if (disposed) return;
+      status = `Updated ${updated} accounts; ${failed} failed`;
+      tui.requestRender();
+    };
+
+    selectList.onSelect = (item) => close(item.value);
+    selectList.onCancel = () => close(undefined);
+    updateDescriptions();
+
+    return {
+      render(width: number) {
+        return [
+          theme.fg(
+            'accent',
+            theme.bold(mode === 'main' ? 'Grok CLI accounts:' : 'Manage Grok CLI account:'),
+          ),
+          '',
+          ...selectList.render(width),
+          '',
+          ...(status ? [theme.fg('dim', status)] : []),
+          theme.fg(
+            'dim',
+            `r refresh quotas · enter select · esc ${mode === 'main' ? 'close' : 'back'}`,
+          ),
+        ];
+      },
+      invalidate() {
+        selectList.invalidate();
+      },
+      handleInput(data: string) {
+        if (data === 'r' || data === 'R' || matchesKey(data, 'r')) {
+          void startRefresh();
+          return;
+        }
+        selectList.handleInput(data);
+        if (!disposed) tui.requestRender();
+      },
+      dispose() {
+        if (disposed) return;
+        disposed = true;
+        controller.abort();
+      },
+    };
+  });
 }
 
 function prefillLogin(ctx: ExtensionContext, provider: string) {
   ctx.ui.setEditorText(`/login ${provider}`);
+}
+
+async function clearQuotaUsage(ctx: ExtensionContext, provider: string) {
+  try {
+    await removeQuotaUsage(provider);
+  } catch (error) {
+    ctx.ui.notify(
+      `Grok CLI quota cache cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
+      'warning',
+    );
+  }
 }
 
 async function switchAccount(
@@ -135,13 +336,20 @@ async function addAccount(
   ctx: ExtensionCommandContext,
   config: GrokCliConfig,
   registerAccount: RegisterAccount,
+  reservedProviders: Set<string>,
 ) {
-  const provider = `${GROK_CLI_PROVIDER}-${config.accounts.nextAccountNumber}`;
+  const accountNumber = findAvailableAccountNumber(
+    config.accounts.items.map((account) => account.provider),
+    reservedProviders,
+  );
+  const provider = `${GROK_CLI_PROVIDER}-${accountNumber}`;
   const label = await promptLabel(ctx, config, provider, 'Label this Grok CLI account:');
   if (!label) return;
   const account = { provider, label };
   config.accounts.items.push(account);
-  config.accounts.nextAccountNumber += 1;
+  config.accounts.nextAccountNumber = findAvailableAccountNumber(
+    config.accounts.items.map((candidate) => candidate.provider),
+  );
   try {
     saveConfig(config);
     registerAccount(account);
@@ -193,6 +401,7 @@ async function removeBaseAccount(
     account.label = 'Account 1';
     saveConfig(config);
     registerAccount(account);
+    await clearQuotaUsage(ctx, account.provider);
   } catch (error) {
     ctx.ui.notify(
       `Could not log out of Grok CLI: ${error instanceof Error ? error.message : String(error)}`,
@@ -250,6 +459,7 @@ async function removeAlias(
     );
     config.accounts.selectedProvider = fallback ?? GROK_CLI_PROVIDER;
     saveConfig(config);
+    await clearQuotaUsage(ctx, account.provider);
     if (ctx.model?.provider === account.provider && fallback === undefined) {
       deferredRemovals.add(account.provider);
       ctx.ui.notify(
@@ -339,30 +549,21 @@ export function registerAccountManagement(pi: ExtensionAPI, registerAccount: Reg
     description: 'Add, switch, rename, relogin, or remove Grok CLI accounts',
     handler: async (_args, ctx) => {
       const config = copyConfig();
-      const rows = accountRows(ctx, config);
-      const choice = await ctx.ui.select('Grok CLI accounts:', [
-        ...rows.map(({ row }) => row),
-        '＋ Add account',
-        'Manage accounts',
-      ]);
-      if (choice === '＋ Add account') {
-        await addAccount(ctx, config, registerAccount);
+      const choice = await showAccountSelector(ctx, config, 'main');
+      if (choice === 'action:add') {
+        await addAccount(ctx, config, registerAccount, deferredRemovals);
         return;
       }
-      if (choice === 'Manage accounts') {
+      if (choice === 'action:manage') {
         const latest = copyConfig();
-        const managementRows = accountRows(ctx, latest);
-        const selected = await ctx.ui.select(
-          'Manage Grok CLI account:',
-          managementRows.map(({ row }) => row),
-        );
-        const account = managementRows.find(({ row }) => row === selected)?.account;
+        const selected = await showAccountSelector(ctx, latest, 'manage');
+        const account = latest.accounts.items.find(({ provider }) => provider === selected);
         if (account) {
           await manageAccount(pi, ctx, latest, account, registerAccount, deferredRemovals);
         }
         return;
       }
-      const account = rows.find(({ row }) => row === choice)?.account;
+      const account = config.accounts.items.find(({ provider }) => provider === choice);
       if (!account) return;
       if (!hasAccountAuth(ctx, account.provider)) {
         prefillLogin(ctx, account.provider);

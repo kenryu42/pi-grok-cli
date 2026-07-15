@@ -1,18 +1,32 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { Api, Model, OAuthCredentials, OAuthProviderInterface } from '@earendil-works/pi-ai';
+import type {
+  Api,
+  Model,
+  OAuthCredentials,
+  OAuthLoginCallbacks,
+  OAuthProviderInterface,
+} from '@earendil-works/pi-ai';
 import type { ExtensionAPI, ProviderConfig } from '@earendil-works/pi-coding-agent';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_CONFIG, saveConfig } from '../../src/config.js';
+import { loadQuotaCache, saveQuotaUsage } from '../../src/provider/quotaCache.js';
+import { getQuotaCachePath } from '../../src/storage.js';
 import { GROK_SHIM_TOOL_NAMES } from '../../src/tools/register.js';
 import * as webSearchDelegate from '../../src/tools/webSearchDelegate.js';
 import { plainTheme as theme } from '../tools/toolTestHelpers.js';
 import { saveTestAccounts } from '../vision/helpers.js';
 
-const { mockPiWebAccessInstalled } = vi.hoisted(() => ({
+const { mockOauthLogin, mockPiWebAccessInstalled } = vi.hoisted(() => ({
+  mockOauthLogin: vi.fn(),
   mockPiWebAccessInstalled: vi.fn(() => true),
 }));
+
+vi.mock('../../src/auth/oauth.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/auth/oauth.js')>();
+  return { ...actual, login: mockOauthLogin };
+});
 
 vi.mock('../../src/tools/webSearchDelegate.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/tools/webSearchDelegate.js')>();
@@ -62,6 +76,12 @@ const originalToken = process.env.GROK_CLI_OAUTH_TOKEN;
 const tempDirs: string[] = [];
 
 beforeEach(() => {
+  mockOauthLogin.mockReset();
+  mockOauthLogin.mockResolvedValue({
+    access: 'new-access',
+    refresh: 'new-refresh',
+    expires: Date.now() + 60_000,
+  });
   process.env.TZ = 'America/New_York';
   const dir = mkdtempSync(join(tmpdir(), 'pi-grok-cli-home-'));
   mkdirSync(join(dir, '.pi'));
@@ -380,6 +400,8 @@ describe('Grok CLI status command', () => {
       authorization: 'Bearer provider-token',
     });
     expect(notify.mock.calls.at(-1)?.[0]).toContain('100 / 4,000 used  3%');
+    expect(loadQuotaCache().accounts['grok-cli-2']?.monthly.used).toBe(100);
+    expect(loadQuotaCache().accounts['grok-cli']).toBeUndefined();
   });
 
   it('does not fetch billing when no token is available', async () => {
@@ -399,28 +421,31 @@ describe('Grok CLI status command', () => {
     );
   });
 
-  it('does not persist billing usage to the global pi config directory', async () => {
+  it('persists successful billing usage in the selected provider cache', async () => {
     process.env.GROK_CLI_OAUTH_TOKEN = 'env-token';
-    const home = setupHome();
+    setupHome();
     globalThis.fetch = vi.fn<typeof fetch>(async () =>
       billingResponse(4000, 1421, '2026-07-01T00:00:00+00:00'),
     );
     const extension = await setupExtension();
     await runStatus(extension);
 
-    expect(existsSync(join(home, '.pi', 'grok-cli-quota.json'))).toBe(false);
+    expect(loadQuotaCache().accounts['grok-cli']).toMatchObject({
+      monthly: { monthlyLimit: 4000, used: 1421 },
+    });
+    expect(existsSync(getQuotaCachePath())).toBe(true);
   });
 
   it('rejects invalid billing payloads instead of caching NaN values', async () => {
     process.env.GROK_CLI_OAUTH_TOKEN = 'env-token';
-    const home = setupHome();
+    setupHome();
     globalThis.fetch = vi.fn<typeof fetch>(async () =>
       billingResponse('4000', 1421, '2026-07-01T00:00:00+00:00'),
     );
     const extension = await setupExtension();
     const notify = await runStatus(extension);
 
-    expect(existsSync(join(home, '.pi', 'grok-cli-quota.json'))).toBe(false);
+    expect(existsSync(getQuotaCachePath())).toBe(false);
     expect(notify.mock.calls.at(-1)?.[0]).toBe(
       [
         '  Usage:',
@@ -449,9 +474,20 @@ describe('Grok CLI status command', () => {
     );
   });
 
-  it('shows no billing data when refresh fails', async () => {
+  it('shows the selected provider cached billing data when refresh fails', async () => {
     process.env.GROK_CLI_OAUTH_TOKEN = 'env-token';
     setupHome();
+    await saveQuotaUsage(
+      'grok-cli',
+      {
+        monthly: {
+          monthlyLimit: 4000,
+          used: 1421,
+          billingPeriodEnd: '2026-07-01T00:00:00+00:00',
+        },
+      },
+      '2026-06-30T00:00:00.000Z',
+    );
     globalThis.fetch = vi.fn<typeof fetch>(async () => new Response('nope', { status: 500 }));
     const extension = await setupExtension();
     const notify = await runStatus(extension);
@@ -460,9 +496,8 @@ describe('Grok CLI status command', () => {
       'Grok CLI billing refresh failed: billing endpoint returned 500',
       'warning',
     );
-    expect(notify.mock.calls.at(-1)?.[0]).toContain(
-      'no billing data available — run /login grok-cli or set GROK_CLI_OAUTH_TOKEN',
-    );
+    expect(notify.mock.calls.at(-1)?.[0]).toContain('cached usage from');
+    expect(notify.mock.calls.at(-1)?.[0]).toContain('1,421 / 4,000 used');
   });
 
   it('warns when no Grok models are registered', async () => {
@@ -538,6 +573,22 @@ describe('Grok CLI status command', () => {
 });
 
 describe('Grok CLI provider registration', () => {
+  it('clears cached quota after a successful OAuth login', async () => {
+    await saveQuotaUsage('grok-cli', {
+      monthly: {
+        monthlyLimit: 2000,
+        used: 300,
+        billingPeriodEnd: '2026-08-01T00:00:00.000Z',
+      },
+    });
+    const extension = await setupExtension();
+
+    await extension.providers.get('grok-cli')?.oauth?.login({} as OAuthLoginCallbacks);
+
+    expect(mockOauthLogin).toHaveBeenCalledOnce();
+    expect(loadQuotaCache().accounts['grok-cli']).toBeUndefined();
+  });
+
   it('registers provider metadata and OAuth helpers', async () => {
     const extension = await setupExtension();
     const provider = extension.providers.get('grok-cli');
@@ -725,7 +776,7 @@ describe('Grok CLI tool scoping', () => {
 
     await setupExtension();
 
-    expect(existsSync(join(piDir, 'grok-cli.json'))).toBe(true);
+    expect(existsSync(join(piDir, 'grok-cli', 'config.json'))).toBe(true);
     expect(existsSync(join(piDir, 'grok-cli-imagine.json'))).toBe(false);
   });
 

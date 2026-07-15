@@ -3,7 +3,8 @@ import {
   type ExtensionAPI,
   type ExtensionContext,
 } from '@earendil-works/pi-coding-agent';
-import { describe, expect, it, vi } from 'vitest';
+import type { Component } from '@earendil-works/pi-tui';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_CONFIG, loadConfig, saveConfig } from '../../src/config.js';
 import {
   isGrokCliProvider,
@@ -11,9 +12,19 @@ import {
   resolveGrokProvider,
   resolveGrokToken,
 } from '../../src/provider/accounts.js';
+import { loadQuotaCache, saveQuotaUsage } from '../../src/provider/quotaCache.js';
 import { oauthCredential, TEST_ACCOUNTS, useTempHome } from '../vision/helpers.js';
 
 const setupHome = useTempHome();
+const originalFetch = globalThis.fetch;
+const originalToken = process.env.GROK_CLI_OAUTH_TOKEN;
+
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+  vi.restoreAllMocks();
+  if (originalToken === undefined) delete process.env.GROK_CLI_OAUTH_TOKEN;
+  else process.env.GROK_CLI_OAUTH_TOKEN = originalToken;
+});
 
 function configureAccounts(
   selectedProvider = 'grok-cli',
@@ -27,6 +38,30 @@ function configureAccounts(
   });
 }
 
+const authenticatedAccounts = () => ({
+  'grok-cli': oauthCredential('personal'),
+  'grok-cli-2': oauthCredential('work'),
+});
+
+const numberedAccounts = (count: number) =>
+  Array.from({ length: count }, (_value, index) => ({
+    provider: index === 0 ? 'grok-cli' : `grok-cli-${index + 1}`,
+    label: `Account ${index + 1}`,
+  }));
+
+function setupRefresh(
+  accounts: { provider: string }[],
+  action: (component: Component) => Promise<void>,
+) {
+  return setup({
+    auth: Object.fromEntries(
+      accounts.map((account) => [account.provider, oauthCredential(account.provider)]),
+    ),
+    preserveHome: true,
+    customActions: [action],
+  });
+}
+
 async function runAccountsCommand(extension: ReturnType<typeof setup>) {
   await extension.commands.get('grok-cli-accounts')?.handler('', extension.context);
 }
@@ -35,6 +70,7 @@ function setup(
   options: {
     auth?: Record<string, ReturnType<typeof oauthCredential>>;
     confirms?: boolean[];
+    customActions?: ((component: Component) => Promise<void>)[];
     inputs?: (string | undefined)[];
     model?: { provider: string; id: string };
     preserveHome?: boolean;
@@ -61,8 +97,10 @@ function setup(
   const selections = [...(options.selections ?? [])];
   const inputs = [...(options.inputs ?? [])];
   const confirms = [...(options.confirms ?? [])];
+  const customActions = [...(options.customActions ?? [])];
   const notify = vi.fn();
   const setEditorText = vi.fn();
+  const customRenders: string[][] = [];
   const models = new Map<string, { provider: string; id: string }>();
   for (const provider of ['grok-cli', 'grok-cli-2', 'grok-cli-3']) {
     for (const id of ['grok-build', 'grok-composer-2.5-fast']) {
@@ -74,10 +112,60 @@ function setup(
     modelRegistry: {
       authStorage,
       find: (provider: string, id: string) => models.get(`${provider}/${id}`),
-      getApiKeyForProvider: (provider: string) => authStorage.getApiKey(provider),
+      getApiKeyForProvider: async (provider: string) => {
+        const credential = authStorage.get(provider);
+        return credential?.type === 'oauth' ? credential.access : undefined;
+      },
     },
     ui: {
       confirm: vi.fn(async () => confirms.shift() ?? false),
+      custom: vi.fn(
+        async (
+          factory: (
+            tui: { requestRender: () => void },
+            theme: { bold: (text: string) => string; fg: (_color: string, text: string) => string },
+            keybindings: unknown,
+            done: (value: string | undefined) => void,
+          ) => Component | Promise<Component>,
+        ) => {
+          let resolveResult = (_value: string | undefined) => {};
+          const result = new Promise<string | undefined>((resolve) => {
+            resolveResult = resolve;
+          });
+          let component: Component;
+          const tui = {
+            requestRender() {
+              customRenders.push(component.render(160));
+            },
+          };
+          component = await factory(
+            tui,
+            { bold: (text) => text, fg: (_color, text) => text },
+            {},
+            resolveResult,
+          );
+          customRenders.push(component.render(160));
+          const action = customActions.shift();
+          if (action) {
+            await action(component);
+            return result;
+          }
+          const choice = selections.shift();
+          if (choice === undefined) {
+            component.handleInput?.('\u001b');
+            return result;
+          }
+          for (let index = 0; index < 20; index += 1) {
+            const selected = component.render(160).find((line) => line.startsWith('→ '));
+            if (selected?.includes(choice)) {
+              component.handleInput?.('\r');
+              return result;
+            }
+            component.handleInput?.('\u001b[B');
+          }
+          throw new Error(`Could not select custom UI row: ${choice}`);
+        },
+      ),
       input: vi.fn(async () => inputs.shift()),
       notify,
       select: vi.fn(async () => selections.shift()),
@@ -90,6 +178,7 @@ function setup(
     accountManagement,
     commands,
     context,
+    customRenders,
     notify,
     registerAccount,
     setEditorText,
@@ -132,6 +221,230 @@ describe('Grok CLI account helpers', () => {
 });
 
 describe('/grok-cli-accounts', () => {
+  it('shows cached quota usage in both account selectors', async () => {
+    configureAccounts();
+    await saveQuotaUsage(
+      'grok-cli',
+      {
+        monthly: {
+          monthlyLimit: 2000,
+          used: 300,
+          billingPeriodEnd: '2026-08-01T00:00:00.000Z',
+        },
+        weekly: {
+          creditUsagePercent: 60,
+          billingPeriodEnd: '2026-07-20T00:00:00.000Z',
+        },
+      },
+      new Date().toISOString(),
+    );
+    const extension = setup({
+      auth: authenticatedAccounts(),
+      preserveHome: true,
+      selections: ['Manage accounts', 'Work — Logged in', 'Back'],
+    });
+
+    await runAccountsCommand(extension);
+
+    expect(extension.context.ui.custom).toHaveBeenCalledTimes(2);
+    expect(extension.customRenders[0]?.join('\n')).toContain(
+      'Monthly 300 / 2,000 used · Weekly 60% used',
+    );
+    expect(extension.customRenders.at(-1)?.join('\n')).toContain('Quota not fetched · press r');
+  });
+
+  it('refreshes every logged-in account with r without changing models and preserves selection', async () => {
+    configureAccounts();
+    process.env.GROK_CLI_OAUTH_TOKEN = 'personal';
+    const timeout = vi.spyOn(AbortSignal, 'timeout');
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const authorization = (init?.headers as Record<string, string>).authorization;
+      const used = authorization === 'Bearer personal' ? 300 : 900;
+      if (String(input).includes('format=credits')) {
+        return Response.json({
+          config: {
+            currentPeriod: { type: 'USAGE_PERIOD_TYPE_WEEKLY' },
+            creditUsagePercent: used === 300 ? 60 : 25,
+            billingPeriodEnd: '2026-07-20T00:00:00.000Z',
+          },
+        });
+      }
+      return Response.json({
+        config: {
+          monthlyLimit: { val: 2000 },
+          used: { val: used },
+          billingPeriodEnd: '2026-08-01T00:00:00.000Z',
+        },
+      });
+    });
+    globalThis.fetch = fetchMock;
+    const extension = setup({
+      auth: { 'grok-cli-2': oauthCredential('work') },
+      preserveHome: true,
+      customActions: [
+        async (component) => {
+          component.handleInput?.('\u001b[B');
+          component.handleInput?.('r');
+          component.handleInput?.('r');
+          await vi.waitFor(() => {
+            expect(Object.keys(loadQuotaCache().accounts)).toHaveLength(2);
+          });
+          expect(component.render(160).find((line) => line.startsWith('→ '))).toContain('Work');
+          component.handleInput?.('\u001b');
+        },
+      ],
+    });
+
+    await runAccountsCommand(extension);
+
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(timeout).toHaveBeenCalledTimes(2);
+    expect(timeout).toHaveBeenCalledWith(30_000);
+    expect(loadQuotaCache().accounts['grok-cli']?.monthly.used).toBe(300);
+    expect(loadQuotaCache().accounts['grok-cli-2']?.monthly.used).toBe(900);
+    expect(extension.setModel).not.toHaveBeenCalled();
+    expect(extension.customRenders.flat().join('\n')).toContain('Updated 2 accounts; 0 failed');
+  });
+
+  it('keeps cached quota on a partial refresh failure and marks only that row failed', async () => {
+    configureAccounts();
+    await saveQuotaUsage(
+      'grok-cli-2',
+      {
+        monthly: {
+          monthlyLimit: 2000,
+          used: 700,
+          billingPeriodEnd: '2026-08-01T00:00:00.000Z',
+        },
+      },
+      new Date().toISOString(),
+    );
+    globalThis.fetch = vi.fn<typeof fetch>(async (input, init) => {
+      const authorization = (init?.headers as Record<string, string>).authorization;
+      if (authorization === 'Bearer work') return new Response('nope', { status: 500 });
+      if (String(input).includes('format=credits'))
+        return new Response('no weekly', { status: 500 });
+      return Response.json({
+        config: {
+          monthlyLimit: { val: 2000 },
+          used: { val: 300 },
+          billingPeriodEnd: '2026-08-01T00:00:00.000Z',
+        },
+      });
+    });
+    const extension = setup({
+      auth: authenticatedAccounts(),
+      preserveHome: true,
+      customActions: [
+        async (component) => {
+          component.handleInput?.('r');
+          await vi.waitFor(() => {
+            expect(component.render(160).join('\n')).toContain('Updated 1 accounts; 1 failed');
+          });
+          expect(component.render(160).join('\n')).toContain(
+            'Monthly 700 / 2,000 used · Weekly unavailable',
+          );
+          expect(component.render(160).join('\n')).toContain('refresh failed');
+          component.handleInput?.('\u001b');
+        },
+      ],
+    });
+
+    await runAccountsCommand(extension);
+
+    expect(loadQuotaCache().accounts['grok-cli']?.monthly.used).toBe(300);
+    expect(loadQuotaCache().accounts['grok-cli-2']?.monthly.used).toBe(700);
+  });
+
+  it('handles uppercase R with no authenticated accounts without fetching', async () => {
+    configureAccounts();
+    const fetchMock = vi.fn<typeof fetch>();
+    globalThis.fetch = fetchMock;
+    const extension = setup({
+      preserveHome: true,
+      customActions: [
+        async (component) => {
+          component.handleInput?.('R');
+          expect(component.render(35).join('\n')).toContain('No logged-in accounts to refresh');
+          expect(component.render(35).join('\n')).toContain('Personal — Login required');
+          component.handleInput?.('\u001b');
+        },
+      ],
+    });
+
+    await runAccountsCommand(extension);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('aborts outstanding quota requests when the selector closes', async () => {
+    const accounts = numberedAccounts(5);
+    configureAccounts('grok-cli', accounts, 6);
+    const aborted = vi.fn();
+    globalThis.fetch = vi.fn<typeof fetch>(
+      (_input, init) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            aborted();
+            reject(new DOMException('Aborted', 'AbortError'));
+          });
+        }),
+    );
+    const extension = setupRefresh(accounts, async (component) => {
+      component.handleInput?.('r');
+      await vi.waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(3));
+      component.handleInput?.('\u001b');
+    });
+
+    await runAccountsCommand(extension);
+    await vi.waitFor(() => expect(aborted).toHaveBeenCalledTimes(3));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(3);
+    expect(loadQuotaCache().accounts).toEqual({});
+  });
+
+  it('runs at most three account refreshes concurrently', async () => {
+    const accounts = numberedAccounts(5);
+    configureAccounts('grok-cli', accounts, 6);
+    const releases: (() => void)[] = [];
+    let active = 0;
+    let maximum = 0;
+    globalThis.fetch = vi.fn<typeof fetch>(async (input) => {
+      if (String(input).includes('format=credits'))
+        return new Response('no weekly', { status: 500 });
+      active += 1;
+      maximum = Math.max(maximum, active);
+      await new Promise<void>((resolve) => releases.push(resolve));
+      active -= 1;
+      return Response.json({
+        config: {
+          monthlyLimit: { val: 2000 },
+          used: { val: 300 },
+          billingPeriodEnd: '2026-08-01T00:00:00.000Z',
+        },
+      });
+    });
+    const extension = setupRefresh(accounts, async (component) => {
+      component.handleInput?.('r');
+      await vi.waitFor(() => expect(releases).toHaveLength(3));
+      expect(maximum).toBe(3);
+      releases.splice(0).forEach((release) => {
+        release();
+      });
+      await vi.waitFor(() => expect(releases).toHaveLength(2));
+      releases.splice(0).forEach((release) => {
+        release();
+      });
+      await vi.waitFor(() => expect(Object.keys(loadQuotaCache().accounts)).toHaveLength(5));
+      component.handleInput?.('\u001b');
+    });
+
+    await runAccountsCommand(extension);
+
+    expect(maximum).toBe(3);
+  });
+
   it('adds a labeled alias and pre-fills Pi native login', async () => {
     const extension = setup({ selections: ['＋ Add account'], inputs: ['Work'] });
 
@@ -152,17 +465,17 @@ describe('/grok-cli-accounts', () => {
     expect(extension.setEditorText).toHaveBeenCalledWith('/login grok-cli-2');
   });
 
-  it('uses a stable default label and never reuses removed numbers', async () => {
+  it('uses the lowest available alias number and its matching default label', async () => {
     configureAccounts('grok-cli', [{ provider: 'grok-cli', label: 'Account 1' }], 4);
     const extension = setup({ preserveHome: true, selections: ['＋ Add account'], inputs: [''] });
 
     await runAccountsCommand(extension);
 
     expect(loadConfig().config.accounts.items.at(-1)).toEqual({
-      provider: 'grok-cli-4',
-      label: 'Account 4',
+      provider: 'grok-cli-2',
+      label: 'Account 2',
     });
-    expect(loadConfig().config.accounts.nextAccountNumber).toBe(5);
+    expect(loadConfig().config.accounts.nextAccountNumber).toBe(3);
   });
 
   it('switches a logged-in account while preserving the current Grok model', async () => {
@@ -255,6 +568,13 @@ describe('/grok-cli-accounts', () => {
 
   it('renames an account and updates its provider display registration', async () => {
     configureAccounts();
+    await saveQuotaUsage('grok-cli-2', {
+      monthly: {
+        monthlyLimit: 2000,
+        used: 300,
+        billingPeriodEnd: '2026-08-01T00:00:00.000Z',
+      },
+    });
     const extension = setup({
       selections: ['Manage accounts', 'Work — Login required', 'Rename'],
       inputs: ['Client'],
@@ -268,10 +588,18 @@ describe('/grok-cli-accounts', () => {
       provider: 'grok-cli-2',
       label: 'Client',
     });
+    expect(loadQuotaCache().accounts['grok-cli-2']?.monthly.used).toBe(300);
   });
 
   it('logs out and removes an inactive alias after confirmation', async () => {
     configureAccounts();
+    await saveQuotaUsage('grok-cli-2', {
+      monthly: {
+        monthlyLimit: 2000,
+        used: 300,
+        billingPeriodEnd: '2026-08-01T00:00:00.000Z',
+      },
+    });
     const extension = setup({
       auth: {
         'grok-cli': oauthCredential('personal'),
@@ -290,6 +618,74 @@ describe('/grok-cli-accounts', () => {
       { provider: 'grok-cli', label: 'Personal' },
     ]);
     expect(extension.unregisterProvider).toHaveBeenCalledWith('grok-cli-2');
+    expect(loadQuotaCache().accounts['grok-cli-2']).toBeUndefined();
+  });
+
+  it('reuses grok-cli-2 for the next account after removing that alias', async () => {
+    configureAccounts();
+    const extension = setup({
+      auth: authenticatedAccounts(),
+      confirms: [true],
+      inputs: ['Replacement'],
+      model: { provider: 'grok-cli', id: 'grok-build' },
+      preserveHome: true,
+      selections: ['Manage accounts', 'Work — Logged in', 'Log out and remove', '＋ Add account'],
+    });
+
+    await runAccountsCommand(extension);
+    await runAccountsCommand(extension);
+
+    expect(loadConfig().config.accounts.items).toEqual([
+      { provider: 'grok-cli', label: 'Personal' },
+      { provider: 'grok-cli-2', label: 'Replacement' },
+    ]);
+    expect(extension.registerAccount).toHaveBeenCalledWith({
+      provider: 'grok-cli-2',
+      label: 'Replacement',
+    });
+    expect(extension.setEditorText).toHaveBeenCalledWith('/login grok-cli-2');
+  });
+
+  it('does not reuse an active alias until its deferred unregister completes', async () => {
+    configureAccounts('grok-cli-2');
+    const extension = setup({
+      auth: { 'grok-cli-2': oauthCredential('work') },
+      confirms: [true],
+      inputs: ['Temporary', 'Replacement'],
+      model: { provider: 'grok-cli-2', id: 'grok-build' },
+      preserveHome: true,
+      selections: [
+        'Manage accounts',
+        'Work — Active',
+        'Log out and remove',
+        '＋ Add account',
+        '＋ Add account',
+      ],
+    });
+
+    await runAccountsCommand(extension);
+    await runAccountsCommand(extension);
+
+    expect(loadConfig().config.accounts.items.at(-1)).toEqual({
+      provider: 'grok-cli-3',
+      label: 'Temporary',
+    });
+
+    extension.accountManagement.handleModelSelect({
+      model: { provider: 'openai' },
+      previousModel: { provider: 'grok-cli-2' },
+    });
+    await runAccountsCommand(extension);
+
+    expect(extension.unregisterProvider).toHaveBeenCalledWith('grok-cli-2');
+    expect(loadConfig().config.accounts.items.at(-1)).toEqual({
+      provider: 'grok-cli-2',
+      label: 'Replacement',
+    });
+    expect(extension.setEditorText.mock.calls.map(([value]) => value)).toEqual([
+      '/login grok-cli-3',
+      '/login grok-cli-2',
+    ]);
   });
 
   it('leaves an alias untouched when removal confirmation is cancelled', async () => {
@@ -371,6 +767,13 @@ describe('/grok-cli-accounts', () => {
 
   it('keeps the base slot and resets its label when logging out', async () => {
     configureAccounts('grok-cli', [{ provider: 'grok-cli', label: 'Personal' }], 2);
+    await saveQuotaUsage('grok-cli', {
+      monthly: {
+        monthlyLimit: 2000,
+        used: 300,
+        billingPeriodEnd: '2026-08-01T00:00:00.000Z',
+      },
+    });
     const extension = setup({
       auth: { 'grok-cli': oauthCredential('personal') },
       confirms: [true],
@@ -385,6 +788,7 @@ describe('/grok-cli-accounts', () => {
       { provider: 'grok-cli', label: 'Account 1' },
     ]);
     expect(extension.unregisterProvider).not.toHaveBeenCalled();
+    expect(loadQuotaCache().accounts['grok-cli']).toBeUndefined();
   });
 
   it('keeps the selected alias when logging out of the inactive base account', async () => {

@@ -1,16 +1,17 @@
-import { randomUUID } from 'node:crypto';
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  unlinkSync,
-  writeFileSync,
-} from 'node:fs';
-import { homedir } from 'node:os';
-import { basename, dirname, join } from 'node:path';
+import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 import { resolveModels } from './models/catalog.js';
+import {
+  getConfigPath,
+  getLegacyConfigPath,
+  getLegacyImagineConfigPath,
+  getLegacyVisionCachePath,
+  getLegacyVisionConfigPath,
+  getVisionCachePath,
+  migrateStoredFile,
+  writeFileAtomic,
+} from './storage.js';
+
+export { getConfigPath, getLegacyImagineConfigPath, getLegacyVisionConfigPath } from './storage.js';
 
 export const CONFIG_VERSION = 2 as const;
 const LEGACY_CONFIG_VERSION = 1;
@@ -81,12 +82,6 @@ type LegacyConfig = LoadedConfig & {
   recognizedPaths: string[];
 };
 
-const homePath = () => process.env.HOME || homedir();
-
-export const getConfigPath = () => join(homePath(), '.pi', 'grok-cli.json');
-export const getLegacyImagineConfigPath = () => join(homePath(), '.pi', 'grok-cli-imagine.json');
-export const getLegacyVisionConfigPath = () => join(homePath(), '.pi', 'grok-cli-vision.json');
-
 function defaultConfig(): GrokCliConfig {
   return {
     version: CONFIG_VERSION,
@@ -124,6 +119,16 @@ const accountNumber = (provider: string) => {
   const match = /^grok-cli-((?:[2-9]|[1-9]\d+))$/.exec(provider);
   return match ? Number(match[1]) : undefined;
 };
+
+export function findAvailableAccountNumber(
+  providers: Iterable<string>,
+  reservedProviders: Iterable<string> = [],
+) {
+  const unavailable = new Set([...providers, ...reservedProviders]);
+  const find = (number: number): number =>
+    unavailable.has(`grok-cli-${number}`) ? find(number + 1) : number;
+  return find(2);
+}
 
 function normalizeAccountsConfig(raw: unknown, warnings: string[]): AccountsConfig {
   if (raw === undefined) return defaultConfig().accounts;
@@ -180,22 +185,13 @@ function normalizeAccountsConfig(raw: unknown, warnings: string[]): AccountsConf
 
   if (invalid.length)
     warnings.push('accounts contains invalid or duplicate entries. Ignoring them.');
-  const highestAccountNumber = Math.max(
-    ...items.map((account) => accountNumber(account.provider) ?? 1),
-  );
-  const requestedNext =
-    typeof raw.nextAccountNumber === 'number' &&
-    Number.isInteger(raw.nextAccountNumber) &&
-    raw.nextAccountNumber >= 2
-      ? raw.nextAccountNumber
-      : 2;
   const selectedProvider =
     typeof raw.selectedProvider === 'string' && providers.has(raw.selectedProvider)
       ? raw.selectedProvider
       : 'grok-cli';
 
   return {
-    nextAccountNumber: Math.max(requestedNext, highestAccountNumber + 1),
+    nextAccountNumber: findAvailableAccountNumber(providers),
     selectedProvider,
     items,
   };
@@ -429,13 +425,18 @@ function loadLegacyConfig(): LegacyConfig {
 }
 
 export function loadConfig(): LoadedConfig {
-  if (!existsSync(getConfigPath())) {
+  const configPath = existsSync(getConfigPath())
+    ? getConfigPath()
+    : existsSync(getLegacyConfigPath())
+      ? getLegacyConfigPath()
+      : undefined;
+  if (!configPath) {
     const legacy = loadLegacyConfig();
     return legacy.warning
       ? { config: legacy.config, warning: legacy.warning }
       : { config: legacy.config };
   }
-  const loaded = parseConfig(getConfigPath());
+  const loaded = parseConfig(configPath);
   if (loaded.valid) {
     return loaded.warning
       ? { config: loaded.config, warning: loaded.warning }
@@ -449,22 +450,7 @@ export function loadConfig(): LoadedConfig {
 }
 
 export function saveConfig(config: GrokCliConfig) {
-  const configPath = getConfigPath();
-  const tempPath = join(
-    dirname(configPath),
-    `.${basename(configPath)}.${process.pid}.${randomUUID()}.tmp`,
-  );
-  mkdirSync(dirname(configPath), { recursive: true });
-  try {
-    writeFileSync(tempPath, `${JSON.stringify(normalizeConfig(config, []), null, 2)}\n`, {
-      encoding: 'utf8',
-      flag: 'wx',
-    });
-    renameSync(tempPath, configPath);
-  } catch (error) {
-    rmSync(tempPath, { force: true });
-    throw error;
-  }
+  writeFileAtomic(getConfigPath(), `${JSON.stringify(normalizeConfig(config, []), null, 2)}\n`);
 }
 
 function removeLegacyConfigs(paths: string[]) {
@@ -481,11 +467,18 @@ function removeLegacyConfigs(paths: string[]) {
 }
 
 export function migrateLegacyConfig(): { warning?: string } {
+  const storageWarning = combineWarnings([
+    migrateStoredFile(getLegacyConfigPath(), getConfigPath()),
+    migrateStoredFile(getLegacyVisionCachePath(), getVisionCachePath()),
+  ]);
+  if (!existsSync(getConfigPath()) && existsSync(getLegacyConfigPath())) {
+    return { warning: storageWarning };
+  }
   const legacy = loadLegacyConfig();
   if (existsSync(getConfigPath())) {
     const loaded = parseConfig(getConfigPath());
     if (!loaded.valid) {
-      return { warning: combineWarnings([loaded.warning, legacy.warning]) };
+      return { warning: combineWarnings([storageWarning, loaded.warning, legacy.warning]) };
     }
     if (loaded.needsMigration) {
       try {
@@ -498,6 +491,7 @@ export function migrateLegacyConfig(): { warning?: string } {
         ) {
           return {
             warning: combineWarnings([
+              storageWarning,
               verified.warning,
               `Could not verify migrated config ${getConfigPath()}. Legacy files were preserved.`,
             ]),
@@ -505,17 +499,27 @@ export function migrateLegacyConfig(): { warning?: string } {
         }
       } catch (error) {
         return {
-          warning: `Could not migrate configuration ${getConfigPath()}: ${errorMessage(error)}. Legacy files were preserved.`,
+          warning: combineWarnings([
+            storageWarning,
+            `Could not migrate configuration ${getConfigPath()}: ${errorMessage(error)}. Legacy files were preserved.`,
+          ]),
         };
       }
     }
     const cleanupWarning = removeLegacyConfigs(legacy.recognizedPaths);
-    const warning = combineWarnings([loaded.warning, legacy.warning, cleanupWarning]);
+    const warning = combineWarnings([
+      storageWarning,
+      loaded.warning,
+      legacy.warning,
+      cleanupWarning,
+    ]);
     return warning ? { warning } : {};
   }
-  if (legacy.existingPaths.length === 0) return {};
+  if (legacy.existingPaths.length === 0) {
+    return storageWarning ? { warning: storageWarning } : {};
+  }
   if (legacy.recognizedPaths.length !== legacy.existingPaths.length) {
-    return { warning: legacy.warning };
+    return { warning: combineWarnings([storageWarning, legacy.warning]) };
   }
   try {
     saveConfig(legacy.config);
@@ -523,6 +527,7 @@ export function migrateLegacyConfig(): { warning?: string } {
     if (!verified.valid || JSON.stringify(verified.config) !== JSON.stringify(legacy.config)) {
       return {
         warning: combineWarnings([
+          storageWarning,
           verified.warning,
           `Could not verify migrated config ${getConfigPath()}. Legacy files were preserved.`,
         ]),
@@ -530,9 +535,12 @@ export function migrateLegacyConfig(): { warning?: string } {
     }
   } catch (error) {
     return {
-      warning: `Could not migrate legacy configuration to ${getConfigPath()}: ${errorMessage(error)}. Legacy files were preserved.`,
+      warning: combineWarnings([
+        storageWarning,
+        `Could not migrate legacy configuration to ${getConfigPath()}: ${errorMessage(error)}. Legacy files were preserved.`,
+      ]),
     };
   }
-  const warning = removeLegacyConfigs(legacy.recognizedPaths);
+  const warning = combineWarnings([storageWarning, removeLegacyConfigs(legacy.recognizedPaths)]);
   return warning ? { warning } : {};
 }

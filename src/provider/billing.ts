@@ -1,17 +1,17 @@
 import { getBaseUrl } from '../auth/oauth.js';
 
-interface MonthlyUsage {
+export interface MonthlyUsage {
   monthlyLimit: number;
   used: number;
   billingPeriodEnd: string;
 }
 
-interface WeeklyUsage {
+export interface WeeklyUsage {
   creditUsagePercent: number;
   billingPeriodEnd: string;
 }
 
-interface BillingUsage {
+export interface BillingUsage {
   monthly: MonthlyUsage;
   weekly?: WeeklyUsage;
 }
@@ -75,18 +75,27 @@ function parseWeeklyUsage(payload: unknown): WeeklyUsage | undefined {
   return { creditUsagePercent, billingPeriodEnd };
 }
 
-export async function fetchBillingUsage(token: string): Promise<BillingUsage> {
+export async function fetchBillingUsage(
+  token: string,
+  signal?: AbortSignal,
+): Promise<BillingUsage> {
   const headers = billingHeaders(token);
-  const monthlyResponse = await fetch(`${getBaseUrl()}/billing`, { headers });
+  const monthlyResponse = await fetch(`${getBaseUrl()}/billing`, { headers, signal });
   if (!monthlyResponse.ok) throw new Error(`billing endpoint returned ${monthlyResponse.status}`);
   const monthly = parseMonthlyUsage(await monthlyResponse.json());
 
-  const weekly = await fetchWeeklyUsage(headers).catch(() => undefined);
+  const weekly = await fetchWeeklyUsage(headers, signal).catch((error: unknown) => {
+    if (signal?.aborted) throw error;
+    return undefined;
+  });
   return { monthly, weekly };
 }
 
-async function fetchWeeklyUsage(headers: Record<string, string>): Promise<WeeklyUsage | undefined> {
-  const response = await fetch(`${getBaseUrl()}/billing?format=credits`, { headers });
+async function fetchWeeklyUsage(
+  headers: Record<string, string>,
+  signal?: AbortSignal,
+): Promise<WeeklyUsage | undefined> {
+  const response = await fetch(`${getBaseUrl()}/billing?format=credits`, { headers, signal });
   if (!response.ok) return undefined;
   return parseWeeklyUsage(await response.json());
 }

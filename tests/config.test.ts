@@ -26,10 +26,12 @@ const FEATURE_CONFIG = {
 
 function paths(home: string) {
   return {
-    cache: join(home, '.pi', 'grok-cli-vision-cache.json'),
-    config: join(home, '.pi', 'grok-cli.json'),
+    cache: join(home, '.pi', 'grok-cli', 'vision-cache.json'),
+    config: join(home, '.pi', 'grok-cli', 'config.json'),
+    data: join(home, '.pi', 'grok-cli'),
     debug: join(home, '.pi', 'grok-cli-vision-debug.log'),
     imagine: join(home, '.pi', 'grok-cli-imagine.json'),
+    legacyCache: join(home, '.pi', 'grok-cli-vision-cache.json'),
     pi: join(home, '.pi'),
     quota: join(home, '.pi', 'grok-cli-quota.json'),
     tools: join(home, '.pi', 'grok-cli-tools.json'),
@@ -42,7 +44,7 @@ function writeJson(path: string, value: unknown) {
 }
 
 function writeConsolidatedConfig(home: string, value: unknown) {
-  mkdirSync(paths(home).pi, { recursive: true });
+  mkdirSync(paths(home).data, { recursive: true });
   writeJson(paths(home).config, value);
 }
 
@@ -71,13 +73,12 @@ describe('Grok CLI configuration', () => {
 
     expect(loadConfig()).toEqual({ config: FEATURE_CONFIG });
     expect(JSON.parse(readFileSync(paths(home).config, 'utf8')).version).toBe(2);
-    expect(readdirSync(paths(home).pi).filter((name) => name.endsWith('.tmp'))).toEqual([]);
+    expect(readdirSync(paths(home).data).filter((name) => name.endsWith('.tmp'))).toEqual([]);
   });
 
   it('fills missing sections and normalizes invalid fields with warnings', () => {
     const home = setupHome();
-    mkdirSync(paths(home).pi, { recursive: true });
-    writeJson(paths(home).config, {
+    writeConsolidatedConfig(home, {
       version: 2,
       vision: { enabled: 'yes', maxImages: -1, cacheEnabled: false },
     });
@@ -96,7 +97,7 @@ describe('Grok CLI configuration', () => {
   it('falls back to legacy settings without overwriting an unsupported version', () => {
     const home = setupHome();
     mkdirSync(paths(home).pi, { recursive: true });
-    writeJson(paths(home).config, { version: 3, imagine: { enabled: false } });
+    writeConsolidatedConfig(home, { version: 3, imagine: { enabled: false } });
     writeJson(paths(home).imagine, { enabled: false });
 
     const migration = migrateLegacyConfig();
@@ -118,7 +119,7 @@ describe('Grok CLI configuration', () => {
       cacheEnabled: false,
       cacheMaxEntries: 25,
     });
-    for (const path of [paths(home).cache, paths(home).tools, paths(home).quota]) {
+    for (const path of [paths(home).legacyCache, paths(home).tools, paths(home).quota]) {
       writeJson(path, { keep: true });
     }
     writeFileSync(paths(home).debug, 'keep');
@@ -137,12 +138,9 @@ describe('Grok CLI configuration', () => {
     });
     expect(existsSync(paths(home).imagine)).toBe(false);
     expect(existsSync(paths(home).vision)).toBe(false);
-    for (const path of [
-      paths(home).cache,
-      paths(home).tools,
-      paths(home).quota,
-      paths(home).debug,
-    ]) {
+    expect(existsSync(paths(home).legacyCache)).toBe(false);
+    expect(JSON.parse(readFileSync(paths(home).cache, 'utf8'))).toEqual({ keep: true });
+    for (const path of [paths(home).tools, paths(home).quota, paths(home).debug]) {
       expect(existsSync(path)).toBe(true);
     }
   });
@@ -180,7 +178,7 @@ describe('Grok CLI configuration', () => {
     const loaded = loadConfig();
 
     expect(loaded.config.accounts).toEqual({
-      nextAccountNumber: 11,
+      nextAccountNumber: 3,
       selectedProvider: 'grok-cli',
       items: [
         { provider: 'grok-cli', label: 'Personal' },
@@ -206,7 +204,7 @@ describe('Grok CLI configuration', () => {
     });
 
     expect(loadConfig().config.accounts).toEqual({
-      nextAccountNumber: 4,
+      nextAccountNumber: 2,
       selectedProvider: 'grok-cli',
       items: [
         { provider: 'grok-cli', label: 'Account 1' },
@@ -274,7 +272,7 @@ describe('Grok CLI configuration', () => {
   it('keeps a valid consolidated file authoritative and cleans recognized legacy files', () => {
     const home = setupHome();
     mkdirSync(paths(home).pi, { recursive: true });
-    writeJson(paths(home).config, {
+    writeConsolidatedConfig(home, {
       ...DEFAULT_CONFIG,
       imagine: { enabled: false },
     });
@@ -292,7 +290,7 @@ describe('Grok CLI configuration', () => {
   it('preserves malformed legacy files beside a valid consolidated config', () => {
     const home = setupHome();
     mkdirSync(paths(home).pi, { recursive: true });
-    writeJson(paths(home).config, DEFAULT_CONFIG);
+    writeConsolidatedConfig(home, DEFAULT_CONFIG);
     writeFileSync(paths(home).imagine, '{ nope');
 
     expect(migrateLegacyConfig().warning).toMatch(/Could not read/);
@@ -303,7 +301,7 @@ describe('Grok CLI configuration', () => {
   it('preserves a recognized legacy file when cleanup fails and retries later', () => {
     const home = setupHome();
     mkdirSync(paths(home).pi, { recursive: true });
-    writeJson(paths(home).config, DEFAULT_CONFIG);
+    writeConsolidatedConfig(home, DEFAULT_CONFIG);
     writeJson(paths(home).imagine, { enabled: false });
     const migration = withoutDirectoryWrites(paths(home).pi, migrateLegacyConfig);
 

@@ -3,6 +3,7 @@ import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { XaiOAuthError } from '../shared/errors.js';
 import { isGrokCliProvider, resolveGrokProvider, resolveGrokToken } from './accounts.js';
 import { fetchBillingUsage, formatQuota } from './billing.js';
+import { loadQuotaCache, saveQuotaUsage } from './quotaCache.js';
 
 export function registerUsageCommand(pi: Pick<ExtensionAPI, 'registerCommand'>) {
   pi.registerCommand('grok-cli-usage', {
@@ -34,13 +35,28 @@ export function registerUsageCommand(pi: Pick<ExtensionAPI, 'registerCommand'>) 
 
         try {
           ctx.ui.notify('Fetching grok cli usage…', 'info');
-          ctx.ui.notify(formatQuota(await fetchBillingUsage(apiKey)).join('\n'), 'info');
+          const usage = await fetchBillingUsage(apiKey);
+          try {
+            await saveQuotaUsage(provider, usage);
+          } catch (error) {
+            ctx.ui.notify(
+              `Grok CLI quota cache update failed: ${error instanceof Error ? error.message : String(error)}`,
+              'warning',
+            );
+          }
+          ctx.ui.notify(formatQuota(usage).join('\n'), 'info');
         } catch (err) {
           ctx.ui.notify(
             `Grok CLI billing refresh failed: ${err instanceof Error ? err.message : String(err)}`,
             'warning',
           );
-          ctx.ui.notify(formatQuota(undefined).join('\n'), 'info');
+          const cached = loadQuotaCache().accounts[provider];
+          ctx.ui.notify(
+            cached
+              ? `Grok CLI cached usage from ${cached.updatedAt}:\n${formatQuota(cached).join('\n')}`
+              : formatQuota(undefined).join('\n'),
+            'info',
+          );
         }
       } catch (err) {
         const msg =

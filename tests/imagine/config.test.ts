@@ -1,5 +1,5 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_CONFIG, getConfigPath, loadConfig, saveConfig } from '../../src/config.js';
 import { useTempHome } from '../vision/helpers.js';
@@ -28,8 +28,8 @@ describe('Imagine configuration', () => {
   });
 
   it('falls back safely for malformed JSON', () => {
-    const home = setupHome();
-    mkdirSync(join(home, '.pi'), { recursive: true });
+    setupHome();
+    mkdirSync(dirname(getConfigPath()), { recursive: true });
     writeFileSync(getConfigPath(), '{ nope');
     expect(loadConfig().warning).toContain('Could not read');
   });

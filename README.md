@@ -87,7 +87,9 @@ The table describes metadata bundled with this extension, not live model discove
 
 Use `/login` to authenticate through a browser or device code, or reuse an official Grok Build login. Pi stores and refreshes OAuth credentials automatically. For automation, `GROK_CLI_OAUTH_TOKEN` supplies a direct token without automatic refresh.
 
-Run `/grok-cli-accounts` to add, switch, rename, relogin, log out, or remove accounts. Each account is registered as an independent Pi provider (`grok-cli`, `grok-cli-2`, and so on), so Pi keeps its OAuth credential separately in `auth.json`. The base `grok-cli` slot is permanent; aliases can be removed. Alias numbers are stable and are not reused.
+Run `/grok-cli-accounts` to add, switch, rename, relogin, log out, or remove accounts. Each account is registered as an independent Pi provider (`grok-cli`, `grok-cli-2`, and so on), so Pi keeps its OAuth credential separately in `auth.json`. The base `grok-cli` slot is permanent; aliases can be removed. Existing aliases keep their provider IDs, and a removed alias number is reused by the next account when it is the lowest available slot.
+
+The account selectors show the last cached quota for every logged-in account as consumed monthly and weekly usage. Press `r` to refresh all logged-in accounts without switching models or changing the selected account. Refreshes run three accounts at a time; a failed account keeps its previous cached value and is marked as failed for the current dialog. Values older than 30 minutes are labeled stale. Opening the selector does not refresh automatically.
 
 `GROK_CLI_OAUTH_TOKEN` applies only to the permanent base account. When it is set, the accounts UI identifies the environment token and tells you to unset it instead of presenting a logout action that cannot remove it.
 
@@ -101,7 +103,7 @@ OpenAI API error (402): 402 "Grok Build usage balance exhausted"
 
 Rotation waits until Pi has finished retries, compaction, and tool activity. It selects the next authenticated account in circular configuration order, preserves the current model when available, and automatically continues the interrupted request once. Accounts already exhausted during that continuation chain are skipped. If every logged-in account returns the exact error, the extension stops without wrapping and reports that all accounts are exhausted.
 
-The attempted-account set is in memory and applies only to that continuation chain. A new user request starts fresh, so recovered quota can be detected naturally. Similar 402 messages, 401s, 429s, non-Grok errors, and non-final errors do not trigger rotation. A manual model change before failover cancels the pending rotation.
+The attempted-account set is in memory and applies only to that continuation chain. A new user request starts fresh, so recovered quota can be detected naturally. Similar 402 messages, 401s, 429s, non-Grok errors, and non-final errors do not trigger rotation. A manual model change before failover cancels the pending rotation. Cached quota is informational and never triggers or suppresses rotation.
 
 ### Model-scoped Cursor compatibility
 
@@ -147,7 +149,7 @@ Run `/grok-cli-imagine <prompt>` to generate and preview a JPEG, or let any acti
 | Command | Description |
 | --- | --- |
 | `/grok-cli-accounts` | Add, switch, rename, relogin, log out, or remove Grok accounts. |
-| `/grok-cli-usage` | Fetch current quota, remaining credits, and reset times. |
+| `/grok-cli-usage` | Fetch current quota, update its cache, and show cached data if refresh fails. |
 | `/grok-cli-imagine <prompt>` | Generate and preview an image. Supports `--aspect`, `--out`, and `--resolution 1k`. |
 | `/grok-cli-imagine:tool [on\|off\|status]` | Toggle, set, or report persistent model-callable `image_gen` availability. |
 | `/grok-cli-vision:status` | Show vision state, describer model, configuration path, and cache statistics. |
@@ -156,7 +158,18 @@ Run `/grok-cli-imagine <prompt>` to generate and preview a JPEG, or let any acti
 
 ## Configuration
 
-All extension settings are read from `~/.pi/grok-cli.json`. The file is created after the first setting change and defaults to:
+Extension-owned data is grouped under `~/.pi/grok-cli/`:
+
+```text
+~/.pi/grok-cli/
+├── config.json
+├── vision-cache.json
+└── quota-cache.json
+```
+
+`config.json` contains settings and account labels. The two cache files contain derived vision descriptions and quota responses; neither contains OAuth tokens. Pi continues to own OAuth credentials in its `auth.json`, and the official `~/.grok/auth.json` file remains read-only to this extension.
+
+The configuration file is created after the first setting change and defaults to:
 
 ```json
 {
@@ -184,7 +197,7 @@ All extension settings are read from `~/.pi/grok-cli.json`. The file is created 
 }
 ```
 
-Version 1 configuration and legacy Imagine and vision settings are migrated atomically while preserving feature settings. OAuth credentials remain in Pi's auth storage and are not rewritten. The vision cache remains separate at `~/.pi/grok-cli-vision-cache.json`.
+Existing `~/.pi/grok-cli.json`, `~/.pi/grok-cli-vision-cache.json`, version 1 configuration, and legacy Imagine and vision settings are migrated atomically while preserving feature settings and cache data. A conflicting file at the new location remains authoritative and the legacy file is preserved with a warning instead of being overwritten.
 
 `model` must identify an image-capable model. Invalid values are reported and replaced with safe defaults. Manual changes apply on the next image read.
 

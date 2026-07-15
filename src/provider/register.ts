@@ -16,6 +16,7 @@ import { registerGrokTools } from '../tools/register.js';
 import { bindLivePiWebAccess, ensureWebSearchDelegate } from '../tools/webSearchDelegate.js';
 import { registerVisionFeature } from '../vision/register.js';
 import { isGrokCliProvider, registerAccountManagement } from './accounts.js';
+import { removeQuotaUsage } from './quotaCache.js';
 import { registerExhaustionRotation } from './rotation.js';
 import { grokCliModelHeaders } from './stream.js';
 import { handoffGrokTools, restoreGrokTools, syncGrokTools } from './toolScope.js';
@@ -32,7 +33,9 @@ export default function registerGrokCli(pi: ExtensionAPI) {
       usesCallbackServer: true,
 
       async login(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials> {
-        return oauth.login(callbacks);
+        const credentials = await oauth.login(callbacks);
+        await removeQuotaUsage(account.provider).catch(() => undefined);
+        return credentials;
       },
 
       async refreshToken(credentials: OAuthCredentials): Promise<OAuthCredentials> {
