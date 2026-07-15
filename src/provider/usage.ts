@@ -1,14 +1,15 @@
 import type { Api, Model } from '@earendil-works/pi-ai';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { XaiOAuthError } from '../shared/errors.js';
+import { isGrokCliProvider, resolveGrokProvider, resolveGrokToken } from './accounts.js';
 import { fetchBillingUsage, formatQuota } from './billing.js';
 
 export function registerUsageCommand(pi: Pick<ExtensionAPI, 'registerCommand'>) {
   pi.registerCommand('grok-cli-usage', {
     description: 'Show Grok CLI provider status, quota, and token health',
     handler: async (_args, ctx) => {
-      const token = process.env.GROK_CLI_OAUTH_TOKEN;
-      if (token) {
+      const provider = resolveGrokProvider(ctx);
+      if (provider === 'grok-cli' && process.env.GROK_CLI_OAUTH_TOKEN) {
         ctx.ui.notify(
           '⚠️  Grok CLI: using GROK_CLI_OAUTH_TOKEN env bypass — no auto-refresh available',
           'warning',
@@ -17,13 +18,15 @@ export function registerUsageCommand(pi: Pick<ExtensionAPI, 'registerCommand'>) 
 
       try {
         const registry = ctx.modelRegistry;
-        const grokModels = registry.getAll().filter((m: Model<Api>) => m.provider === 'grok-cli');
+        const grokModels = registry
+          .getAll()
+          .filter((model: Model<Api>) => isGrokCliProvider(model.provider));
         if (grokModels.length === 0) {
           ctx.ui.notify('Grok CLI: no models registered. Run /login grok-cli first.', 'warning');
           return;
         }
 
-        const apiKey = token ?? (await registry.getApiKeyForProvider?.('grok-cli'));
+        const apiKey = await resolveGrokToken(ctx);
         if (!apiKey) {
           ctx.ui.notify(formatQuota(undefined).join('\n'), 'info');
           return;

@@ -2,6 +2,26 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach } from 'vitest';
+import { DEFAULT_CONFIG, saveConfig } from '../../src/config.js';
+
+export const TEST_ACCOUNTS = [
+  { provider: 'grok-cli', label: 'Personal' },
+  { provider: 'grok-cli-2', label: 'Work' },
+];
+
+export const oauthCredential = (access: string) => ({
+  type: 'oauth' as const,
+  access,
+  refresh: `${access}-refresh`,
+  expires: Date.now() + 60_000,
+});
+
+export function saveTestAccounts(selectedProvider = 'grok-cli-2') {
+  saveConfig({
+    ...DEFAULT_CONFIG,
+    accounts: { nextAccountNumber: 3, selectedProvider, items: TEST_ACCOUNTS },
+  });
+}
 
 /**
  * Point HOME at a fresh temp dir for the whole test file, restoring it on

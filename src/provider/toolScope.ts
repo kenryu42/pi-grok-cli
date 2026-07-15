@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { loadConfig } from '../config.js';
+import { isGrokCliProvider } from './accounts.js';
 
 export const SHIM_MODEL_IDS = new Set(['grok-build', 'grok-composer-2.5-fast']);
 
@@ -62,7 +63,7 @@ const toolScopeHandoffs: ToolScopeHandoffStore = globalToolScope.__piGrokCliTool
 globalToolScope.__piGrokCliToolScopeHandoffs = toolScopeHandoffs;
 
 function isLegacyModel(model: ToolModel | undefined) {
-  return model?.provider === 'grok-cli' && SHIM_MODEL_IDS.has(model.id);
+  return isGrokCliProvider(model?.provider) && SHIM_MODEL_IDS.has(model?.id ?? '');
 }
 
 function sameTools(currentTools: string[], nextTools: string[]) {

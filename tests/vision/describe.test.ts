@@ -5,6 +5,7 @@ import type { ExtensionContext, ToolResultEvent } from '@earendil-works/pi-codin
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_CONFIG } from '../../src/config.js';
 import { handleReadResult } from '../../src/vision/describe.js';
+import { saveTestAccounts } from './helpers.js';
 
 const BASE_URL = 'https://cli-chat-proxy.grok.com/v1';
 const PNG = Buffer.from('fake-png-bytes').toString('base64');
@@ -168,6 +169,22 @@ describe('handleReadResult — image routing', () => {
 
     const headers = (fetchMock.mock.calls[0]?.[1] as RequestInit).headers as Record<string, string>;
     expect(headers.Authorization).toBe('Bearer env-token');
+  });
+
+  it('uses the last selected Grok alias while a non-Grok model is active', async () => {
+    saveTestAccounts();
+    const getApiKeyForProvider = vi.fn(async () => 'work-token');
+    const ctx = {
+      ...buildCtx(),
+      model: { provider: 'openai', input: ['text'] },
+      modelRegistry: { getApiKeyForProvider },
+    } as unknown as ExtensionContext;
+
+    await handleReadResult(readEvent([imageBlock()]), ctx);
+
+    expect(getApiKeyForProvider).toHaveBeenCalledWith('grok-cli-2');
+    const headers = (fetchMock.mock.calls[0]?.[1] as RequestInit).headers as Record<string, string>;
+    expect(headers.Authorization).toBe('Bearer work-token');
   });
 
   it('describes multiple images with preserved order and labels', async () => {

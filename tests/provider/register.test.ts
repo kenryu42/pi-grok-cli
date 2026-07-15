@@ -4,9 +4,11 @@ import { join } from 'node:path';
 import type { Api, Model, OAuthCredentials, OAuthProviderInterface } from '@earendil-works/pi-ai';
 import type { ExtensionAPI, ProviderConfig } from '@earendil-works/pi-coding-agent';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { DEFAULT_CONFIG, saveConfig } from '../../src/config.js';
 import { GROK_SHIM_TOOL_NAMES } from '../../src/tools/register.js';
 import * as webSearchDelegate from '../../src/tools/webSearchDelegate.js';
 import { plainTheme as theme } from '../tools/toolTestHelpers.js';
+import { saveTestAccounts } from '../vision/helpers.js';
 
 const { mockPiWebAccessInstalled } = vi.hoisted(() => ({
   mockPiWebAccessInstalled: vi.fn(() => true),
@@ -345,21 +347,35 @@ describe('Grok CLI status command', () => {
   it('uses the registered provider token when no env token is set', async () => {
     delete process.env.GROK_CLI_OAUTH_TOKEN;
     setupHome();
+    saveConfig({
+      ...DEFAULT_CONFIG,
+      accounts: {
+        nextAccountNumber: 3,
+        selectedProvider: 'grok-cli-2',
+        items: [
+          { provider: 'grok-cli', label: 'Personal' },
+          { provider: 'grok-cli-2', label: 'Work' },
+        ],
+      },
+    });
     const fetchMock = vi.fn<typeof fetch>(async () =>
       billingResponse(4000, 100, '2026-07-01T00:00:00+00:00'),
     );
     globalThis.fetch = fetchMock;
     const extension = await setupExtension();
     const notify = vi.fn();
+    const getApiKeyForProvider = vi.fn(async () => 'provider-token');
 
     await extension.commands.get('grok-cli-usage')?.handler([], {
       ...statusContext(notify),
       modelRegistry: {
         ...statusContext(notify).modelRegistry,
-        getApiKeyForProvider: async () => 'provider-token',
+        getAll: () => [{ provider: 'grok-cli-2', id: 'grok-build' }],
+        getApiKeyForProvider,
       },
     });
 
+    expect(getApiKeyForProvider).toHaveBeenCalledWith('grok-cli-2');
     expect(fetchMock.mock.calls[0]?.[1]?.headers).toMatchObject({
       authorization: 'Bearer provider-token',
     });
@@ -526,7 +542,7 @@ describe('Grok CLI provider registration', () => {
     const extension = await setupExtension();
     const provider = extension.providers.get('grok-cli');
 
-    expect(provider?.name).toBe('Grok CLI');
+    expect(provider?.name).toBe('Grok CLI — Account 1');
     expect(provider?.api).toBe('openai-responses');
     expect(provider?.apiKey).toBe('$GROK_CLI_OAUTH_TOKEN');
     expect(provider?.streamSimple).toBeUndefined();
@@ -558,6 +574,41 @@ describe('Grok CLI provider registration', () => {
     ]);
   });
 
+  it('registers configured aliases with independent OAuth keys and labeled names', async () => {
+    saveTestAccounts();
+
+    const extension = await setupExtension();
+    const base = extension.providers.get('grok-cli');
+    const alias = extension.providers.get('grok-cli-2');
+
+    expect(base?.name).toBe('Grok CLI — Personal');
+    expect(base?.apiKey).toBe('$GROK_CLI_OAUTH_TOKEN');
+    expect(alias?.name).toBe('Grok CLI — Work');
+    expect(alias?.apiKey).toBeUndefined();
+    expect(alias?.models?.map((model) => model.id)).toEqual(base?.models?.map((model) => model.id));
+    expect(
+      alias?.oauth?.modifyModels?.(
+        [
+          { provider: 'grok-cli', id: 'grok-build', baseUrl: 'base' } as Model<Api>,
+          { provider: 'grok-cli-2', id: 'grok-build', baseUrl: 'old' } as Model<Api>,
+        ],
+        {
+          access: 'access-token',
+          refresh: 'refresh-token',
+          expires: 123,
+          baseUrl: 'https://example.invalid/work///',
+        } as OAuthCredentials,
+      ),
+    ).toEqual([
+      { provider: 'grok-cli', id: 'grok-build', baseUrl: 'base' },
+      {
+        provider: 'grok-cli-2',
+        id: 'grok-build',
+        baseUrl: 'https://example.invalid/work',
+      },
+    ]);
+  });
+
   it('adds conversation affinity headers only for Grok requests', async () => {
     const extension = await setupExtension();
     const grokEvent = { headers: { existing: 'keep' } as Record<string, string> };
@@ -579,6 +630,14 @@ describe('Grok CLI provider registration', () => {
     });
 
     expect(openAiEvent.headers).toEqual({ existing: 'keep' });
+
+    const aliasEvent = { headers: {} as Record<string, string> };
+    extension.handlers.get('before_provider_headers')?.(aliasEvent, {
+      ...contextForModel('grok-cli-2'),
+      sessionManager: { getSessionId: () => 'session-alias' },
+    });
+
+    expect(aliasEvent.headers).toEqual({ 'x-grok-conv-id': 'session-alias' });
   });
 
   it('sanitizes Grok provider requests with the current session id', async () => {
@@ -602,6 +661,23 @@ describe('Grok CLI provider registration', () => {
       input: [],
       instructions: 'system instruction',
       prompt_cache_key: 'session-123',
+    });
+
+    const aliasResult = extension.handlers.get('before_provider_request')?.(
+      { payload: { input: [{ role: 'system', content: 'alias instruction' }] } },
+      {
+        cwd: process.cwd(),
+        model: { provider: 'grok-cli-2', id: 'grok-build' },
+        modelRegistry: { getAll: () => [] },
+        sessionManager: { getSessionId: () => 'session-alias' },
+        ui: { notify: vi.fn() },
+      },
+    );
+
+    expect(aliasResult).toEqual({
+      input: [],
+      instructions: 'alias instruction',
+      prompt_cache_key: 'session-alias',
     });
   });
 

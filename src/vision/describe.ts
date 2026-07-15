@@ -2,6 +2,7 @@ import type { ImageContent, TextContent } from '@earendil-works/pi-ai';
 import type { ExtensionContext, ToolResultEvent } from '@earendil-works/pi-coding-agent';
 import { getBaseUrl } from '../auth/oauth.js';
 import { loadConfig, type VisionConfig } from '../config.js';
+import { resolveGrokToken } from '../provider/accounts.js';
 import { grokCliModelHeaders } from '../provider/stream.js';
 import {
   getCachePath,
@@ -240,15 +241,6 @@ function replaceImagesWithText(
   return skipped ? [...parts, skipped] : parts;
 }
 
-async function resolveApiKey(ctx: ExtensionContext): Promise<string | undefined> {
-  if (process.env.GROK_CLI_OAUTH_TOKEN) return process.env.GROK_CLI_OAUTH_TOKEN;
-  try {
-    return await ctx.modelRegistry.getApiKeyForProvider('grok-cli');
-  } catch {
-    return undefined;
-  }
-}
-
 async function describeSingle(
   img: ImageContent,
   index: number,
@@ -321,7 +313,7 @@ export async function handleReadResult(
   const selected = images.slice(0, config.maxImages);
   const skipped = images.length - selected.length;
 
-  const apiKey = await resolveApiKey(ctx);
+  const apiKey = await resolveGrokToken(ctx);
   if (!apiKey) {
     ctx.ui.notify(
       '[grok-cli-vision] No API key — run /login grok-cli or set GROK_CLI_OAUTH_TOKEN',
