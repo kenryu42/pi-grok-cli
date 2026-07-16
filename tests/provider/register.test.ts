@@ -116,10 +116,13 @@ async function setupExtension(initialActiveTools = ['read', 'bash'], piWebAccess
   const providers = new Map<string, ProviderConfig>();
   const tools = new Map<string, RegisteredTool>();
   const handlers = new Map<string, ExtensionHandler>();
+  const allHandlers = new Map<string, ExtensionHandler[]>();
   let activeTools = initialActiveTools;
   const setActiveTools = vi.fn((toolNames: string[]) => {
     activeTools = toolNames;
   });
+  const setModel = vi.fn(async (_model: { provider: string; id: string }) => true);
+  const sendUserMessage = vi.fn();
   const registerGrokCli = (await import('../../src/index.js')).default;
   registerGrokCli({
     registerProvider(name: string, config: ProviderConfig) {
@@ -127,6 +130,7 @@ async function setupExtension(initialActiveTools = ['read', 'bash'], piWebAccess
     },
     on(event: string, handler: ExtensionHandler) {
       handlers.set(event, handler);
+      allHandlers.set(event, [...(allHandlers.get(event) ?? []), handler]);
     },
     registerCommand(name: string, config: unknown) {
       commands.set(name, config as CommandConfig);
@@ -153,6 +157,8 @@ async function setupExtension(initialActiveTools = ['read', 'bash'], piWebAccess
       ].map((name) => ({ name }));
     },
     setActiveTools,
+    setModel,
+    sendUserMessage,
   } as unknown as ExtensionAPI);
   return {
     commands,
@@ -160,6 +166,11 @@ async function setupExtension(initialActiveTools = ['read', 'bash'], piWebAccess
     tools,
     handlers,
     setActiveTools,
+    setModel,
+    sendUserMessage,
+    async emit(event: string, data: unknown, ctx: TestContext) {
+      for (const handler of allHandlers.get(event) ?? []) await handler(data, ctx);
+    },
     getActiveTools: () => activeTools,
     replaceActiveTools(nextTools: string[]) {
       activeTools = [...nextTools];
@@ -587,6 +598,62 @@ describe('Grok CLI provider registration', () => {
 
     expect(mockOauthLogin).toHaveBeenCalledOnce();
     expect(loadQuotaCache().accounts['grok-cli']).toBeUndefined();
+  });
+
+  it('makes a recently exhausted account eligible after successful OAuth login', async () => {
+    saveTestAccounts('grok-cli');
+    const extension = await setupExtension();
+    const context = {
+      model: { provider: 'grok-cli', id: 'grok-build' },
+      modelRegistry: {
+        authStorage: { has: (provider: string) => provider.startsWith('grok-cli') },
+        find: (provider: string, id: string) => ({ provider, id }),
+        getAll: () => [],
+      },
+      ui: { notify: vi.fn() },
+    };
+    const exhausted = (provider: string) => ({
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        provider,
+        model: 'grok-build',
+        stopReason: 'error',
+        errorMessage: 'OpenAI API error (402): 402 "Grok Build usage balance exhausted"',
+      },
+    });
+
+    await extension.emit('message_end', exhausted('grok-cli'), context as TestContext);
+    await extension.emit('agent_settled', { type: 'agent_settled' }, context as TestContext);
+    context.model = { provider: 'grok-cli-2', id: 'grok-build' };
+    await extension.emit(
+      'input',
+      { type: 'input', source: 'extension', text: 'continue after rotation' },
+      context as TestContext,
+    );
+    await extension.emit(
+      'message_end',
+      {
+        type: 'message_end',
+        message: {
+          role: 'assistant',
+          provider: 'grok-cli-2',
+          model: 'grok-build',
+          stopReason: 'stop',
+        },
+      },
+      context as TestContext,
+    );
+    await extension.emit('agent_settled', { type: 'agent_settled' }, context as TestContext);
+
+    await extension.providers.get('grok-cli')?.oauth?.login({} as OAuthLoginCallbacks);
+    await extension.emit('message_end', exhausted('grok-cli-2'), context as TestContext);
+    await extension.emit('agent_settled', { type: 'agent_settled' }, context as TestContext);
+
+    expect(extension.setModel.mock.calls.map(([model]) => model.provider)).toEqual([
+      'grok-cli-2',
+      'grok-cli',
+    ]);
   });
 
   it('registers provider metadata and OAuth helpers', async () => {

@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import type { BillingUsage } from '../../src/provider/billing.js';
 import {
   formatCachedQuota,
+  isCachedQuotaFresh,
   loadQuotaCache,
   removeQuotaUsage,
   saveQuotaUsage,
@@ -103,5 +104,13 @@ describe('Grok CLI quota cache', () => {
         Date.parse('2026-07-15T10:30:00.000Z'),
       ),
     ).toBe('Monthly 300 / 2,000 used · Weekly unavailable · stale · 2h ago');
+  });
+
+  it('treats quota as stale exactly thirty minutes after its update', () => {
+    const entry = { updatedAt: '2026-07-15T10:00:00.000Z', ...usage(300) };
+
+    expect(isCachedQuotaFresh(entry, Date.parse('2026-07-15T10:29:59.999Z'))).toBe(true);
+    expect(isCachedQuotaFresh(entry, Date.parse('2026-07-15T10:30:00.000Z'))).toBe(false);
+    expect(formatCachedQuota(entry, Date.parse('2026-07-15T10:30:00.000Z'))).toContain('stale');
   });
 });

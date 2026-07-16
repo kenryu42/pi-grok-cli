@@ -11,6 +11,8 @@ export interface QuotaCache {
   accounts: Record<string, CachedQuota>;
 }
 
+const QUOTA_FRESHNESS_MS = 30 * 60_000;
+
 const emptyCache = (): QuotaCache => ({ version: 1, accounts: {} });
 
 function isDate(value: unknown): value is string {
@@ -130,14 +132,17 @@ function formatAge(updatedAt: string, now: number) {
   return `${Math.floor(age / 86_400_000)}d ago`;
 }
 
+export function isCachedQuotaFresh(entry: CachedQuota, now = Date.now()) {
+  return Math.max(0, now - new Date(entry.updatedAt).getTime()) < QUOTA_FRESHNESS_MS;
+}
+
 export function formatCachedQuota(entry: CachedQuota, now = Date.now()) {
-  const age = Math.max(0, now - new Date(entry.updatedAt).getTime());
   return [
     `Monthly ${entry.monthly.used.toLocaleString()} / ${entry.monthly.monthlyLimit.toLocaleString()} used`,
     entry.weekly
       ? `Weekly ${Math.round(entry.weekly.creditUsagePercent)}% used`
       : 'Weekly unavailable',
-    ...(age >= 30 * 60_000 ? ['stale'] : []),
+    ...(!isCachedQuotaFresh(entry, now) ? ['stale'] : []),
     formatAge(entry.updatedAt, now),
   ].join(' · ');
 }

@@ -100,9 +100,9 @@ When at least two configured accounts are logged in, pi-grok-cli rotates after a
 OpenAI API error (402): 402 "Grok Build usage balance exhausted"
 ```
 
-Rotation waits until Pi has finished retries, compaction, and tool activity. It selects the next authenticated account in circular configuration order, preserves the current model when available, and automatically continues the interrupted request once. Accounts already exhausted during that continuation chain are skipped. If every logged-in account returns the exact error, the extension stops without wrapping and reports that all accounts are exhausted.
+Rotation waits until Pi has finished retries, compaction, and tool activity. It preserves the current model when available and automatically continues the interrupted request once. Accounts that returned the exact error are skipped for five minutes within the current Pi session, including across new requests and successful continuations. A successful relogin makes that account immediately eligible again. If every logged-in account is exhausted or still cooling down, the extension stops without wrapping and reports that all accounts are exhausted.
 
-The attempted-account set is in memory and applies only to that continuation chain. A new user request starts fresh, so recovered quota can be detected naturally. Similar 402 messages, 401s, 429s, non-Grok errors, and non-final errors do not trigger rotation. A manual model change before failover cancels the pending rotation. Cached quota is informational and never triggers or suppresses rotation.
+Within the eligible circular fallback order, quota values cached less than 30 minutes ago rank candidates by their tightest remaining monthly or weekly percentage. Candidates with stale, missing, or invalid quota keep their circular slots, and equal scores keep circular order. Failover reads the cache only—it never fetches billing data—and quota ranking never rotates a healthy account or chooses the initial account. Similar 402 messages, 401s, 429s, non-Grok errors, and non-final errors do not trigger rotation. A manual model change before failover cancels the pending rotation.
 
 ### Model-scoped Cursor compatibility
 

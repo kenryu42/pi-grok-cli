@@ -26,6 +26,7 @@ export default function registerGrokCli(pi: ExtensionAPI) {
   const migration = migrateLegacyConfig();
   const baseUrl = getBaseUrl();
   const models = resolveModels();
+  const exhaustionRotation = registerExhaustionRotation(pi);
 
   const registerAccount = (account: GrokCliAccount) => {
     const oauthProvider = {
@@ -35,6 +36,7 @@ export default function registerGrokCli(pi: ExtensionAPI) {
       async login(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials> {
         const credentials = await oauth.login(callbacks);
         await removeQuotaUsage(account.provider).catch(() => undefined);
+        exhaustionRotation.clearRecentExhaustion(account.provider);
         return credentials;
       },
 
@@ -82,7 +84,6 @@ export default function registerGrokCli(pi: ExtensionAPI) {
 
   for (const account of loadConfig().config.accounts.items) registerAccount(account);
   const accountManagement = registerAccountManagement(pi, registerAccount);
-  registerExhaustionRotation(pi);
 
   const { webSearchRegistered } = registerGrokTools(pi);
   registerImagineFeature(pi);
