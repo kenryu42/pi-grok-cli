@@ -18,7 +18,7 @@ describe('payload sanitization', () => {
               { type: 'output_text', text: 'output text instruction' },
             ],
           },
-          { type: 'reasoning', content: 'cached reasoning' },
+          { type: 'reasoning', content: 'cached reasoning', status: 'completed' },
           { role: 'user', content: '' },
           { role: 'user', content: 'hello' },
           { role: 'system', content: 'later system instruction' },
@@ -36,13 +36,95 @@ describe('payload sanitization', () => {
     expect(payload.instructions).toBe(
       'existing instruction\n\nsystem instruction\n\ndeveloper instruction\noutput text instruction\n\nlater system instruction',
     );
-    expect(payload.input).toEqual([{ role: 'user', content: 'hello' }]);
-    expect(payload.include).toEqual(['message.output_text']);
+    expect(payload.input).toEqual([
+      { type: 'reasoning', content: 'cached reasoning' },
+      { role: 'user', content: 'hello' },
+    ]);
+    expect(payload.include).toEqual(['reasoning.encrypted_content', 'message.output_text']);
     expect(payload.prompt_cache_retention).toBeUndefined();
     expect(payload.reasoning).toEqual({ effort: 'low' });
     expect(payload.text).toEqual({ format: { type: 'json_object' } });
     expect(payload.response_format).toBeUndefined();
     expect(payload.prompt_cache_key).toBe('session-123');
+  });
+
+  it('preserves encrypted reasoning and repairs only missing reasoning-text types', () => {
+    const payload = sanitizePayload(
+      {
+        input: [
+          {
+            type: 'reasoning',
+            id: 'reasoning-1',
+            summary: [{ type: 'summary_text', text: 'summary' }],
+            content: [
+              { text: 'missing discriminator' },
+              { type: 'future_reasoning_type', text: 'keep discriminator' },
+            ],
+            encrypted_content: 'encrypted-reasoning',
+            status: 'completed',
+            future_field: { keep: true },
+          },
+        ],
+        include: ['reasoning.encrypted_content'],
+      },
+      'grok-build',
+      'session-123',
+      process.cwd(),
+    );
+
+    expect(payload.input).toEqual([
+      {
+        type: 'reasoning',
+        id: 'reasoning-1',
+        summary: [{ type: 'summary_text', text: 'summary' }],
+        content: [
+          { type: 'reasoning_text', text: 'missing discriminator' },
+          { type: 'future_reasoning_type', text: 'keep discriminator' },
+        ],
+        encrypted_content: 'encrypted-reasoning',
+        future_field: { keep: true },
+      },
+    ]);
+    expect(payload.include).toEqual(['reasoning.encrypted_content']);
+  });
+
+  it('maintains serialized input prefixes across three cumulative turns', () => {
+    const sanitizeInput = (input: unknown[]) =>
+      sanitizePayload(
+        { input: structuredClone(input), include: ['reasoning.encrypted_content'] },
+        'grok-build',
+        'session-123',
+        process.cwd(),
+      ).input as unknown[];
+    const firstTurn = [{ role: 'user', content: 'turn one' }];
+    const secondTurn = [
+      ...firstTurn,
+      {
+        type: 'reasoning',
+        id: 'reasoning-1',
+        encrypted_content: 'encrypted-1',
+        status: 'completed',
+      },
+      { role: 'assistant', content: 'answer one' },
+      { role: 'user', content: 'turn two' },
+    ];
+    const thirdTurn = [
+      ...secondTurn,
+      {
+        type: 'reasoning',
+        id: 'reasoning-2',
+        encrypted_content: 'encrypted-2',
+        status: 'completed',
+      },
+      { role: 'assistant', content: 'answer two' },
+      { role: 'user', content: 'turn three' },
+    ];
+    const first = sanitizeInput(firstTurn);
+    const second = sanitizeInput(secondTurn);
+    const third = sanitizeInput(thirdTurn);
+
+    expect(JSON.stringify(second.slice(0, first.length))).toBe(JSON.stringify(first));
+    expect(JSON.stringify(third.slice(0, second.length))).toBe(JSON.stringify(second));
   });
 
   it('preserves existing text while removing response_format', () => {
@@ -78,7 +160,7 @@ describe('payload sanitization', () => {
     expect(payload.input).toBe('plain prompt');
     expect(payload.reasoning).toBeUndefined();
     expect(payload.reasoningEffort).toBeUndefined();
-    expect(payload.include).toBeUndefined();
+    expect(payload.include).toEqual(['reasoning.encrypted_content']);
     expect(payload.prompt_cache_key).toBe('existing-session');
   });
 

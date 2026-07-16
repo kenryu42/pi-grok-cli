@@ -47,7 +47,6 @@ describe('repository layout', () => {
   it('contains the expected domain source files', () => {
     expect(globSync('src/**/*.ts').sort()).toEqual([
       'src/auth/config.ts',
-      'src/auth/grokCredentials.ts',
       'src/auth/oauth.ts',
       'src/config.ts',
       'src/imagine/aspect.ts',

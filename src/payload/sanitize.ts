@@ -245,8 +245,16 @@ export function sanitizePayload(
         if (!item || typeof item !== 'object') return item;
         const obj = item as Record<string, unknown>;
 
-        // Strip replayed reasoning items
-        if (obj.type === 'reasoning') return null;
+        if (obj.type === 'reasoning') {
+          delete obj.status;
+          if (Array.isArray(obj.content)) {
+            obj.content = obj.content.map((part) => {
+              if (!part || typeof part !== 'object' || Array.isArray(part)) return part;
+              if (typeof (part as Record<string, unknown>).type === 'string') return part;
+              return { ...(part as Record<string, unknown>), type: 'reasoning_text' };
+            });
+          }
+        }
 
         // Drop empty string content
         if (typeof obj.content === 'string' && obj.content.length === 0) return null;
@@ -301,13 +309,8 @@ export function sanitizePayload(
     delete next.reasoningEffort;
   }
 
-  // ── Strip/filter unsupported fields ──────────────────────────────────
-  if (Array.isArray(next.include)) {
-    next.include = (next.include as unknown[]).filter(
-      (item) => item !== 'reasoning.encrypted_content',
-    );
-    if ((next.include as unknown[]).length === 0) delete next.include;
-  }
+  // ── Strip unsupported fields ─────────────────────────────────────────
+  if (Array.isArray(next.include) && next.include.length === 0) delete next.include;
 
   delete next.prompt_cache_retention;
 

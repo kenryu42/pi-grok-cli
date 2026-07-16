@@ -1,21 +1,19 @@
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   closeCallbackServer,
   getBaseUrl,
-  login as loginWithCredentialReader,
+  login as oauthLogin,
   refresh,
-  type XaiOAuthCredentials,
 } from '../../src/auth/oauth.js';
 import { XaiErrorCode } from '../../src/shared/errors.js';
 
-type CompleteOAuthLoginCallbacks = Parameters<typeof loginWithCredentialReader>[0];
+type CompleteOAuthLoginCallbacks = Parameters<typeof oauthLogin>[0];
 type OAuthLoginCallbacks = Partial<CompleteOAuthLoginCallbacks>;
 const login = (callbacks: OAuthLoginCallbacks) =>
-  loginWithCredentialReader(callbacks as CompleteOAuthLoginCallbacks, async () => undefined);
-const loginWithCredentialsForTest = (
-  callbacks: OAuthLoginCallbacks,
-  credentials: XaiOAuthCredentials,
-) => loginWithCredentialReader(callbacks as CompleteOAuthLoginCallbacks, async () => credentials);
+  oauthLogin(callbacks as CompleteOAuthLoginCallbacks);
 
 const originalEnv = { ...process.env };
 const originalFetch = globalThis.fetch;
@@ -38,16 +36,6 @@ const deviceDiscoveryDocument = {
   ...discoveryDocument,
   device_authorization_endpoint: 'https://auth.x.ai/oauth/device/code',
 };
-function officialCredentials(expires: number): XaiOAuthCredentials {
-  return {
-    access: 'official-access',
-    refresh: 'official-refresh',
-    expires,
-    tokenEndpoint: 'https://auth.x.ai/oauth2/token',
-    baseUrl: 'https://cli-chat-proxy.grok.com/v1',
-  };
-}
-
 function deviceAuthorizationResponse(overrides: Record<string, unknown> = {}) {
   return Response.json({
     device_code: 'device-code',
@@ -452,91 +440,53 @@ describe('OAuth helpers without network access', () => {
     );
   });
 
-  it('offers and returns fresh official Grok credentials without a network request', async () => {
-    const fetchMock = vi.fn<typeof fetch>();
-    const onSelect = vi.fn(async () => 'existing');
-    globalThis.fetch = fetchMock;
-
-    await expect(
-      loginWithCredentialsForTest(
-        { onSelect, onDeviceCode: vi.fn() },
-        officialCredentials(Date.now() + 60_000),
-      ),
-    ).resolves.toMatchObject({
-      access: 'official-access',
-      refresh: 'official-refresh',
-      baseUrl: 'https://cli-chat-proxy.grok.com/v1',
-    });
-    expect(onSelect).toHaveBeenCalledWith({
-      message: 'Select Grok CLI login method:',
-      options: [
-        { id: 'browser', label: 'Browser login (default)' },
-        { id: 'device', label: 'Device code login (headless)' },
-        { id: 'existing', label: 'Use existing Grok Build login' },
-      ],
-    });
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it('refreshes selected expired official Grok credentials through the normal token path', async () => {
-    const fetchMock = vi.fn<typeof fetch>(async () =>
-      Response.json({ access_token: 'refreshed-access', refresh_token: 'refreshed-refresh' }),
+  it('offers only fresh login methods when an official Grok auth file exists', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'pi-grok-oauth-'));
+    process.env.HOME = home;
+    await mkdir(join(home, '.grok'));
+    await writeFile(
+      join(home, '.grok', 'auth.json'),
+      JSON.stringify({
+        'https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828': {
+          key: 'official-access',
+          refresh_token: 'official-refresh',
+          expires_at: '2030-01-02T03:04:05.000Z',
+          oidc_issuer: 'https://auth.x.ai',
+          oidc_client_id: 'b1a00492-073a-47ea-816f-4c329264a828',
+        },
+      }),
     );
-    globalThis.fetch = fetchMock;
-
-    await expect(
-      loginWithCredentialsForTest({ onSelect: async () => 'existing' }, officialCredentials(0)),
-    ).resolves.toMatchObject({
-      access: 'refreshed-access',
-      refresh: 'refreshed-refresh',
-    });
-    expect(fetchMock).toHaveBeenCalledOnce();
-    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://auth.x.ai/oauth2/token');
-  });
-
-  it('returns to fresh login after official credential refresh fails without exposing tokens', async () => {
-    const onProgress = vi.fn();
-    const onSelect = vi
-      .fn<CompleteOAuthLoginCallbacks['onSelect']>()
-      .mockResolvedValueOnce('existing')
-      .mockResolvedValueOnce('browser');
-    const fetchMock = vi.fn<typeof fetch>(async (input) => {
-      if (input === 'https://auth.x.ai/oauth2/token') {
-        return new Response('revoked official credential', { status: 401 });
-      }
-      if (input === 'https://auth.x.ai/.well-known/openid-configuration') {
-        return Response.json(deviceDiscoveryDocument);
-      }
-      return Response.json({ access_token: 'browser-access', refresh_token: 'browser-refresh' });
-    });
-    globalThis.fetch = fetchMock;
-
-    await expect(
-      loginWithCredentialsForTest(
-        { onSelect, onProgress, onDeviceCode: vi.fn(), onAuth: authorizeCallback },
-        officialCredentials(0),
-      ),
-    ).resolves.toMatchObject({ access: 'browser-access' });
-    expect(onProgress).toHaveBeenCalledWith(
-      'Existing Grok CLI login could not be refreshed. Choose a fresh login method.',
+    const fetchMock = mockBrowserLogin(
+      {
+        access_token: 'browser-access',
+        refresh_token: 'browser-refresh',
+      },
+      deviceDiscoveryDocument,
     );
-    expect(JSON.stringify(onProgress.mock.calls)).not.toContain('official-access');
-    expect(JSON.stringify(onProgress.mock.calls)).not.toContain('official-refresh');
-  });
+    const onSelect = vi.fn(async () => 'browser');
 
-  it('ignores official credentials when browser login is selected', async () => {
-    const fetchMock = mockBrowserLogin({
-      access_token: 'browser-access',
-      refresh_token: 'browser-refresh',
-    });
-
-    await expect(
-      loginWithCredentialsForTest(
-        { onSelect: async () => 'browser', onAuth: authorizeCallback },
-        officialCredentials(Date.now() + 60_000),
-      ),
-    ).resolves.toMatchObject({ access: 'browser-access' });
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    try {
+      await expect(
+        login({
+          onSelect,
+          onDeviceCode: vi.fn(),
+          onAuth: authorizeCallback,
+        }),
+      ).resolves.toMatchObject({ access: 'browser-access', refresh: 'browser-refresh' });
+      expect(onSelect).toHaveBeenCalledOnce();
+      expect(onSelect).toHaveBeenCalledWith({
+        message: 'Select Grok CLI login method:',
+        options: [
+          { id: 'browser', label: 'Browser login (default)' },
+          { id: 'device', label: 'Device code login (headless)' },
+        ],
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(JSON.stringify(fetchMock.mock.calls)).not.toContain('official-access');
+      expect(JSON.stringify(fetchMock.mock.calls)).not.toContain('official-refresh');
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
   });
 
   it('ignores an invalid-state HTTP callback and accepts the next valid callback', async () => {

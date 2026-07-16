@@ -8,7 +8,7 @@ Use your X Premium or SuperGrok subscription in [pi](https://pi.dev/) with a cle
 
 - **Vision for text-only models** — automatically describe images with a vision-capable Grok model and cache descriptions locally.
 - **Grok Imagine** — generate JPEGs from the TUI or let Grok call the `image_gen` tool, with inline previews.
-- **Subscription OAuth** — sign in through a browser or device code or reuse an official Grok Build login; tokens refresh automatically.
+- **Subscription OAuth** — sign in through a browser or device code; tokens refresh automatically.
 - **Multiple accounts** — keep independent Pi logins, switch from a TUI, and continue automatically on an exact exhausted-balance error.
 - **Model-scoped compatibility** — Cursor-style tool names only for Grok Build and Composer 2.5. All other models keep Pi's native tools.
 - **Usage tracking** — check account limits, remaining credits, and reset times from pi.
@@ -40,7 +40,6 @@ Choose **Grok CLI**, then select one of these methods:
 
 - **Browser login (default)** — opens xAI authorization and completes a PKCE exchange through a local loopback callback. If xAI shows a one-time code instead of redirecting to pi, paste that code into pi to complete the active PKCE exchange.
 - **Device code login (headless)** — displays a URL and short code for SSH, containers, and other headless environments.
-- **Use existing Grok Build login** — appears when a valid official `~/.grok/auth.json` entry is available. The file is read-only to this extension.
 
 To add another login, run `/grok-cli-accounts`, choose **＋ Add account**, and optionally label it. The extension adds a stable provider alias and pre-fills `/login <provider-id>`; press Enter to complete Pi's native login flow. Use only accounts you own or are authorized to access.
 
@@ -85,7 +84,7 @@ The table describes metadata bundled with this extension, not live model discove
 
 ### OAuth authentication
 
-Use `/login` to authenticate through a browser or device code, or reuse an official Grok Build login. Pi stores and refreshes OAuth credentials automatically. For automation, `GROK_CLI_OAUTH_TOKEN` supplies a direct token without automatic refresh.
+Use `/login` to authenticate through a browser or device code. Pi stores and refreshes OAuth credentials automatically. For automation, `GROK_CLI_OAUTH_TOKEN` supplies a direct token without automatic refresh.
 
 Run `/grok-cli-accounts` to add, switch, rename, relogin, log out, or remove accounts. Each account is registered as an independent Pi provider (`grok-cli`, `grok-cli-2`, and so on), so Pi keeps its OAuth credential separately in `auth.json`. The base `grok-cli` slot is permanent; aliases can be removed. Existing aliases keep their provider IDs, and a removed alias number is reused by the next account when it is the lowest available slot.
 
@@ -167,7 +166,7 @@ Extension-owned data is grouped under `~/.pi/grok-cli/`:
 └── quota-cache.json
 ```
 
-`config.json` contains settings and account labels. The two cache files contain derived vision descriptions and quota responses; neither contains OAuth tokens. Pi continues to own OAuth credentials in its `auth.json`, and the official `~/.grok/auth.json` file remains read-only to this extension.
+`config.json` contains settings and account labels. The two cache files contain derived vision descriptions and quota responses; neither contains OAuth tokens. Pi owns OAuth credentials in its `auth.json`; this extension does not read Grok Build credentials.
 
 The configuration file is created after the first setting change and defaults to:
 

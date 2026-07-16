@@ -19,7 +19,7 @@ The maintainer aims to acknowledge a complete report within 7 calendar days and 
 ## Security boundaries
 
 - pi-grok-cli and its tools run with the user's operating-system permissions. File and shell tools can read or modify the workspace and execute commands when the model invokes them.
-- OAuth credentials returned by this extension are stored and refreshed by pi. pi-grok-cli may read the verified official Grok CLI entry in `~/.grok/auth.json`, but never writes to that file.
+- OAuth credentials returned by this extension are stored and refreshed by pi. pi-grok-cli does not read or modify Grok Build credentials.
 - Prompts, conversation context, tool definitions, and tool results are sent to the configured Grok CLI proxy.
 - Images handled by vision routing are sent to the configured describer model. The local vision cache stores descriptions and hashes, not raw images.
 - Optional web search is delegated to `pi-web-access` and the providers configured there.
