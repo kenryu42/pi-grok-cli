@@ -4,6 +4,18 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { sanitizePayload } from '../../src/payload/sanitize.js';
 
+const sanitizeReasoning = (
+  modelId: string,
+  reasoning: Record<string, unknown>,
+  include?: string[],
+) =>
+  sanitizePayload(
+    { input: 'plain prompt', include, reasoning, reasoningEffort: reasoning.effort },
+    modelId,
+    undefined,
+    process.cwd(),
+  );
+
 describe('payload sanitization', () => {
   it('removes unsupported items and moves all instructions', () => {
     const payload = sanitizePayload(
@@ -42,7 +54,7 @@ describe('payload sanitization', () => {
     ]);
     expect(payload.include).toEqual(['reasoning.encrypted_content', 'message.output_text']);
     expect(payload.prompt_cache_retention).toBeUndefined();
-    expect(payload.reasoning).toEqual({ effort: 'low' });
+    expect(payload.reasoning).toEqual({ effort: 'low', summary: 'auto' });
     expect(payload.text).toEqual({ format: { type: 'json_object' } });
     expect(payload.response_format).toBeUndefined();
     expect(payload.prompt_cache_key).toBe('session-123');
@@ -143,12 +155,16 @@ describe('payload sanitization', () => {
     expect(payload.response_format).toBeUndefined();
   });
 
-  it('strips reasoning fields for models that do not accept reasoning effort', () => {
+  it('preserves reasoning summaries for models without effort support', () => {
     const payload = sanitizePayload(
       {
         input: 'plain prompt',
-        include: ['reasoning.encrypted_content'],
-        reasoning: { effort: 'high' },
+        include: [
+          'message.output_text',
+          'reasoning.encrypted_content',
+          'reasoning.encrypted_content',
+        ],
+        reasoning: { effort: 'high', summary: 'auto', future_option: 'keep' },
         reasoningEffort: 'high',
         prompt_cache_key: 'existing-session',
       },
@@ -158,10 +174,37 @@ describe('payload sanitization', () => {
     );
 
     expect(payload.input).toBe('plain prompt');
+    expect(payload.reasoning).toEqual({ summary: 'auto', future_option: 'keep' });
+    expect(payload.reasoningEffort).toBeUndefined();
+    expect(payload.include).toEqual(['message.output_text', 'reasoning.encrypted_content']);
+    expect(payload.prompt_cache_key).toBe('existing-session');
+  });
+
+  it('removes empty reasoning requests without adding an encrypted-content include', () => {
+    const payload = sanitizeReasoning('grok-build', { effort: 'none' }, ['message.output_text']);
+
     expect(payload.reasoning).toBeUndefined();
     expect(payload.reasoningEffort).toBeUndefined();
+    expect(payload.include).toEqual(['message.output_text']);
+  });
+
+  it('adds encrypted-content capture when active reasoning has no include list', () => {
+    const payload = sanitizeReasoning('grok-build', { effort: 'high', summary: 'detailed' });
+
+    expect(payload.reasoning).toEqual({ summary: 'detailed' });
     expect(payload.include).toEqual(['reasoning.encrypted_content']);
-    expect(payload.prompt_cache_key).toBe('existing-session');
+  });
+
+  it('removes reasoning fields for non-reasoning models', () => {
+    const payload = sanitizeReasoning(
+      'grok-cli/GROK-COMPOSER-2.5-fast',
+      { effort: 'high', summary: 'auto' },
+      ['message.output_text', 'reasoning.encrypted_content'],
+    );
+
+    expect(payload.reasoning).toBeUndefined();
+    expect(payload.reasoningEffort).toBeUndefined();
+    expect(payload.include).toEqual(['message.output_text']);
   });
 
   it('normalizes image parts and rewrites image tool output', () => {

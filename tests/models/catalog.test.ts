@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { resolveModels, supportsReasoningEffort } from '../../src/models/catalog.js';
+import {
+  resolveModels,
+  supportsReasoning,
+  supportsReasoningEffort,
+} from '../../src/models/catalog.js';
 
 const originalEnv = { ...process.env };
 
@@ -13,6 +17,12 @@ describe('model catalog', () => {
     expect(supportsReasoningEffort('grok-4.5')).toBe(true);
     expect(supportsReasoningEffort('grok-cli/GROK-COMPOSER-2.5-fast')).toBe(false);
     expect(supportsReasoningEffort('grok-4.20-0309-non-reasoning')).toBe(false);
+  });
+
+  it('reports reasoning support by normalized model name', () => {
+    expect(supportsReasoning('grok-cli/GROK-BUILD')).toBe(true);
+    expect(supportsReasoning('grok-cli/GROK-COMPOSER-2.5-fast')).toBe(false);
+    expect(supportsReasoning('grok-4.20-0309-non-reasoning')).toBe(false);
   });
 
   it('uses fallback models when no override is configured', () => {
@@ -34,7 +44,7 @@ describe('model catalog', () => {
       input: ['text'],
     });
     expect(models.find((model) => model.id === 'grok-build')).toMatchObject({
-      contextWindow: 512_000,
+      contextWindow: 500_000,
     });
     expect(models.find((model) => model.id === 'grok-4.20-0309-reasoning')).toMatchObject({
       cost: { input: 1.25, output: 2.5, cacheRead: 0.2, cacheWrite: 0 },
@@ -61,5 +71,6 @@ describe('model catalog', () => {
       maxTokens: 30_000,
     });
     expect(models[1].name).toBe('Grok Build');
+    expect(supportsReasoning('grok-cli/CUSTOM-MODEL')).toBe(true);
   });
 });

@@ -73,7 +73,7 @@ The table describes metadata bundled with this extension, not live model discove
 | Model ID | Registered context | Reasoning | Input | Coding tools |
 | --- | ---: | --- | --- | --- |
 | `grok-composer-2.5-fast` | 200K | no | text; images can be described through vision routing | Cursor-compatible names |
-| `grok-build` | 512K | yes | text + image | Cursor-compatible names |
+| `grok-build` | 500K | yes | text + image | Cursor-compatible names |
 | `grok-4.3` | 1M | yes | text + image | native pi names |
 | `grok-4.5` | 500K | yes | text + image | native pi names |
 | `grok-4.20-0309-reasoning` | 2M | yes | text + image | native pi names |

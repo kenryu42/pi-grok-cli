@@ -58,7 +58,7 @@ const FALLBACK_MODELS: GrokCliModelConfig[] = [
     reasoning: true,
     input: ['text', 'image'],
     cost: COST_BUILD,
-    contextWindow: 512_000,
+    contextWindow: 500_000,
     maxTokens: 30_000,
   },
   {
@@ -118,11 +118,22 @@ const FALLBACK_MODELS: GrokCliModelConfig[] = [
 
 const EFFORT_CAPABLE_PREFIXES = ['grok-3-mini', 'grok-4.20-multi-agent', 'grok-4.3', 'grok-4.5'];
 
+const normalizedModelName = (modelId: string) =>
+  (modelId.split('/').at(-1) ?? modelId).toLowerCase();
+
+const modelConfig = (modelId: string) => {
+  const name = normalizedModelName(modelId);
+  return resolveModels().find((entry) => entry.id.toLowerCase() === name);
+};
+
+export function supportsReasoning(modelId: string): boolean {
+  return modelConfig(modelId)?.reasoning ?? true;
+}
+
 export function supportsReasoningEffort(modelId: string): boolean {
-  const parts = modelId.split('/');
-  const name = parts.at(-1) ?? modelId;
-  const model = resolveModels().find((entry) => entry.id.toLowerCase() === name.toLowerCase());
-  if (!EFFORT_CAPABLE_PREFIXES.some((prefix) => name.toLowerCase().startsWith(prefix))) {
+  const name = normalizedModelName(modelId);
+  const model = modelConfig(modelId);
+  if (!EFFORT_CAPABLE_PREFIXES.some((prefix) => name.startsWith(prefix))) {
     return false;
   }
   if (!model?.reasoning) return false;

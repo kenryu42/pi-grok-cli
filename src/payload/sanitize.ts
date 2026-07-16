@@ -2,7 +2,7 @@
  * Payload sanitization for xAI's Responses API via cli-chat-proxy.grok.com.
  *
  * xAI's endpoint has quirks compared to stock OpenAI:
- *   - Replayed `reasoning` items in input cause 400 errors.
+ *   - Replayed `reasoning` items must drop output-only status and carry typed content.
  *   - `reasoning.effort` is only supported on a subset of models.
  *   - Empty-string content items cause validation failures.
  *   - `function_call_output.output` cannot contain image arrays.
@@ -22,7 +22,9 @@
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { extname, isAbsolute, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { supportsReasoningEffort } from '../models/catalog.js';
+import { supportsReasoning, supportsReasoningEffort } from '../models/catalog.js';
+
+const ENCRYPTED_REASONING_INCLUDE = 'reasoning.encrypted_content';
 
 // ─── Content text extraction ─────────────────────────────────────────────────
 
@@ -297,19 +299,43 @@ export function sanitizePayload(
     delete next.response_format;
   }
 
-  // ── Reasoning effort ──────────────────────────────────────────────────
-  if (supportsReasoningEffort(modelId)) {
-    const reasoning = next.reasoning as Record<string, unknown> | undefined;
-    if (reasoning) {
-      const effort = reasoning.effort === 'minimal' ? 'low' : reasoning.effort;
-      next.reasoning = reasoning.summary !== undefined ? { effort } : { ...reasoning, effort };
-    }
-  } else {
+  // ── Reasoning request configuration ───────────────────────────────────
+  const reasoning =
+    next.reasoning && typeof next.reasoning === 'object' && !Array.isArray(next.reasoning)
+      ? { ...(next.reasoning as Record<string, unknown>) }
+      : undefined;
+  const reasoningSupported = supportsReasoning(modelId);
+  delete next.reasoningEffort;
+
+  if (!reasoningSupported || !reasoning) {
     delete next.reasoning;
-    delete next.reasoningEffort;
+  } else {
+    if (supportsReasoningEffort(modelId)) {
+      if (reasoning.effort === 'minimal') reasoning.effort = 'low';
+      if (reasoning.effort === undefined) delete reasoning.effort;
+    } else {
+      delete reasoning.effort;
+    }
+
+    if (Object.keys(reasoning).length === 0) delete next.reasoning;
+    else next.reasoning = reasoning;
   }
 
   // ── Strip unsupported fields ─────────────────────────────────────────
+  if (Array.isArray(next.include)) {
+    const hasReasoning = next.reasoning !== undefined;
+    let keptEncryptedReasoning = false;
+    const include = next.include.filter((item) => {
+      if (item !== ENCRYPTED_REASONING_INCLUDE) return true;
+      if (!reasoningSupported || keptEncryptedReasoning) return false;
+      keptEncryptedReasoning = true;
+      return true;
+    });
+    if (hasReasoning && !keptEncryptedReasoning) include.push(ENCRYPTED_REASONING_INCLUDE);
+    next.include = include;
+  } else if (next.reasoning !== undefined) {
+    next.include = [ENCRYPTED_REASONING_INCLUDE];
+  }
   if (Array.isArray(next.include) && next.include.length === 0) delete next.include;
 
   delete next.prompt_cache_retention;
