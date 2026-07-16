@@ -3,12 +3,12 @@ import { grokCliModelHeaders } from '../../src/provider/stream.js';
 
 // User-Agent value the live inference endpoint accepts. Mirror of the
 // open-grok-build opencode plugin; changing it here will break the 426 gate.
-const EXPECTED_USER_AGENT = 'grok-pager/0.2.91 grok-shell/0.2.91 (macos; aarch64)';
+const EXPECTED_USER_AGENT = 'grok-pager/0.2.101 grok-shell/0.2.101 (macos; aarch64)';
 
 function expectStaticHeaders(headers: Record<string, string>): void {
   expect(headers['User-Agent']).toBe(EXPECTED_USER_AGENT);
   expect(headers['x-grok-client-identifier']).toBe('grok-pager');
-  expect(headers['x-grok-client-version']).toBe('0.2.91');
+  expect(headers['x-grok-client-version']).toBe('0.2.101');
   expect(headers['x-xai-token-auth']).toBe('xai-grok-cli');
   expect(headers['x-grok-model-override']).toBe('grok-4');
 }

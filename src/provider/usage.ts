@@ -1,5 +1,6 @@
 import type { Api, Model } from '@earendil-works/pi-ai';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
+import { formatGrokCliAccessDeniedHint } from '../auth/config.js';
 import { XaiOAuthError } from '../shared/errors.js';
 import { fetchBillingUsage, formatQuota } from './billing.js';
 
@@ -33,10 +34,11 @@ export function registerUsageCommand(pi: Pick<ExtensionAPI, 'registerCommand'>) 
           ctx.ui.notify('Fetching grok cli usage…', 'info');
           ctx.ui.notify(formatQuota(await fetchBillingUsage(apiKey)).join('\n'), 'info');
         } catch (err) {
-          ctx.ui.notify(
-            `Grok CLI billing refresh failed: ${err instanceof Error ? err.message : String(err)}`,
-            'warning',
-          );
+          const message = err instanceof Error ? err.message : String(err);
+          ctx.ui.notify(`Grok CLI billing refresh failed: ${message}`, 'warning');
+          if (/\b403\b|Access denied/i.test(message)) {
+            ctx.ui.notify(formatGrokCliAccessDeniedHint(apiKey), 'warning');
+          }
           ctx.ui.notify(formatQuota(undefined).join('\n'), 'info');
         }
       } catch (err) {

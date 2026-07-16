@@ -11,7 +11,7 @@
 
 import { createServer } from 'node:http';
 import { XaiErrorCode, XaiOAuthError } from '../shared/errors.js';
-import { getBaseUrl, XAI_ISSUER, XAI_OAUTH_CLIENT_ID } from './config.js';
+import { getBaseUrl, XAI_ISSUER, XAI_OAUTH_CLIENT_ID, XAI_OAUTH_SCOPE } from './config.js';
 import { readGrokCredentials } from './grokCredentials.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -19,9 +19,7 @@ import { readGrokCredentials } from './grokCredentials.js';
 const ISSUER = XAI_ISSUER;
 const DISCOVERY_URL = `${ISSUER}/.well-known/openid-configuration`;
 const CLIENT_ID = XAI_OAUTH_CLIENT_ID;
-const SCOPE =
-  process.env.PI_GROK_CLI_OAUTH_SCOPE ||
-  'openid profile email offline_access grok-cli:access api:access';
+const SCOPE = XAI_OAUTH_SCOPE;
 const CALLBACK_HOST = process.env.PI_GROK_CLI_CALLBACK_HOST || '127.0.0.1';
 const CALLBACK_PORT = Number.parseInt(process.env.PI_GROK_CLI_CALLBACK_PORT || '56122', 10);
 const CALLBACK_PATH = '/callback';

@@ -6,6 +6,7 @@ import type {
   OAuthProviderInterface,
 } from '@earendil-works/pi-ai';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
+import { formatGrokCliAccessDeniedHint, missingGrokCliScopes } from '../auth/config.js';
 import * as oauth from '../auth/oauth.js';
 import { getBaseUrl, type XaiOAuthCredentials } from '../auth/oauth.js';
 import { migrateLegacyConfig } from '../config.js';
@@ -101,6 +102,17 @@ export default function registerGrokCli(pi: ExtensionAPI) {
         '[pi-grok-cli] Using GROK_CLI_OAUTH_TOKEN bypass — no auto-refresh, no model discovery',
         'warning',
       );
+    }
+
+    try {
+      const apiKey =
+        process.env.GROK_CLI_OAUTH_TOKEN ??
+        (await ctx.modelRegistry.getApiKeyForProvider?.('grok-cli'));
+      if (apiKey && missingGrokCliScopes(apiKey).length > 0) {
+        ctx.ui.notify(`[pi-grok-cli] ${formatGrokCliAccessDeniedHint(apiKey)}`, 'warning');
+      }
+    } catch {
+      // Auth inspection is best-effort; never block session start.
     }
 
     if (!webSearchRegistered) return;

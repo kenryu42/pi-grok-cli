@@ -171,7 +171,7 @@ See [Advanced configuration](./CONFIGURATION.md) for OAuth, callback, endpoint, 
 | --- | --- |
 | grok-cli is missing from `/model` | Confirm the package appears in `pi list`, run `/login`, choose **Grok CLI**, then restart pi or run `/reload`. |
 | Browser login cannot bind or complete | Paste the complete callback URL into pi when prompted. If xAI displays a one-time code instead, paste it into the same prompt. Otherwise, use device-code login or adjust `PI_GROK_CLI_CALLBACK_HOST` and `PI_GROK_CLI_CALLBACK_PORT`. Never post the callback URL or authorization code publicly. |
-| Authentication returns HTTP 401 or 403 | Run `/login` again and confirm the account can access the selected model. Replace an expired `GROK_CLI_OAUTH_TOKEN` if using the bypass. |
+| Authentication returns HTTP 401 or 403 | Run `/login` again and prefer **Use existing Grok Build login** when the official Grok CLI works. Fresh browser login must request conversation scopes; accounts without SuperGrok/Grok CLI access still get `Access denied`. Replace an expired `GROK_CLI_OAUTH_TOKEN` if using the bypass. The `OpenAI API error` prefix is only Pi's OpenAI-compatible transport wrapper, not a request to OpenAI. |
 | A listed model is unavailable | Availability can differ by account or region, and the catalog is bundled rather than discovered live. Try another model or update the extension. |
 | Images are not being described | Run `/grok-cli-vision:status`, confirm routing is on, and verify Grok authentication. Native image-capable models bypass routing by design. |
 

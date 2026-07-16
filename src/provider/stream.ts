@@ -1,6 +1,6 @@
 // Grok CLI client version. Keep it in sync with the version the official Grok
 // CLI client emits (observed in captured cli-chat-proxy.grok.com traffic).
-export const GROK_CLI_VERSION = '0.2.91';
+export const GROK_CLI_VERSION = '0.2.101';
 
 // The version gate reads the client version out of User-Agent. The accepted
 // format is the product/version pair the official clients emit — both the pager
