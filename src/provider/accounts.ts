@@ -416,13 +416,14 @@ async function fallbackBeforeRemoval(
   config: GrokCliConfig,
   removed: GrokCliAccount,
 ) {
-  const needsFallback =
-    config.accounts.selectedProvider === removed.provider ||
-    ctx.model?.provider === removed.provider;
-  if (!needsFallback) return undefined;
   const candidates = config.accounts.items.filter(
     (account) => account.provider !== removed.provider && hasAccountAuth(ctx, account.provider),
   );
+  if (ctx.model?.provider !== removed.provider) {
+    return config.accounts.selectedProvider === removed.provider
+      ? (candidates[0]?.provider ?? GROK_CLI_PROVIDER)
+      : config.accounts.selectedProvider;
+  }
   for (const account of candidates) {
     const target =
       ctx.modelRegistry.find(account.provider, ctx.model?.id ?? DEFAULT_GROK_MODEL) ??

@@ -727,6 +727,47 @@ describe('/grok-cli-accounts', () => {
     expect(extension.unregisterProvider).toHaveBeenCalledWith('grok-cli-2');
   });
 
+  it('does not switch a non-Grok model when removing the selected alias', async () => {
+    configureAccounts('grok-cli-2');
+    const extension = setup({
+      auth: authenticatedAccounts(),
+      confirms: [true],
+      model: { provider: 'openai', id: 'gpt-5' },
+      preserveHome: true,
+      selections: ['Manage accounts', 'Work — Active', 'Log out and remove'],
+    });
+
+    await runAccountsCommand(extension);
+
+    expect(extension.setModel).not.toHaveBeenCalled();
+    expect(loadConfig().config.accounts.selectedProvider).toBe('grok-cli');
+    expect(extension.unregisterProvider).toHaveBeenCalledWith('grok-cli-2');
+  });
+
+  it('keeps the selected account when removing another inactive alias', async () => {
+    configureAccounts(
+      'grok-cli-2',
+      [...TEST_ACCOUNTS, { provider: 'grok-cli-3', label: 'Client' }],
+      4,
+    );
+    const extension = setup({
+      auth: {
+        ...authenticatedAccounts(),
+        'grok-cli-3': oauthCredential('client'),
+      },
+      confirms: [true],
+      model: { provider: 'openai', id: 'gpt-5' },
+      preserveHome: true,
+      selections: ['Manage accounts', 'Client — Logged in', 'Log out and remove'],
+    });
+
+    await runAccountsCommand(extension);
+
+    expect(extension.setModel).not.toHaveBeenCalled();
+    expect(loadConfig().config.accounts.selectedProvider).toBe('grok-cli-2');
+    expect(extension.unregisterProvider).toHaveBeenCalledWith('grok-cli-3');
+  });
+
   it('defers unregistering an active alias when no authenticated fallback exists', async () => {
     configureAccounts('grok-cli-2');
     const extension = setup({
