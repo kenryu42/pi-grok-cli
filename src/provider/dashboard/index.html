@@ -35,20 +35,22 @@
         >
           <span class="refresh-glyph" aria-hidden="true">↻</span>
         </button>
-        <button id="add-account" class="button primary" type="button">Add Account</button>
+        <button id="add-account" class="button primary" type="button">Add account</button>
       </div>
     </header>
 
     <main>
-      <div id="accounts" class="account-grid" aria-busy="true"></div>
+      <div id="accounts" class="account-grid" aria-busy="true">
+        <p class="grid-message">Loading accounts…</p>
+      </div>
     </main>
 
-    <dialog id="action-dialog">
+    <dialog id="action-dialog" aria-labelledby="dialog-title" aria-describedby="dialog-message">
       <form method="dialog" class="dialog-panel">
         <h2 id="dialog-title"></h2>
         <p id="dialog-message" class="dialog-message"></p>
         <label id="dialog-label" for="dialog-input">Account label</label>
-        <input id="dialog-input" maxlength="40" autocomplete="off" />
+        <input id="dialog-input" maxlength="40" autocomplete="off" spellcheck="false" />
         <div class="dialog-actions">
           <button id="dialog-cancel" type="button" class="button ghost">Cancel</button>
           <button type="submit" id="dialog-confirm" value="confirm" class="button primary">

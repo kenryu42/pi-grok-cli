@@ -16,6 +16,7 @@ const toastStatus = document.querySelector('#toast');
 const toastAlert = document.querySelector('#toast-alert');
 
 let lastState = '';
+let wasOffline = false;
 let entranceDone = false;
 let timer;
 
@@ -92,6 +93,9 @@ const modal = ({ title, message, value, confirm = 'Confirm', danger = false, can
   });
 
 dialogCancel.addEventListener('click', () => dialog.close('cancel'));
+dialog.addEventListener('click', (event) => {
+  if (event.target === dialog) dialog.close('cancel');
+});
 
 const percent = (used, limit) =>
   !Number.isFinite(used) || !Number.isFinite(limit) || limit <= 0
@@ -145,7 +149,10 @@ const statusPill = (account) => {
   const pill = element('p', `status-pill${variant ? ` ${variant}` : ''}`);
   const dot = element('span', 'status-dot');
   dot.setAttribute('aria-hidden', 'true');
-  pill.append(dot, element('span', '', account.status));
+  pill.append(
+    dot,
+    element('span', '', account.login.state === 'pending' ? 'Logging in…' : account.status),
+  );
   return pill;
 };
 
@@ -314,6 +321,7 @@ const accountCard = (account, index) => {
     card.append(head, body);
     return card;
   }
+  const errorText = account.login.error || account.login.quotaError;
   if (account.quota) {
     body.append(
       quotaRow(
@@ -337,7 +345,7 @@ const accountCard = (account, index) => {
     if (!account.quota.fresh) freshness.append(element('span', 'tag', 'Stale'));
     freshness.append(element('span', '', `Updated ${dateLabel(account.quota.updatedAt)}`));
     body.append(freshness);
-  } else {
+  } else if (!errorText) {
     body.append(
       element(
         'p',
@@ -348,8 +356,8 @@ const accountCard = (account, index) => {
       ),
     );
   }
-  if (account.login.error || account.login.quotaError) {
-    body.append(element('p', 'card-error', account.login.error || account.login.quotaError));
+  if (errorText) {
+    body.append(element('p', 'card-error', errorText));
   }
 
   card.append(head, body, cardActions(account));
@@ -378,7 +386,10 @@ const render = (state) => {
       .filter(([, value]) => value),
   );
   if (entranceDone) accountsRoot.classList.add('settled');
-  accountsRoot.replaceChildren(...state.accounts.map(accountCard));
+  const children = state.accounts.length
+    ? state.accounts.map(accountCard)
+    : [element('p', 'grid-message', 'No accounts configured. Use Add account to connect one.')];
+  accountsRoot.replaceChildren(...children);
   entranceDone = true;
   for (const [provider, value] of codes) {
     const input = accountsRoot.querySelector(`[data-provider="${provider}"] input[name="code"]`);
@@ -403,24 +414,37 @@ async function refreshState(force = false) {
   try {
     const state = await api('/api/state');
     const serialized = JSON.stringify(state);
-    if (force || serialized !== lastState) {
+    if (force || wasOffline || serialized !== lastState) {
       lastState = serialized;
       render(state);
     }
+    wasOffline = false;
     schedule(state);
   } catch (error) {
     clearTimeout(timer);
     linkState.className = 'link-pill error';
     linkText.textContent = 'Offline';
     accountsRoot.setAttribute('aria-busy', 'false');
-    accountsRoot.replaceChildren(
-      element(
-        'p',
-        'grid-message',
-        'Dashboard connection lost. Run /grok-cli-accounts gui to reopen it.',
-      ),
-    );
-    showToast(error.message, true);
+    // Keep the last good state on screen once loaded; a stale console beats a blank one.
+    if (!lastState) {
+      accountsRoot.replaceChildren(
+        element(
+          'p',
+          'grid-message',
+          'Dashboard connection lost. Run /grok-cli-accounts gui to reopen it.',
+        ),
+      );
+    }
+    if (!wasOffline) {
+      showToast(
+        error instanceof TypeError
+          ? 'Connection to the dashboard server failed. Retrying…'
+          : error.message,
+        true,
+      );
+    }
+    wasOffline = true;
+    if (!document.hidden) timer = setTimeout(() => refreshState(), 5000);
   }
 }
 
@@ -448,7 +472,9 @@ refreshButton.addEventListener('click', async () => {
   try {
     const result = await mutation('/api/quotas/refresh', 'POST');
     showToast(
-      `Updated ${result.updated} account${result.updated === 1 ? '' : 's'}; ${result.failed.length} failed.`,
+      result.failed.length
+        ? `Updated ${result.updated} account${result.updated === 1 ? '' : 's'}; ${result.failed.length} failed.`
+        : `Updated ${result.updated} account${result.updated === 1 ? '' : 's'}.`,
     );
     await refreshState(true);
   } catch (error) {

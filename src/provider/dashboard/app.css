@@ -7,7 +7,7 @@
   --border-strong: rgb(255 255 255 / 14%);
   --text: #f7f8f8;
   --muted: #8a8f98;
-  --dim: #757a83;
+  --dim: #7a7f89;
   --accent: #5e6ad2;
   --accent-ring: rgb(94 106 210 / 45%);
   --primary-hover: #dcdde2;
@@ -74,7 +74,8 @@ p {
   margin: 0;
 }
 
-[hidden] {
+/* Doubled selector so the utility beats component display rules (.dialog-panel label, .button). */
+[hidden][hidden] {
   display: none;
 }
 
@@ -482,6 +483,10 @@ main {
   margin-top: 6px;
   color: var(--dim);
   font-size: 11.5px;
+}
+
+.quota-meta > span:last-child {
+  margin-left: auto;
 }
 
 .quota-meta .mono {
