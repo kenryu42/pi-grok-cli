@@ -163,7 +163,7 @@ describe('account dashboard loopback server', () => {
     expect(page.status).toBe(200);
     expect(page.headers.get('content-security-policy')).toContain("default-src 'self'");
     expect(page.headers.get('cache-control')).toBe('no-store');
-    expect(await page.text()).toContain('Grok accounts');
+    expect(await page.text()).toContain('Pi Grok CLI');
     expect(await state.json()).toMatchObject({
       accounts: [
         {

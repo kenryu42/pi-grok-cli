@@ -217,7 +217,7 @@ export async function startAccountDashboard(
         send(
           res,
           status,
-          `<!doctype html><title>Grok accounts</title><h1>Grok accounts</h1><p>${escapeHtml(publicError(error))}</p>`,
+          `<!doctype html><title>Pi Grok CLI</title><h1>Pi Grok CLI</h1><p>${escapeHtml(publicError(error))}</p>`,
           'text/html',
         );
         return;
