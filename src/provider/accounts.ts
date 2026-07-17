@@ -450,27 +450,24 @@ async function manageAccount(
     ? ['Rename', 'Environment token instructions', 'Back']
     : ['Rename', loginLabel, removeLabel, 'Back'];
   const action = await ctx.ui.select(`Manage “${account.label}”:`, options);
-  if (action === 'Rename') {
-    await renameAccount(ctx, config, account, manager);
-    return;
-  }
-  if (action === loginLabel) {
-    prefillLogin(ctx, account.provider);
-    return;
-  }
-  if (action === 'Environment token instructions') {
-    ctx.ui.notify(
-      'Unset GROK_CLI_OAUTH_TOKEN and restart Pi to remove the environment token.',
-      'info',
-    );
-    return;
-  }
-  if (action === 'Log out') {
-    await removeBaseAccount(ctx, account, manager);
-    return;
-  }
-  if (action === 'Log out and remove') {
-    await removeAlias(ctx, account, manager);
+  switch (action) {
+    case 'Rename':
+      await renameAccount(ctx, config, account, manager);
+      return;
+    case loginLabel:
+      prefillLogin(ctx, account.provider);
+      return;
+    case 'Environment token instructions':
+      ctx.ui.notify(
+        'Unset GROK_CLI_OAUTH_TOKEN and restart Pi to remove the environment token.',
+        'info',
+      );
+      return;
+    case 'Log out':
+      await removeBaseAccount(ctx, account, manager);
+      return;
+    case 'Log out and remove':
+      await removeAlias(ctx, account, manager);
   }
 }
 
