@@ -12,6 +12,8 @@
   --dim: oklch(0.62 0.015 260);
   --accent: oklch(0.55 0.16 275);
   --accent-ring: oklch(0.55 0.16 275 / 45%);
+  --accent-soft: oklch(0.55 0.16 275 / 14%);
+  --accent-text: oklch(0.8 0.1 275);
   --ok: oklch(0.72 0.14 160);
   --ok-soft: oklch(0.72 0.14 160 / 14%);
   --amber: oklch(0.84 0.14 90);
@@ -276,8 +278,7 @@ input:hover {
 
 /* ---------- Buttons ---------- */
 
-.button,
-.icon-button {
+.button {
   display: inline-flex;
   gap: 7px;
   align-items: center;
@@ -342,30 +343,6 @@ input:hover {
   height: 30px;
   padding: 0 10px;
   font-size: 12px;
-}
-
-.icon-button {
-  width: 34px;
-  padding: 0;
-  border-color: var(--border);
-  background: transparent;
-  color: var(--muted);
-  font-size: 15px;
-}
-
-.icon-button:hover:not(:disabled) {
-  border-color: var(--border-strong);
-  background: var(--panel-raised);
-  color: var(--text);
-}
-
-.refresh-glyph {
-  display: inline-block;
-  line-height: 1;
-}
-
-.is-refreshing .refresh-glyph {
-  animation: spin 900ms linear infinite;
 }
 
 .link-button {
@@ -550,6 +527,17 @@ body:has(.link-pill.error) main {
   text-overflow: ellipsis;
 }
 
+.plan-pill {
+  flex: none;
+  padding: 3px 9px;
+  border: 1px solid var(--accent-ring);
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 .status-dot {
   width: 6px;
   height: 6px;
@@ -627,6 +615,10 @@ body:has(.link-pill.error) main {
 .quota-gauge.danger {
   --gauge-color: var(--red);
   filter: drop-shadow(0 0 7px oklch(0.65 0.19 25 / 35%));
+}
+
+.account-grid.refreshing .quota-gauge {
+  animation: pulse 1.6s ease-in-out infinite;
 }
 
 .gauge-value {
@@ -962,12 +954,6 @@ dialog[open]::backdrop {
   }
 }
 
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 @keyframes pulse {
   50% {
     opacity: 0.4;
@@ -994,13 +980,8 @@ dialog[open]::backdrop {
 
 @media (pointer: coarse) {
   .button,
-  .icon-button,
   input {
     height: 44px;
-  }
-
-  .icon-button {
-    width: 44px;
   }
 
   .button.small {
@@ -1012,14 +993,13 @@ dialog[open]::backdrop {
 
 @media (prefers-reduced-motion: reduce) {
   .account-grid:not(.settled) .account-card,
+  .account-grid.refreshing .quota-gauge,
   .link-pill.pending .link-dot,
-  .status-pill.pending .status-dot,
-  .is-refreshing .refresh-glyph {
+  .status-pill.pending .status-dot {
     animation: none;
   }
 
   .button,
-  .icon-button,
   .account-card::before,
   .quota-gauge,
   #field,

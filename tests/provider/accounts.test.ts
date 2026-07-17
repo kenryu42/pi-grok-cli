@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_CONFIG, loadConfig, saveConfig } from '../../src/config.js';
 import {
   isGrokCliProvider,
+  planTier,
   registerAccountManagement,
   resolveGrokProvider,
   resolveGrokToken,
@@ -208,6 +209,13 @@ describe('Grok CLI account helpers', () => {
     expect(isGrokCliProvider('grok-cli-work')).toBe(false);
   });
 
+  it('maps monthly credit caps to plan tiers', () => {
+    expect(planTier(0)).toBe('free');
+    expect(planTier(4000)).toBe('supergrok-lite');
+    expect(planTier(20000)).toBe('supergrok');
+    expect(planTier(20001)).toBe('supergrok-heavy');
+  });
+
   it('resolves the current Grok alias or the persisted selection for other models', async () => {
     configureAccounts('grok-cli-2');
     const getApiKeyForProvider = vi.fn(async (provider: string) => `${provider}-token`);
@@ -267,6 +275,7 @@ describe('/grok-cli-accounts', () => {
       authenticated: true,
       active: false,
       environment: false,
+      plan: 'supergrok-lite',
       quota: {
         monthly: { monthlyLimit: 2000, used: 700 },
         weekly: { creditUsagePercent: 35 },
@@ -344,7 +353,7 @@ describe('/grok-cli-accounts', () => {
     const extension = setup({
       auth: authenticatedAccounts(),
       preserveHome: true,
-      selections: ['Manage accounts', 'Work — Logged in', 'Back'],
+      selections: ['Manage accounts', 'Work — Authenticated', 'Back'],
     });
 
     await runAccountsCommand(extension);
@@ -590,7 +599,7 @@ describe('/grok-cli-accounts', () => {
       },
       model: { provider: 'grok-cli', id: 'grok-composer-2.5-fast' },
       preserveHome: true,
-      selections: ['Work — Logged in'],
+      selections: ['Work — Authenticated'],
     });
 
     await runAccountsCommand(extension);
@@ -608,7 +617,7 @@ describe('/grok-cli-accounts', () => {
       auth: { 'grok-cli-2': oauthCredential('work') },
       model: { provider: 'openai', id: 'gpt-5' },
       preserveHome: true,
-      selections: ['Work — Logged in'],
+      selections: ['Work — Authenticated'],
     });
 
     await runAccountsCommand(extension);
@@ -634,7 +643,7 @@ describe('/grok-cli-accounts', () => {
     const extension = setup({
       auth: { 'grok-cli-2': oauthCredential('work') },
       preserveHome: true,
-      selections: ['Work — Logged in'],
+      selections: ['Work — Authenticated'],
       setModel: [false],
     });
 
@@ -711,7 +720,7 @@ describe('/grok-cli-accounts', () => {
       confirms: [true],
       model: { provider: 'grok-cli', id: 'grok-build' },
       preserveHome: true,
-      selections: ['Manage accounts', 'Work — Logged in', 'Log out and remove'],
+      selections: ['Manage accounts', 'Work — Authenticated', 'Log out and remove'],
     });
 
     await runAccountsCommand(extension);
@@ -732,7 +741,12 @@ describe('/grok-cli-accounts', () => {
       inputs: ['Replacement'],
       model: { provider: 'grok-cli', id: 'grok-build' },
       preserveHome: true,
-      selections: ['Manage accounts', 'Work — Logged in', 'Log out and remove', '＋ Add account'],
+      selections: [
+        'Manage accounts',
+        'Work — Authenticated',
+        'Log out and remove',
+        '＋ Add account',
+      ],
     });
 
     await runAccountsCommand(extension);
@@ -797,7 +811,7 @@ describe('/grok-cli-accounts', () => {
       auth: { 'grok-cli-2': oauthCredential('work') },
       confirms: [false],
       preserveHome: true,
-      selections: ['Manage accounts', 'Work — Logged in', 'Log out and remove'],
+      selections: ['Manage accounts', 'Work — Authenticated', 'Log out and remove'],
     });
 
     await runAccountsCommand(extension);
@@ -861,7 +875,7 @@ describe('/grok-cli-accounts', () => {
       confirms: [true],
       model: { provider: 'openai', id: 'gpt-5' },
       preserveHome: true,
-      selections: ['Manage accounts', 'Client — Logged in', 'Log out and remove'],
+      selections: ['Manage accounts', 'Client — Authenticated', 'Log out and remove'],
     });
 
     await runAccountsCommand(extension);
@@ -901,7 +915,7 @@ describe('/grok-cli-accounts', () => {
     const extension = setup({
       auth: { 'grok-cli-2': oauthCredential('work') },
       preserveHome: true,
-      selections: ['Manage accounts', 'Work — Logged in', 'Log in again'],
+      selections: ['Manage accounts', 'Work — Authenticated', 'Log in again'],
     });
 
     await runAccountsCommand(extension);
@@ -944,7 +958,7 @@ describe('/grok-cli-accounts', () => {
       },
       confirms: [true],
       preserveHome: true,
-      selections: ['Manage accounts', 'Personal — Logged in', 'Log out'],
+      selections: ['Manage accounts', 'Personal — Authenticated', 'Log out'],
     });
 
     await runAccountsCommand(extension);

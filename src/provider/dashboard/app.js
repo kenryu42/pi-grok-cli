@@ -21,6 +21,7 @@ let wasOffline = false;
 let entranceDone = false;
 let timer;
 let pendingProviders = new Set();
+let quotaRefreshInFlight = false;
 
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
 
@@ -433,32 +434,32 @@ const animateGauge = (gauge, from, to) => {
   }
 };
 
-const quotaRow = (provider, label, usedLabel, reset, value) => {
+const quotaRow = (provider, label, usedLabel, metaText, remaining) => {
   const row = element('div', 'quota');
   const gauge = element(
     'div',
-    `quota-gauge${value >= 95 ? ' danger' : value >= 75 ? ' warning' : ''}`,
+    `quota-gauge${remaining <= 5 ? ' danger' : remaining <= 25 ? ' warning' : ''}`,
   );
-  gauge.style.setProperty('--gauge', value.toFixed(1));
-  gauge.setAttribute('role', 'progressbar');
-  gauge.setAttribute('aria-label', `${label}: ${Math.round(value)} percent used`);
+  gauge.style.setProperty('--gauge', remaining.toFixed(1));
+  gauge.setAttribute('role', 'meter');
+  gauge.setAttribute('aria-label', `${label}: ${Math.round(remaining)} percent remaining`);
   gauge.setAttribute('aria-valuemin', '0');
   gauge.setAttribute('aria-valuemax', '100');
-  gauge.setAttribute('aria-valuenow', String(Math.round(value)));
-  gauge.append(element('span', 'gauge-value', `${Math.round(value)}%`));
+  gauge.setAttribute('aria-valuenow', String(Math.round(remaining)));
+  gauge.append(element('span', 'gauge-value', `${Math.round(remaining)}%`));
   const key = `${provider}:${label}`;
   const previous = gaugeMemory.get(key);
-  gaugeMemory.set(key, value);
-  if (!entranceDone) animateGauge(gauge, 0, value);
-  else if (previous !== undefined && Math.abs(previous - value) > 0.5) {
-    animateGauge(gauge, previous, value);
+  gaugeMemory.set(key, remaining);
+  if (!entranceDone) animateGauge(gauge, 0, remaining);
+  else if (previous !== undefined && Math.abs(previous - remaining) > 0.5) {
+    animateGauge(gauge, previous, remaining);
   }
   const side = element('div', 'quota-side');
   const header = element('div', 'quota-head');
   header.append(element('span', '', label));
   if (usedLabel) header.append(element('span', 'mono', usedLabel));
   const meta = element('div', 'quota-meta');
-  meta.append(element('span', '', `Resets ${dateLabel(reset)}`));
+  meta.append(element('span', '', metaText));
   side.append(header, meta);
   row.append(gauge, side);
   return row;
@@ -470,6 +471,13 @@ const quotaUnavailable = (label, reason) => {
   header.append(element('span', '', label));
   row.append(header, element('p', 'quota-unavailable', reason));
   return row;
+};
+
+const PLAN_LABELS = {
+  free: 'Free plan',
+  'supergrok-lite': 'SuperGrok Lite',
+  supergrok: 'SuperGrok',
+  'supergrok-heavy': 'SuperGrok Heavy',
 };
 
 const statusPill = (account) => {
@@ -645,7 +653,7 @@ const cardActions = (account) => {
   return actions;
 };
 
-const accountCard = (account, index, isNewPending) => {
+const accountCard = (account, index, isNewPending, refreshing) => {
   const card = element('article', `account-card${account.active ? ' active' : ''}`);
   card.dataset.provider = account.provider;
   card.style.viewTransitionName = `card-${account.provider}`;
@@ -659,6 +667,7 @@ const accountCard = (account, index, isNewPending) => {
   if (account.active) titleRow.append(element('span', 'active-badge', 'Active'));
   const metaRow = element('div', 'card-meta-row');
   metaRow.append(element('span', 'card-provider', account.provider), statusPill(account));
+  if (account.plan) metaRow.append(element('span', 'plan-pill', PLAN_LABELS[account.plan]));
   head.append(titleRow, metaRow);
 
   const body = element('div', 'card-body');
@@ -669,29 +678,41 @@ const accountCard = (account, index, isNewPending) => {
   }
   const errorText = account.login.error || account.login.quotaError;
   if (account.quota) {
+    const isFree = account.plan === 'free';
+    const monthly = account.quota.monthly;
     body.append(
       quotaRow(
         account.provider,
         'Monthly credits',
-        `${account.quota.monthly.used.toLocaleString()} / ${account.quota.monthly.monthlyLimit.toLocaleString()}`,
-        account.quota.monthly.billingPeriodEnd,
-        percent(account.quota.monthly.used, account.quota.monthly.monthlyLimit),
+        isFree ? '' : `${Math.max(0, monthly.monthlyLimit - monthly.used).toLocaleString()} left`,
+        isFree ? 'Not available' : `Resets ${dateLabel(monthly.billingPeriodEnd)}`,
+        percent(monthly.monthlyLimit - monthly.used, monthly.monthlyLimit),
       ),
     );
     body.append(
-      account.quota.weekly
+      account.quota.weekly || isFree
         ? quotaRow(
             account.provider,
             'Weekly credits',
             '',
-            account.quota.weekly.billingPeriodEnd,
-            Math.max(0, Math.min(100, account.quota.weekly.creditUsagePercent)),
+            account.quota.weekly
+              ? `Resets ${dateLabel(account.quota.weekly.billingPeriodEnd)}`
+              : 'Not available',
+            account.quota.weekly
+              ? Math.max(0, Math.min(100, 100 - account.quota.weekly.creditUsagePercent))
+              : 0,
           )
         : quotaUnavailable('Weekly credits', 'Not available — try refreshing'),
     );
     const freshness = element('p', 'freshness');
-    if (!account.quota.fresh) freshness.append(element('span', 'tag', 'Stale'));
-    freshness.append(element('span', '', `Updated ${dateLabel(account.quota.updatedAt)}`));
+    if (!refreshing && !account.quota.fresh) freshness.append(element('span', 'tag', 'Stale'));
+    freshness.append(
+      element(
+        'span',
+        '',
+        refreshing ? 'Refreshing…' : `Updated ${dateLabel(account.quota.updatedAt)}`,
+      ),
+    );
     body.append(freshness);
   } else if (!errorText) {
     body.append(
@@ -713,19 +734,12 @@ const accountCard = (account, index, isNewPending) => {
 };
 
 const render = (state) => {
-  const online = state.accounts.filter((account) => account.authenticated).length;
-  const usages = state.accounts
-    .filter((account) => account.quota)
-    .map((account) => percent(account.quota.monthly.used, account.quota.monthly.monthlyLimit));
-  const averageUsage = usages.length
-    ? Math.round(usages.reduce((sum, value) => sum + value, 0) / usages.length)
-    : undefined;
-  statsSummary.textContent = `${state.accounts.length} account${state.accounts.length === 1 ? '' : 's'} · ${online} logged in${averageUsage === undefined ? '' : ` · ${averageUsage}% avg usage`}`;
+  statsSummary.textContent = `${state.accounts.length} account${state.accounts.length === 1 ? '' : 's'}`;
   linkState.className = 'link-pill ok';
   linkText.textContent = 'Synced';
   refreshButton.disabled = state.refreshing;
-  refreshButton.classList.toggle('is-refreshing', state.refreshing);
   accountsRoot.setAttribute('aria-busy', String(state.refreshing));
+  accountsRoot.classList.toggle('refreshing', state.refreshing || quotaRefreshInFlight);
   updateFieldTargets(state);
   const active = document.activeElement;
   const refocus =
@@ -752,6 +766,7 @@ const render = (state) => {
           account,
           index,
           nextPending.has(account.provider) && !pendingProviders.has(account.provider),
+          state.refreshing || quotaRefreshInFlight,
         ),
       )
     : [element('p', 'grid-message', 'No accounts configured. Use Add account to connect one.')];
@@ -807,6 +822,7 @@ async function refreshState(force = false, animate = false) {
     linkState.className = 'link-pill error';
     linkText.textContent = 'Offline';
     accountsRoot.setAttribute('aria-busy', 'false');
+    accountsRoot.classList.remove('refreshing');
     if (lastState) updateFieldTargets(JSON.parse(lastState), true);
     else field?.setTargets({ alert: 0.65, pending: 0 });
     // Keep the last good state on screen once loaded; a stale console beats a blank one.
@@ -838,7 +854,7 @@ addAccount.addEventListener('click', async () => {
     message:
       'Optional label, shown in pi and this dashboard. A browser window opens next for xAI authorization.',
     value: '',
-    confirm: 'Add and log in',
+    confirm: 'Add',
   });
   if (label === undefined) return;
   try {
@@ -852,7 +868,8 @@ addAccount.addEventListener('click', async () => {
 
 refreshButton.addEventListener('click', async () => {
   refreshButton.disabled = true;
-  refreshButton.classList.add('is-refreshing');
+  quotaRefreshInFlight = true;
+  accountsRoot.classList.add('refreshing');
   try {
     const result = await mutation('/api/quotas/refresh', 'POST');
     showToast(
@@ -860,11 +877,11 @@ refreshButton.addEventListener('click', async () => {
         ? `Updated ${result.updated} of ${result.updated + result.failed.length} accounts — ${result.failed.length} failed; try logging in again.`
         : `Updated ${result.updated} account${result.updated === 1 ? '' : 's'}.`,
     );
-    await refreshState(true);
   } catch (error) {
     showToast(error.message, true);
-    await refreshState(true);
   }
+  quotaRefreshInFlight = false;
+  await refreshState(true);
 });
 
 document.addEventListener('visibilitychange', () => {

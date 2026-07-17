@@ -29,6 +29,8 @@ export const DEFAULT_GROK_MODEL = 'grok-build';
 
 type RegisterAccount = (account: GrokCliAccount) => void;
 
+export type PlanTier = 'free' | 'supergrok-lite' | 'supergrok' | 'supergrok-heavy';
+
 export interface AccountSnapshot {
   provider: string;
   label: string;
@@ -36,6 +38,7 @@ export interface AccountSnapshot {
   authenticated: boolean;
   active: boolean;
   environment: boolean;
+  plan?: PlanTier;
   quota?: {
     updatedAt: string;
     fresh: boolean;
@@ -142,8 +145,16 @@ function accountStatus(ctx: ExtensionContext, config: GrokCliConfig, provider: s
   if (config.accounts.selectedProvider === provider && hasAccountAuth(ctx, provider)) {
     return environment ? 'Active (environment)' : 'Active';
   }
-  if (environment) return 'Logged in (environment)';
-  return hasStoredAuth(ctx, provider) ? 'Logged in' : 'Login required';
+  if (environment) return 'Authenticated (environment)';
+  return hasStoredAuth(ctx, provider) ? 'Authenticated' : 'Login required';
+}
+
+// Tier from the monthly credit cap: 0 free, up to 4,000 Lite, up to 20,000 SuperGrok, above Heavy.
+export function planTier(monthlyLimit: number): PlanTier {
+  if (monthlyLimit <= 0) return 'free';
+  if (monthlyLimit <= 4000) return 'supergrok-lite';
+  if (monthlyLimit <= 20000) return 'supergrok';
+  return 'supergrok-heavy';
 }
 
 async function resolveAccountToken(ctx: ExtensionContext, provider: string) {
@@ -713,6 +724,7 @@ function createAccountManager(
             environment,
             ...(quota
               ? {
+                  plan: planTier(quota.monthly.monthlyLimit),
                   quota: {
                     updatedAt: quota.updatedAt,
                     fresh: isCachedQuotaFresh(quota),

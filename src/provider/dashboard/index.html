@@ -28,15 +28,7 @@
         <span id="link-state" class="link-pill pending">
           <span class="link-dot" aria-hidden="true"></span><span id="link-text">Syncing</span>
         </span>
-        <button
-          id="refresh-quotas"
-          class="icon-button"
-          type="button"
-          title="Refresh all quotas"
-          aria-label="Refresh all quotas"
-        >
-          <span class="refresh-glyph" aria-hidden="true">↻</span>
-        </button>
+        <button id="refresh-quotas" class="button ghost" type="button">Refresh quotas</button>
         <button id="add-account" class="button primary" type="button">Add account</button>
       </div>
     </header>
@@ -52,7 +44,7 @@
         <h2 id="dialog-title"></h2>
         <p id="dialog-message" class="dialog-message"></p>
         <label id="dialog-label" for="dialog-input">Account label</label>
-        <input id="dialog-input" maxlength="40" autocomplete="off" spellcheck="false" />
+        <input id="dialog-input" maxlength="40" autocomplete="off" spellcheck="false" placeholder="Optional" />
         <div class="dialog-actions">
           <button id="dialog-cancel" type="button" class="button ghost">Cancel</button>
           <button type="submit" id="dialog-confirm" value="confirm" class="button primary">
