@@ -1,8 +1,4 @@
-import {
-  AuthStorage,
-  type ExtensionAPI,
-  type ExtensionContext,
-} from '@earendil-works/pi-coding-agent';
+import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
 import type { Component } from '@earendil-works/pi-tui';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_CONFIG, loadConfig, saveConfig } from '../../src/config.js';
@@ -66,6 +62,10 @@ async function runAccountsCommand(extension: ReturnType<typeof setup>) {
   await extension.commands.get('grok-cli-accounts')?.handler('', extension.context);
 }
 
+async function runAccountsCommandWith(extension: ReturnType<typeof setup>, args: string) {
+  await extension.commands.get('grok-cli-accounts')?.handler(args, extension.context);
+}
+
 function setup(
   options: {
     auth?: Record<string, ReturnType<typeof oauthCredential>>;
@@ -93,7 +93,13 @@ function setup(
   } as unknown as ExtensionAPI;
   const accountManagement = registerAccountManagement(pi, registerAccount);
 
-  const authStorage = AuthStorage.inMemory(options.auth);
+  const credentials = new Map(Object.entries(options.auth ?? {}));
+  const authStorage = {
+    get: (provider: string) => credentials.get(provider),
+    has: (provider: string) => credentials.has(provider),
+    set: (provider: string, credential: ReturnType<typeof oauthCredential>) =>
+      credentials.set(provider, credential),
+  };
   const selections = [...(options.selections ?? [])];
   const inputs = [...(options.inputs ?? [])];
   const confirms = [...(options.confirms ?? [])];
@@ -110,8 +116,14 @@ function setup(
   const context = {
     model: options.model,
     modelRegistry: {
-      authStorage,
+      runtime: {
+        login: vi.fn(),
+        logout: async (provider: string) => {
+          credentials.delete(provider);
+        },
+      },
       find: (provider: string, id: string) => models.get(`${provider}/${id}`),
+      getProviderAuthStatus: (provider: string) => ({ configured: credentials.has(provider) }),
       getApiKeyForProvider: async (provider: string) => {
         const credential = authStorage.get(provider);
         return credential?.type === 'oauth' ? credential.access : undefined;
@@ -221,6 +233,97 @@ describe('Grok CLI account helpers', () => {
 });
 
 describe('/grok-cli-accounts', () => {
+  it('rejects unknown arguments without opening the TUI', async () => {
+    const extension = setup();
+
+    await runAccountsCommandWith(extension, 'wat');
+
+    expect(extension.notify).toHaveBeenCalledWith('Usage: /grok-cli-accounts [gui]', 'warning');
+    expect(extension.context.ui.custom).not.toHaveBeenCalled();
+  });
+
+  it('produces a credential-free account snapshot for alternate interfaces', async () => {
+    configureAccounts();
+    await saveQuotaUsage('grok-cli-2', {
+      monthly: {
+        monthlyLimit: 2000,
+        used: 700,
+        billingPeriodEnd: '2026-08-01T00:00:00.000Z',
+      },
+      weekly: {
+        creditUsagePercent: 35,
+        billingPeriodEnd: '2026-07-20T00:00:00.000Z',
+      },
+    });
+    const extension = setup({ auth: authenticatedAccounts(), preserveHome: true });
+
+    const snapshot = extension.accountManagement.manager.snapshot(
+      extension.context as unknown as ExtensionContext,
+    );
+
+    expect(snapshot.accounts[1]).toMatchObject({
+      provider: 'grok-cli-2',
+      label: 'Work',
+      authenticated: true,
+      active: false,
+      environment: false,
+      quota: {
+        monthly: { monthlyLimit: 2000, used: 700 },
+        weekly: { creditUsagePercent: 35 },
+      },
+    });
+    expect(JSON.stringify(snapshot)).not.toContain('work-token');
+  });
+
+  it('reads authentication through the Pi 0.80.9 model-registry facade', () => {
+    configureAccounts();
+    const extension = setup({ auth: authenticatedAccounts(), preserveHome: true });
+    const modelRegistry = extension.context.modelRegistry as unknown as {
+      authStorage?: unknown;
+      getProviderAuthStatus?: (provider: string) => { configured: boolean };
+    };
+    delete modelRegistry.authStorage;
+    modelRegistry.getProviderAuthStatus = (provider) => ({
+      configured: provider === 'grok-cli' || provider === 'grok-cli-2',
+    });
+
+    expect(
+      extension.accountManagement.manager.snapshot(extension.context as unknown as ExtensionContext)
+        .accounts,
+    ).toEqual([
+      expect.objectContaining({ provider: 'grok-cli', authenticated: true }),
+      expect.objectContaining({ provider: 'grok-cli-2', authenticated: true }),
+    ]);
+  });
+
+  it('shares add and rename mutations with alternate interfaces', async () => {
+    const extension = setup();
+
+    const account = await extension.accountManagement.manager.add(
+      extension.context as unknown as ExtensionContext,
+      ' Work ',
+    );
+    await extension.accountManagement.manager.rename(
+      extension.context as unknown as ExtensionContext,
+      account.provider,
+      'Client',
+    );
+
+    expect(account.provider).toBe('grok-cli-2');
+    expect(loadConfig().config.accounts.items).toEqual([
+      { provider: 'grok-cli', label: 'Account 1' },
+      { provider: 'grok-cli-2', label: 'Client' },
+    ]);
+    expect(extension.registerAccount).toHaveBeenNthCalledWith(1, {
+      provider: 'grok-cli-2',
+      label: 'Work',
+    });
+    expect(extension.registerAccount).toHaveBeenNthCalledWith(2, {
+      provider: 'grok-cli-2',
+      label: 'Client',
+    });
+  });
+
   it('shows cached quota usage in both account selectors', async () => {
     configureAccounts();
     await saveQuotaUsage(

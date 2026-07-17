@@ -27,10 +27,10 @@ describe('npm package manifest', () => {
     expect(existsSync(new URL('../../vitest.config.ts', import.meta.url))).toBe(true);
   });
 
-  it('declares the Pi runtime version required by web search delegation', () => {
-    expect(packageJson.peerDependencies?.['@earendil-works/pi-ai']).toBe('>=0.80.0');
-    expect(packageJson.peerDependencies?.['@earendil-works/pi-coding-agent']).toBe('>=0.80.0');
-    expect(packageJson.peerDependencies?.['@earendil-works/pi-tui']).toBe('>=0.80.0');
+  it('declares the Pi runtime version required by dashboard auth and web search', () => {
+    expect(packageJson.peerDependencies?.['@earendil-works/pi-ai']).toBe('>=0.80.9');
+    expect(packageJson.peerDependencies?.['@earendil-works/pi-coding-agent']).toBe('>=0.80.9');
+    expect(packageJson.peerDependencies?.['@earendil-works/pi-tui']).toBe('>=0.80.9');
     expect(packageJson.peerDependencies?.['pi-web-access']).toBe('>=0.13.0');
     expect(packageJson.dependencies?.jiti).toBeUndefined();
     expect(packageJson.dependencies?.typebox).toBeUndefined();
@@ -63,6 +63,7 @@ describe('repository layout', () => {
       'src/payload/sanitize.ts',
       'src/provider/accounts.ts',
       'src/provider/billing.ts',
+      'src/provider/dashboard/server.ts',
       'src/provider/quotaCache.ts',
       'src/provider/register.ts',
       'src/provider/rotation.ts',

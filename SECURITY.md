@@ -20,6 +20,7 @@ The maintainer aims to acknowledge a complete report within 7 calendar days and 
 
 - pi-grok-cli and its tools run with the user's operating-system permissions. File and shell tools can read or modify the workspace and execute commands when the model invokes them.
 - OAuth credentials returned by this extension are stored and refreshed by pi. pi-grok-cli does not read or modify Grok Build credentials.
+- `/grok-cli-accounts gui` starts a temporary account-management server bound only to an OS-assigned `127.0.0.1` port. A random capability URL bootstraps a session cookie; subsequent mutations require same-origin and CSRF validation. The page receives account labels, status, and quota data, but never OAuth credentials, authorization codes, callback URLs, or environment-token values. Treat the private dashboard URL as sensitive and do not share it while the server is running.
 - Prompts, conversation context, tool definitions, and tool results are sent to the configured Grok CLI proxy.
 - Images handled by vision routing are sent to the configured describer model. The local vision cache stores descriptions and hashes, not raw images.
 - Optional web search is delegated to `pi-web-access` and the providers configured there.

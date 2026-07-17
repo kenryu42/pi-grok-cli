@@ -1,4 +1,4 @@
-import { AuthStorage, type ExtensionAPI } from '@earendil-works/pi-coding-agent';
+import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_CONFIG, loadConfig, saveConfig } from '../../src/config.js';
 import type { BillingUsage } from '../../src/provider/billing.js';
@@ -8,7 +8,7 @@ import {
   ROTATION_CONTINUATION,
   registerExhaustionRotation,
 } from '../../src/provider/rotation.js';
-import { oauthCredential, useTempHome } from '../vision/helpers.js';
+import { useTempHome } from '../vision/helpers.js';
 
 const setupHome = useTempHome();
 const THREE_ACCOUNTS = [
@@ -66,19 +66,12 @@ function setup(
     },
   });
   const handlers = new Map<string, ((event: unknown, ctx: unknown) => unknown)[]>();
-  const authStorage = AuthStorage.inMemory(
-    Object.fromEntries(
-      (options.auth ?? accounts.map((account) => account.provider)).map((provider) => [
-        provider,
-        oauthCredential(`${provider}-token`),
-      ]),
-    ),
-  );
+  const authenticated = new Set(options.auth ?? accounts.map((account) => account.provider));
   const model = options.current ?? { provider: 'grok-cli', id: 'grok-build' };
   const context = {
     model: { ...model },
     modelRegistry: {
-      authStorage,
+      getProviderAuthStatus: (provider: string) => ({ configured: authenticated.has(provider) }),
       find: (provider: string, id: string) =>
         options.missingModels?.includes(`${provider}/${id}`) ? undefined : { provider, id },
     },

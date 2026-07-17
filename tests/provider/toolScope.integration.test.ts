@@ -1,9 +1,8 @@
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
+import { fauxAssistantMessage, fauxProvider, InMemoryCredentialStore } from '@earendil-works/pi-ai';
 import {
   AgentSessionRuntime,
-  AuthStorage,
   type CreateAgentSessionRuntimeFactory,
   createAgentSession,
   createAgentSessionFromServices,
@@ -11,6 +10,7 @@ import {
   DefaultResourceLoader,
   type ExtensionFactory,
   ModelRegistry,
+  ModelRuntime,
   SessionManager,
   SettingsManager,
 } from '@earendil-works/pi-coding-agent';
@@ -165,10 +165,14 @@ async function modelFacingTools(modelId: string) {
     provider: 'grok-cli',
     models: [{ id: modelId }],
   });
-  const authStorage = AuthStorage.inMemory();
-  const modelRegistry = ModelRegistry.inMemory(authStorage);
+  const modelRuntime = await ModelRuntime.create({
+    credentials: new InMemoryCredentialStore(),
+    modelsPath: null,
+    allowModelNetwork: false,
+  });
+  const modelRegistry = new ModelRegistry(modelRuntime);
   const model = faux.getModel();
-  modelRegistry.registerProvider('grok-cli', {
+  modelRuntime.registerProvider('grok-cli', {
     api: faux.api,
     apiKey: 'local-test-key',
     baseUrl: model.baseUrl,
@@ -196,9 +200,8 @@ async function modelFacingTools(modelId: string) {
   const { session } = await createAgentSession({
     cwd,
     agentDir,
-    authStorage,
+    modelRuntime,
     model: modelRegistry.find('grok-cli', modelId),
-    modelRegistry,
     resourceLoader: resources.resourceLoader,
     sessionManager: SessionManager.inMemory(cwd),
     settingsManager: resources.settingsManager,
@@ -209,7 +212,7 @@ async function modelFacingTools(modelId: string) {
     return names;
   } finally {
     session.dispose();
-    modelRegistry.unregisterProvider('grok-cli');
+    modelRuntime.unregisterProvider('grok-cli');
   }
 }
 

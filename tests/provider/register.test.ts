@@ -1,13 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type {
-  Api,
-  Model,
-  OAuthCredentials,
-  OAuthLoginCallbacks,
-  OAuthProviderInterface,
-} from '@earendil-works/pi-ai';
+import type { Api, Model, OAuthCredentials, OAuthLoginCallbacks } from '@earendil-works/pi-ai';
 import type { ExtensionAPI, ProviderConfig } from '@earendil-works/pi-coding-agent';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_CONFIG, saveConfig } from '../../src/config.js';
@@ -606,7 +600,9 @@ describe('Grok CLI provider registration', () => {
     const context = {
       model: { provider: 'grok-cli', id: 'grok-build' },
       modelRegistry: {
-        authStorage: { has: (provider: string) => provider.startsWith('grok-cli') },
+        getProviderAuthStatus: (provider: string) => ({
+          configured: provider.startsWith('grok-cli'),
+        }),
         find: (provider: string, id: string) => ({ provider, id }),
         getAll: () => [],
       },
@@ -665,7 +661,7 @@ describe('Grok CLI provider registration', () => {
     expect(provider?.apiKey).toBe('$GROK_CLI_OAUTH_TOKEN');
     expect(provider?.streamSimple).toBeUndefined();
     expect(provider?.models?.map((model) => model.id)).toContain('grok-build');
-    expect((provider?.oauth as Omit<OAuthProviderInterface, 'id'>)?.usesCallbackServer).toBe(true);
+    expect(provider?.oauth?.usesCallbackServer).toBe(true);
     expect(provider?.oauth?.getApiKey({ access: 'access-token', refresh: '', expires: 0 })).toBe(
       'access-token',
     );

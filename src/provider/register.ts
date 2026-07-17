@@ -1,11 +1,5 @@
-import type {
-  Api,
-  Model,
-  OAuthCredentials,
-  OAuthLoginCallbacks,
-  OAuthProviderInterface,
-} from '@earendil-works/pi-ai';
-import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
+import type { Api, Model, OAuthCredentials, OAuthLoginCallbacks } from '@earendil-works/pi-ai';
+import type { ExtensionAPI, ProviderConfig } from '@earendil-works/pi-coding-agent';
 import * as oauth from '../auth/oauth.js';
 import { getBaseUrl, type XaiOAuthCredentials } from '../auth/oauth.js';
 import { type GrokCliAccount, loadConfig, migrateLegacyConfig } from '../config.js';
@@ -57,7 +51,7 @@ export default function registerGrokCli(pi: ExtensionAPI) {
           model.provider === account.provider ? { ...model, baseUrl: effectiveBaseUrl } : model,
         );
       },
-    } satisfies Omit<OAuthProviderInterface, 'id'>;
+    } satisfies NonNullable<ProviderConfig['oauth']>;
 
     pi.registerProvider(account.provider, {
       name: `Grok CLI — ${account.label}`,
@@ -123,7 +117,8 @@ export default function registerGrokCli(pi: ExtensionAPI) {
     syncTools(ctx.model);
   });
 
-  pi.on('session_shutdown', (event) => {
+  pi.on('session_shutdown', async (event) => {
+    await accountManagement.closeDashboard();
     syncTools(undefined);
     if (event.reason === 'new' || event.reason === 'resume' || event.reason === 'fork') {
       handoffGrokTools(pi, event.targetSessionFile);

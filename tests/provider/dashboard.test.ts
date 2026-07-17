@@ -358,9 +358,9 @@ describe('account dashboard loopback server', () => {
     // Failures are announced assertively; routine status stays polite.
     expect(page).toContain('role="alert"');
     expect(page).toContain('role="status"');
-    // The favicon matches the in-app brand mark (Signal Cyan, not mint).
-    expect(page).toContain('%234fd1e8');
-    expect(page).not.toContain('%233fe0c5');
+    // The favicon matches the in-app brand mark (ink glyph on a raised tile).
+    expect(page).toContain('%23f7f8f8');
+    expect(page).not.toContain('%234fd1e8');
     // Re-renders preserve keyboard focus and typed login codes.
     expect(script).toContain('data-action');
     expect(script).toContain('[data-provider]');

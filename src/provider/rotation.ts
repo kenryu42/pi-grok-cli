@@ -28,7 +28,7 @@ function isExhaustionMessage(message: unknown): message is AssistantMessage {
 
 function hasAccountAuth(ctx: ExtensionContext, provider: string) {
   return (
-    ctx.modelRegistry.authStorage.has(provider) ||
+    ctx.modelRegistry.getProviderAuthStatus(provider).configured ||
     (provider === GROK_CLI_PROVIDER && Boolean(process.env.GROK_CLI_OAUTH_TOKEN))
   );
 }
