@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="grok-csrf" content="__GROK_CSRF_TOKEN__" />
+    <title>Grok accounts</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23161c20'/%3E%3Cpath d='M7 7h18v5H12v13H7zM16 16h9v9h-5v-4h-4z' fill='%234fd1e8'/%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="/app.css" />
+    <script type="module" src="/app.js"></script>
+  </head>
+  <body>
+    <header class="appbar">
+      <div class="appbar-brand">
+        <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+          <rect width="32" height="32" rx="7" fill="#161c20" />
+          <path d="M7 7h18v5H12v13H7zM16 16h9v9h-5v-4h-4z" fill="#4fd1e8" />
+        </svg>
+        <h1 class="brand-name">Grok accounts</h1>
+        <span class="brand-meta" id="stats-summary" aria-live="polite">Connecting…</span>
+      </div>
+      <div class="appbar-actions">
+        <span id="link-state" class="link-pill pending">
+          <span class="link-dot" aria-hidden="true"></span><span id="link-text">Syncing</span>
+        </span>
+        <button
+          id="refresh-quotas"
+          class="icon-button"
+          type="button"
+          title="Refresh all quotas"
+          aria-label="Refresh all quotas"
+        >
+          <span class="refresh-glyph" aria-hidden="true">↻</span>
+        </button>
+        <button id="add-account" class="button primary" type="button">Add Account</button>
+      </div>
+    </header>
+
+    <main>
+      <div id="accounts" class="account-grid" aria-busy="true"></div>
+    </main>
+
+    <dialog id="action-dialog">
+      <form method="dialog" class="dialog-panel">
+        <h2 id="dialog-title"></h2>
+        <p id="dialog-message" class="dialog-message"></p>
+        <label id="dialog-label" for="dialog-input">Account label</label>
+        <input id="dialog-input" maxlength="40" autocomplete="off" />
+        <div class="dialog-actions">
+          <button id="dialog-cancel" type="button" class="button ghost">Cancel</button>
+          <button type="submit" id="dialog-confirm" value="confirm" class="button primary">
+            Confirm
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <div id="toast-alert" class="toast error" role="alert"></div>
+  </body>
+</html>
