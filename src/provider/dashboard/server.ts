@@ -131,7 +131,7 @@ function trustedAuthorizationUrl(value: string) {
       hostname !== 'auth.x.ai' &&
       !hostname.endsWith('.x.ai'))
   ) {
-    throw new Error('Refusing an untrusted OAuth authorization URL.');
+    throw new Error('Login blocked — the authorization URL was not a trusted x.ai address.');
   }
   return url.toString();
 }
@@ -172,7 +172,7 @@ export function createAccountDashboard(
       }
       if (!(await (options.launchBrowser ?? launchBrowser)(dashboard.bootstrapUrl))) {
         ctx.ui.notify(
-          `Could not open the account dashboard automatically. Open this private local URL and do not share it: ${dashboard.bootstrapUrl}`,
+          `Could not open the account dashboard automatically. Open this private local URL (do not share it): ${dashboard.bootstrapUrl}`,
           'warning',
         );
       }
@@ -214,14 +214,10 @@ export async function startAccountDashboard(
       }
       const status = error instanceof HttpError ? error.status : 500;
       if (req.headers.accept?.includes('text/html')) {
-        const hint =
-          status === 401
-            ? '<p>Run <code>/grok-cli-accounts gui</code> in Pi to reopen the dashboard.</p>'
-            : '';
         send(
           res,
           status,
-          `<!doctype html><title>Grok accounts</title><h1>Grok accounts</h1><p>${escapeHtml(publicError(error))}</p>${hint}`,
+          `<!doctype html><title>Grok accounts</title><h1>Grok accounts</h1><p>${escapeHtml(publicError(error))}</p>`,
           'text/html',
         );
         return;
@@ -256,7 +252,10 @@ export async function startAccountDashboard(
 
   const requireMutation = (req: IncomingMessage) => {
     if (req.headers.origin !== origin || req.headers['x-grok-csrf'] !== csrfToken) {
-      throw new HttpError(403, 'Dashboard request validation failed.');
+      throw new HttpError(
+        403,
+        'The dashboard rejected this request — reload the page and try again.',
+      );
     }
   };
 
@@ -285,9 +284,12 @@ export async function startAccountDashboard(
     const account = manager
       .snapshot(ctx)
       .accounts.find((candidate) => candidate.provider === provider);
-    if (!account) throw new HttpError(404, 'Grok CLI account not found.');
+    if (!account) throw new HttpError(404, 'Account not found — it may have been removed.');
     if (account.environment) {
-      throw new HttpError(409, 'The environment-managed account cannot log in from the dashboard.');
+      throw new HttpError(
+        409,
+        'This account logs in with the GROK_CLI_OAUTH_TOKEN environment variable.',
+      );
     }
     if (loginJobs.get(provider)?.state === 'pending') {
       throw new HttpError(409, 'A login is already in progress for this account.');
@@ -317,7 +319,7 @@ export async function startAccountDashboard(
           return;
         }
         if (event.type === 'device_code') {
-          throw new Error('Device-code login remains available in the Pi TUI.');
+          throw new Error('Device-code login is not available in the dashboard — use the pi TUI.');
         }
         const location = trustedAuthorizationUrl(event.url);
         settledRedirect = true;
@@ -376,7 +378,10 @@ export async function startAccountDashboard(
       return;
     }
     if (!safeEqual(cookieValue(req) ?? '', capability)) {
-      throw new HttpError(401, 'Dashboard authorization is required.');
+      throw new HttpError(
+        401,
+        'Dashboard session expired — reopen it with /grok-cli-accounts gui.',
+      );
     }
     if (req.method === 'GET' && url.pathname === '/') {
       send(res, 200, html, 'text/html');
@@ -447,11 +452,11 @@ export async function startAccountDashboard(
       const account = manager
         .snapshot(ctx)
         .accounts.find((candidate) => candidate.provider === ticketProvider);
-      if (!account) throw new HttpError(404, 'Grok CLI account not found.');
+      if (!account) throw new HttpError(404, 'Account not found — it may have been removed.');
       if (account.environment) {
         throw new HttpError(
           409,
-          'The environment-managed account cannot log in from the dashboard.',
+          'This account logs in with the GROK_CLI_OAUTH_TOKEN environment variable.',
         );
       }
       const ticket = randomBytes(24).toString('base64url');
@@ -464,7 +469,7 @@ export async function startAccountDashboard(
       const loginTicket = loginTickets.get(ticket);
       loginTickets.delete(ticket);
       if (!loginTicket || loginTicket.expiresAt < Date.now()) {
-        throw new HttpError(404, 'Login link expired.');
+        throw new HttpError(404, 'Login link expired — start again from the dashboard.');
       }
       await startLogin(loginTicket.provider, res);
       return;
@@ -477,7 +482,7 @@ export async function startAccountDashboard(
         throw new HttpError(400, 'Authorization code is required.');
       }
       const job = loginJobs.get(codeProvider);
-      if (job?.state !== 'pending') throw new HttpError(409, 'No login is waiting.');
+      if (job?.state !== 'pending') throw new HttpError(409, 'No login is waiting for a code.');
       job.resolveManualCode(body.code.trim());
       json(res, 202, { accepted: true });
       return;

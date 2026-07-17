@@ -142,7 +142,7 @@ function accountStatus(ctx: ExtensionContext, config: GrokCliConfig, provider: s
   if (config.accounts.selectedProvider === provider && hasAccountAuth(ctx, provider)) {
     return environment ? 'Active (environment)' : 'Active';
   }
-  if (environment) return 'Environment token';
+  if (environment) return 'Logged in (environment)';
   return hasStoredAuth(ctx, provider) ? 'Logged in' : 'Login required';
 }
 

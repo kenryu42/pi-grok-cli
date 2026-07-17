@@ -189,7 +189,7 @@ const loginPanel = (account) => {
   input.placeholder = 'One-time code (if shown)';
   input.setAttribute('aria-label', 'One-time authorization code');
   input.dataset.action = 'code';
-  const submit = element('button', 'button small primary', 'Submit');
+  const submit = element('button', 'button small primary', 'Submit code');
   submit.type = 'submit';
   row.append(input, submit);
   const cancel = element('button', 'link-button', 'Cancel login');
@@ -212,7 +212,7 @@ const loginPanel = (account) => {
         code: input.value,
       });
       input.value = '';
-      showToast('Authorization code submitted.');
+      showToast('Code submitted — finishing login…');
     } catch (error) {
       showToast(error.message, true);
     }
@@ -233,7 +233,7 @@ const cardActions = (account) => {
   const rename = async () => {
     const label = await modal({
       title: `Rename ${account.label}`,
-      message: 'Labels are local and identify this provider throughout Pi.',
+      message: "Shown here and in pi's account list. Local to this machine.",
       value: account.label,
       confirm: 'Save label',
     });
@@ -247,9 +247,9 @@ const cardActions = (account) => {
   };
   const tokenInstructions = async () => {
     await modal({
-      title: 'Environment token',
+      title: 'Remove environment login',
       message:
-        'Unset GROK_CLI_OAUTH_TOKEN and restart Pi to remove this environment-managed login.',
+        'This account logs in with the GROK_CLI_OAUTH_TOKEN environment variable. Unset it and restart pi to remove the account.',
       confirm: 'Close',
       cancel: false,
     });
@@ -260,8 +260,8 @@ const cardActions = (account) => {
         account.provider === 'grok-cli' ? `Log out ${account.label}?` : `Remove ${account.label}?`,
       message:
         account.provider === 'grok-cli'
-          ? 'This removes the saved OAuth login. The permanent base account remains available.'
-          : 'This removes the saved OAuth login and deletes this account slot.',
+          ? 'Removes the saved login. The account stays in the list — log in again to use it.'
+          : 'Removes this account and its saved login. You can add it again with Add account.',
       confirm: account.provider === 'grok-cli' ? 'Log out' : 'Remove account',
       danger: true,
     });
@@ -288,7 +288,7 @@ const cardActions = (account) => {
     actions.append(actionButton('Log in again', () => startLogin(account.provider)));
   }
   if (account.environment) {
-    actions.append(actionButton('Token instructions', tokenInstructions));
+    actions.append(actionButton('How to remove', tokenInstructions));
   }
   actions.append(actionButton('Rename', rename));
   if (!account.environment) {
@@ -334,12 +334,12 @@ const accountCard = (account, index) => {
     body.append(
       account.quota.weekly
         ? quotaRow(
-            'Weekly allowance',
+            'Weekly credits',
             '',
             account.quota.weekly.billingPeriodEnd,
             Math.max(0, Math.min(100, account.quota.weekly.creditUsagePercent)),
           )
-        : quotaUnavailable('Weekly allowance', 'Data unavailable'),
+        : quotaUnavailable('Weekly credits', 'Not available — try refreshing'),
     );
     const freshness = element('p', 'freshness');
     if (!account.quota.fresh) freshness.append(element('span', 'tag', 'Stale'));
@@ -351,8 +351,8 @@ const accountCard = (account, index) => {
         'p',
         'card-empty',
         account.authenticated
-          ? 'Quota not fetched — refresh to load usage.'
-          : 'Quota available once this account is logged in.',
+          ? 'No quota data yet — refresh to load usage.'
+          : 'Quota appears here after login.',
       ),
     );
   }
@@ -366,7 +366,7 @@ const accountCard = (account, index) => {
 
 const render = (state) => {
   const online = state.accounts.filter((account) => account.authenticated).length;
-  statsSummary.textContent = `${state.accounts.length} account${state.accounts.length === 1 ? '' : 's'} · ${online} usable`;
+  statsSummary.textContent = `${state.accounts.length} account${state.accounts.length === 1 ? '' : 's'} · ${online} logged in`;
   linkState.className = 'link-pill ok';
   linkText.textContent = 'Synced';
   refreshButton.disabled = state.refreshing;
@@ -452,9 +452,9 @@ addAccount.addEventListener('click', async () => {
   const label = await modal({
     title: 'Add account',
     message:
-      'The label is optional and local to this dashboard. A browser window will open for xAI authorization.',
+      'Optional label, shown in pi and this dashboard. A browser window opens next for xAI authorization.',
     value: '',
-    confirm: 'Add + log in',
+    confirm: 'Add and log in',
   });
   if (label === undefined) return;
   try {
@@ -473,7 +473,7 @@ refreshButton.addEventListener('click', async () => {
     const result = await mutation('/api/quotas/refresh', 'POST');
     showToast(
       result.failed.length
-        ? `Updated ${result.updated} account${result.updated === 1 ? '' : 's'}; ${result.failed.length} failed.`
+        ? `Updated ${result.updated} of ${result.updated + result.failed.length} accounts — ${result.failed.length} failed; try logging in again.`
         : `Updated ${result.updated} account${result.updated === 1 ? '' : 's'}.`,
     );
     await refreshState(true);
