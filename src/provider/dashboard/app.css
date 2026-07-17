@@ -335,6 +335,7 @@ main {
 /* ---------- Account card ---------- */
 
 .account-card {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -344,6 +345,32 @@ main {
   background: var(--panel);
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 3%);
   animation: card-enter 220ms ease both;
+}
+
+/* Cursor spotlight: a 1px ring masked to the border band, lit near the pointer. */
+.account-card::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1px;
+  background: radial-gradient(
+    200px circle at var(--mx, 50%) var(--my, 50%),
+    rgb(255 255 255 / 40%),
+    rgb(255 255 255 / 12%) 55%,
+    transparent 75%
+  );
+  opacity: var(--glow, 0);
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+  transition: opacity 180ms ease;
 }
 
 .account-card.active {
@@ -773,6 +800,7 @@ dialog::backdrop {
 
   .button,
   .icon-button,
+  .account-card::before,
   .toast {
     transition: none;
   }

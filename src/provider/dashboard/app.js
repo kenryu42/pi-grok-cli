@@ -497,4 +497,53 @@ window.addEventListener('focus', () => {
   lastFocusRefresh = Date.now();
   void refreshState();
 });
+
+// Cursor spotlight: proximity lights each card's border through --mx/--my/--glow
+// custom properties, so the effect travels across cards without touching layout.
+// Resets when the pointer leaves the grid or motion/pointer preferences change.
+const setupProximity = () => {
+  const media = {
+    motion: matchMedia('(prefers-reduced-motion: no-preference)'),
+    pointer: matchMedia('(hover: hover) and (pointer: fine)'),
+  };
+  let pointer;
+  let frame = 0;
+  const apply = () => {
+    frame = 0;
+    const cards = accountsRoot.querySelectorAll('.account-card');
+    if (!pointer) {
+      for (const card of cards) card.style.removeProperty('--glow');
+      return;
+    }
+    for (const card of cards) {
+      const rect = card.getBoundingClientRect();
+      const dx = Math.max(rect.left - pointer.x, 0, pointer.x - rect.right);
+      const dy = Math.max(rect.top - pointer.y, 0, pointer.y - rect.bottom);
+      const t = Math.max(0, 1 - Math.hypot(dx, dy) / 220);
+      card.style.setProperty('--mx', `${(pointer.x - rect.left).toFixed(1)}px`);
+      card.style.setProperty('--my', `${(pointer.y - rect.top).toFixed(1)}px`);
+      card.style.setProperty('--glow', t.toFixed(3));
+    }
+  };
+  const scheduleApply = () => {
+    if (frame) return;
+    frame = requestAnimationFrame(apply);
+  };
+  accountsRoot.addEventListener('pointermove', (event) => {
+    if (!media.motion.matches || !media.pointer.matches) return;
+    pointer = { x: event.clientX, y: event.clientY };
+    scheduleApply();
+  });
+  const reset = () => {
+    pointer = undefined;
+    scheduleApply();
+  };
+  accountsRoot.addEventListener('pointerleave', reset);
+  window.addEventListener('scroll', scheduleApply, { passive: true });
+  window.addEventListener('resize', scheduleApply);
+  media.motion.addEventListener('change', reset);
+  media.pointer.addEventListener('change', reset);
+};
+setupProximity();
+
 void refreshState(true);
