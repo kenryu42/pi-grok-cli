@@ -153,8 +153,8 @@ Run `/grok-cli-imagine <prompt>` to generate and preview a JPEG, or let any acti
 | `/grok-cli-usage` | Fetch current quota, update its cache, and show cached data if refresh fails. |
 | `/grok-cli-imagine <prompt>` | Generate and preview an image. Supports `--aspect`, `--out`, and `--resolution 1k`. |
 | `/grok-cli-imagine:tool [on\|off\|status]` | Toggle, set, or report persistent model-callable `image_gen` availability. |
+| `/grok-cli-vision` | Toggle vision routing on or off. |
 | `/grok-cli-vision:status` | Show vision state, describer model, configuration path, and cache statistics. |
-| `/grok-cli-vision:on` / `/grok-cli-vision:off` | Enable or disable vision routing. |
 | `/grok-cli-vision:cache-clear` | Remove all cached image descriptions. |
 
 ## Configuration
