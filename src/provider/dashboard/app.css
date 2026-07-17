@@ -1,35 +1,63 @@
 :root {
   color-scheme: dark;
-  --bg: #08090a;
-  --panel: #0f1113;
-  --panel-raised: #17191c;
+  --bg: oklch(0.14 0.005 260);
+  --panel: oklch(0.185 0.007 260);
+  --panel-raised: oklch(0.225 0.008 260);
+  --panel-veil: oklch(0.185 0.007 260 / 84%);
+  --gauge-disc: oklch(0.19 0.007 260 / 94%);
   --border: rgb(255 255 255 / 8%);
   --border-strong: rgb(255 255 255 / 14%);
-  --text: #f7f8f8;
-  --muted: #8a8f98;
-  --dim: #7a7f89;
-  --accent: #5e6ad2;
-  --accent-ring: rgb(94 106 210 / 45%);
-  --primary-hover: #dcdde2;
-  --ok: #4cb782;
-  --ok-soft: rgb(76 183 130 / 14%);
-  --amber: #f2c94c;
-  --amber-soft: rgb(242 201 76 / 13%);
-  --red: #eb5757;
-  --red-soft: rgb(235 87 87 / 10%);
-  --meter-empty: #1d1f23;
-  --appbar-bg: rgb(8 9 10 / 80%);
-  --input-bg: #0c0e10;
-  --danger-ink: #210b0b;
-  --danger-hover: #f07373;
+  --text: oklch(0.96 0.004 250);
+  --muted: oklch(0.68 0.015 260);
+  --dim: oklch(0.62 0.015 260);
+  --accent: oklch(0.55 0.16 275);
+  --accent-ring: oklch(0.55 0.16 275 / 45%);
+  --ok: oklch(0.72 0.14 160);
+  --ok-soft: oklch(0.72 0.14 160 / 14%);
+  --amber: oklch(0.84 0.14 90);
+  --amber-soft: oklch(0.84 0.14 90 / 13%);
+  --red: oklch(0.65 0.19 25);
+  --red-soft: oklch(0.65 0.19 25 / 10%);
+  --track: oklch(0.26 0.008 260);
+  --appbar-bg: oklch(0.14 0.005 260 / 72%);
+  --input-bg: oklch(0.165 0.006 260);
+  --danger-ink: oklch(0.2 0.04 25);
+  /* Overshoot spring, expressed as a linear() timing function. */
+  --spring: linear(
+    0,
+    0.01,
+    0.04 2.2%,
+    0.16 4.8%,
+    0.36 8%,
+    0.6 12%,
+    0.81 16.2%,
+    0.96 20.8%,
+    1.05 25.7%,
+    1.09 31.1%,
+    1.1 37%,
+    1.09 43.5%,
+    1.07 50.7%,
+    1.05 58.7%,
+    1.04 68%,
+    1.03 79.3%,
+    1.02
+  );
   --ui:
     Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial,
     sans-serif;
   --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  interpolate-size: allow-keywords;
   background: var(--bg);
   color: var(--text);
   font-family: var(--ui);
   font-size: 14px;
+}
+
+/* Gauge sweep angle, registered so it interpolates in CSS and WAAPI. */
+@property --gauge {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
 }
 
 * {
@@ -44,7 +72,10 @@ html {
 body {
   min-height: 100vh;
   margin: 0;
-  background: var(--bg);
+}
+
+::selection {
+  background: oklch(0.55 0.16 275 / 38%);
 }
 
 button,
@@ -79,6 +110,37 @@ p {
   display: none;
 }
 
+/* ---------- State field backdrop ---------- */
+
+#field {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  width: 100%;
+  height: 100%;
+  transition: filter 240ms ease;
+}
+
+/* Painted stand-in when WebGL is unavailable: layered aurora, static. */
+.no-field #field {
+  display: none;
+}
+
+.no-field body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background:
+    radial-gradient(65% 55% at 18% 8%, oklch(0.55 0.16 275 / 11%), transparent 70%),
+    radial-gradient(50% 45% at 85% 85%, oklch(0.72 0.14 160 / 7%), transparent 70%), var(--bg);
+}
+
+/* Dim the field while a modal owns attention. */
+body:has(dialog[open]) #field {
+  filter: brightness(0.55);
+}
+
 /* ---------- App bar ---------- */
 
 .appbar {
@@ -94,6 +156,23 @@ p {
   border-bottom: 1px solid var(--border);
   background: var(--appbar-bg);
   backdrop-filter: blur(14px);
+}
+
+/* Scroll progress hairline, driven by the root scroll timeline. */
+@supports (animation-timeline: scroll()) {
+  .appbar::after {
+    content: "";
+    position: absolute;
+    bottom: -1px;
+    left: 0;
+    width: 100%;
+    height: 1px;
+    background: var(--accent);
+    transform: scaleX(0);
+    transform-origin: left;
+    animation: scroll-progress linear both;
+    animation-timeline: scroll(root);
+  }
 }
 
 .appbar-brand {
@@ -145,7 +224,7 @@ p {
   padding: 0 11px;
   border: 1px solid var(--border);
   border-radius: 999px;
-  background: var(--panel);
+  background: var(--panel-veil);
   color: var(--muted);
   font-size: 12px;
   white-space: nowrap;
@@ -168,7 +247,7 @@ p {
 }
 
 .link-pill.error {
-  border-color: rgb(235 87 87 / 35%);
+  border-color: oklch(0.65 0.19 25 / 35%);
   color: var(--red);
 }
 
@@ -224,7 +303,7 @@ input:hover {
 }
 
 .button.primary:hover:not(:disabled) {
-  background: var(--primary-hover);
+  background: oklch(from var(--text) calc(l - 0.12) c h);
 }
 
 .button.primary.danger {
@@ -233,7 +312,7 @@ input:hover {
 }
 
 .button.primary.danger:hover:not(:disabled) {
-  background: var(--danger-hover);
+  background: oklch(from var(--red) calc(l + 0.07) c h);
   color: var(--danger-ink);
 }
 
@@ -313,6 +392,12 @@ main {
   width: min(1200px, 100%);
   margin: 0 auto;
   padding: 20px 20px 72px;
+  transition: filter 300ms ease;
+}
+
+/* Offline: the whole board desaturates until the link recovers. */
+body:has(.link-pill.error) main {
+  filter: saturate(0.55) brightness(0.82);
 }
 
 .account-grid {
@@ -326,6 +411,7 @@ main {
   padding: 56px 24px;
   border: 1px dashed var(--border-strong);
   border-radius: 10px;
+  background: var(--panel-veil);
   color: var(--muted);
   font-size: 13px;
   line-height: 1.6;
@@ -335,16 +421,30 @@ main {
 /* ---------- Account card ---------- */
 
 .account-card {
+  container-type: inline-size;
   position: relative;
   display: flex;
   flex-direction: column;
   gap: 14px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 12px;
   padding: 16px;
-  background: var(--panel);
+  background: var(--panel-veil);
+  backdrop-filter: blur(12px) saturate(1.1);
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 3%);
-  animation: card-enter 220ms ease both;
+}
+
+@supports (corner-shape: squircle) {
+  .account-card {
+    border-radius: 22px;
+    corner-shape: squircle;
+  }
+}
+
+/* Entrance runs on first mount only; poll-driven re-renders stay still. */
+.account-grid:not(.settled) .account-card {
+  animation: card-enter 620ms var(--spring) both;
+  animation-delay: var(--enter-delay, 0ms);
 }
 
 /* Cursor spotlight: a 1px ring masked to the border band, lit near the pointer. */
@@ -375,7 +475,12 @@ main {
 
 .account-card.active {
   border-color: var(--accent-ring);
-  background: linear-gradient(160deg, rgb(94 106 210 / 5%), transparent 45%), var(--panel);
+  background:
+    linear-gradient(160deg, oklch(0.55 0.16 275 / 7%), transparent 45%), var(--panel-veil);
+}
+
+.account-card:has(.login-panel) {
+  border-color: oklch(0.84 0.14 90 / 32%);
 }
 
 .card-head {
@@ -458,7 +563,7 @@ main {
 }
 
 .status-pill.pending {
-  border-color: rgb(242 201 76 / 30%);
+  border-color: oklch(0.84 0.14 90 / 30%);
   color: var(--amber);
 }
 
@@ -468,7 +573,7 @@ main {
 }
 
 .status-pill.error {
-  border-color: rgb(235 87 87 / 30%);
+  border-color: oklch(0.65 0.19 25 / 30%);
   color: var(--red);
 }
 
@@ -476,11 +581,68 @@ main {
   background: var(--red);
 }
 
-/* ---------- Card body: quotas ---------- */
+/* ---------- Card body: quota gauges ---------- */
 
 .card-body {
   display: grid;
   gap: 13px;
+}
+
+.quota {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.quota-gauge {
+  --gauge: 0;
+  --gauge-color: var(--ok);
+  position: relative;
+  flex: none;
+  width: 54px;
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: conic-gradient(
+    from -90deg,
+    var(--gauge-color) calc(var(--gauge) * 1%),
+    var(--track) 0
+  );
+  transition: filter 200ms ease;
+}
+
+.quota-gauge::after {
+  content: "";
+  position: absolute;
+  inset: 5px;
+  border-radius: 50%;
+  background: var(--gauge-disc);
+}
+
+.quota-gauge.warning {
+  --gauge-color: var(--amber);
+}
+
+.quota-gauge.danger {
+  --gauge-color: var(--red);
+  filter: drop-shadow(0 0 7px oklch(0.65 0.19 25 / 35%));
+}
+
+.gauge-value {
+  position: relative;
+  z-index: 1;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: -0.02em;
+}
+
+.quota-side {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 4px;
 }
 
 .quota-head,
@@ -492,60 +654,29 @@ main {
 }
 
 .quota-head {
-  margin-bottom: 6px;
   font-size: 12px;
 }
 
-.quota-head span:first-child {
+.quota-head > span:first-child {
   color: var(--muted);
 }
 
-.quota-pct {
-  color: var(--text);
+.quota-head .mono {
+  overflow: hidden;
+  color: var(--dim);
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .quota-meta {
-  margin-top: 6px;
   color: var(--dim);
   font-size: 11.5px;
 }
 
-.quota-meta > span:last-child {
-  margin-left: auto;
-}
-
-.quota-meta .mono {
-  font-family: var(--mono);
-  font-size: 11px;
-}
-
-.meter {
-  height: 6px;
-  overflow: hidden;
-  border-radius: 3px;
-  background: var(--meter-empty);
-}
-
-.meter-fill {
-  height: 100%;
-  width: var(--meter-value);
-  border-radius: 3px;
-  background: var(--ok);
-  transform-origin: left;
-  animation: meter-rise 500ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
-}
-
-.meter.warning .meter-fill {
-  background: var(--amber);
-}
-
-.meter.danger .meter-fill {
-  background: var(--red);
-}
-
 .quota-unavailable {
+  flex: 1;
   color: var(--dim);
   font-size: 11.5px;
 }
@@ -580,7 +711,7 @@ main {
 
 .card-error {
   margin: 0;
-  border: 1px solid rgb(235 87 87 / 28%);
+  border: 1px solid oklch(0.65 0.19 25 / 28%);
   border-radius: 6px;
   padding: 9px 11px;
   background: var(--red-soft);
@@ -605,15 +736,31 @@ main {
   margin-left: auto;
 }
 
+@container (max-width: 340px) {
+  .quota-gauge {
+    width: 46px;
+  }
+
+  .quota-head {
+    flex-direction: column;
+    gap: 1px;
+    align-items: flex-start;
+  }
+
+  .card-actions .push-right {
+    margin-left: 0;
+  }
+}
+
 /* ---------- Login panel ---------- */
 
 .login-panel {
   display: grid;
   gap: 10px;
-  border: 1px solid rgb(242 201 76 / 25%);
+  border: 1px solid oklch(0.84 0.14 90 / 25%);
   border-radius: 8px;
   padding: 12px;
-  background: rgb(242 201 76 / 6%);
+  background: oklch(0.84 0.14 90 / 6%);
 }
 
 .login-panel p {
@@ -645,11 +792,52 @@ dialog {
   box-shadow:
     inset 0 1px 0 rgb(255 255 255 / 5%),
     0 24px 64px rgb(0 0 0 / 55%);
+  opacity: 1;
+  transform: none;
+  transition:
+    opacity 180ms ease,
+    transform 300ms var(--spring),
+    overlay 180ms ease allow-discrete,
+    display 180ms ease allow-discrete;
+}
+
+@supports (corner-shape: squircle) {
+  dialog {
+    border-radius: 20px;
+    corner-shape: squircle;
+  }
+}
+
+dialog:not([open]) {
+  opacity: 0;
+  transform: translateY(12px) scale(0.96);
+}
+
+@starting-style {
+  dialog[open] {
+    opacity: 0;
+    transform: translateY(12px) scale(0.96);
+  }
 }
 
 dialog::backdrop {
-  background: rgb(2 3 5 / 70%);
-  backdrop-filter: blur(4px);
+  background: oklch(0.08 0.005 260 / 72%);
+  backdrop-filter: blur(6px);
+  opacity: 0;
+  transition:
+    opacity 180ms ease,
+    overlay 180ms ease allow-discrete,
+    display 180ms ease allow-discrete;
+}
+
+dialog[open]::backdrop {
+  opacity: 1;
+}
+
+@starting-style {
+  dialog[open]::backdrop {
+    opacity: 0;
+  }
 }
 
 .dialog-panel {
@@ -660,6 +848,7 @@ dialog::backdrop {
   font-size: 16px;
   font-weight: 600;
   letter-spacing: -0.01em;
+  text-wrap: balance;
 }
 
 .dialog-message {
@@ -667,6 +856,7 @@ dialog::backdrop {
   color: var(--muted);
   font-size: 13px;
   line-height: 1.6;
+  text-wrap: pretty;
 }
 
 .dialog-panel label {
@@ -706,40 +896,69 @@ dialog::backdrop {
   font-size: 12.5px;
   line-height: 1.5;
   opacity: 0;
+  translate: 0 10px;
   pointer-events: none;
-  transform: translateY(8px);
   transition:
     opacity 160ms ease,
-    transform 160ms ease;
+    translate 340ms var(--spring);
+}
+
+@supports (corner-shape: squircle) {
+  .toast {
+    border-radius: 16px;
+    corner-shape: squircle;
+  }
 }
 
 .toast.visible {
   opacity: 1;
-  transform: translateY(0);
+  translate: 0 0;
 }
 
 .toast.error {
-  border-color: rgb(235 87 87 / 40%);
+  border-color: oklch(0.65 0.19 25 / 40%);
+}
+
+/* ---------- View transitions ---------- */
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 240ms;
+  animation-timing-function: ease;
+}
+
+::view-transition-old(root) {
+  animation-name: vt-fade-out;
+}
+
+::view-transition-new(root) {
+  animation-name: vt-fade-in;
 }
 
 /* ---------- Animations ---------- */
 
-/* Entrance motion runs on first mount only; poll-driven re-renders stay still. */
-.account-grid.settled .account-card,
-.account-grid.settled .meter-fill {
-  animation: none;
-}
-
 @keyframes card-enter {
   from {
     opacity: 0;
-    transform: translateY(8px);
+    translate: 0 12px;
   }
 }
 
-@keyframes meter-rise {
+@keyframes scroll-progress {
+  to {
+    transform: scaleX(1);
+  }
+}
+
+@keyframes vt-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes vt-fade-in {
   from {
-    transform: scaleX(0);
+    opacity: 0;
   }
 }
 
@@ -789,9 +1008,10 @@ dialog::backdrop {
   }
 }
 
+/* ---------- Reduced motion ---------- */
+
 @media (prefers-reduced-motion: reduce) {
-  .account-card,
-  .meter-fill,
+  .account-grid:not(.settled) .account-card,
   .link-pill.pending .link-dot,
   .status-pill.pending .status-dot,
   .is-refreshing .refresh-glyph {
@@ -801,6 +1021,11 @@ dialog::backdrop {
   .button,
   .icon-button,
   .account-card::before,
+  .quota-gauge,
+  #field,
+  main,
+  dialog,
+  dialog::backdrop,
   .toast {
     transition: none;
   }

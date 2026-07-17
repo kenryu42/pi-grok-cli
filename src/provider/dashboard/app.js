@@ -14,11 +14,15 @@ const dialogConfirm = document.querySelector('#dialog-confirm');
 const dialogCancel = document.querySelector('#dialog-cancel');
 const toastStatus = document.querySelector('#toast');
 const toastAlert = document.querySelector('#toast-alert');
+const fieldCanvas = document.querySelector('#field');
 
 let lastState = '';
 let wasOffline = false;
 let entranceDone = false;
 let timer;
+let pendingProviders = new Set();
+
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
 
 const element = (tag, className, text) => {
   const node = document.createElement(tag);
@@ -110,23 +114,353 @@ const dateLabel = (value) =>
     minute: '2-digit',
   }).format(new Date(value));
 
-const quotaRow = (label, usedLabel, reset, value) => {
+/* ---------- State field backdrop ----------
+ * A WebGL2 domain-warped noise field driven by live account state: aggregate
+ * quota burn raises its energy and shifts the palette indigo → teal → amber,
+ * errored accounts bleed ember into the warp, sync activity shimmers, and the
+ * pointer stirs the flow. Reduced motion gets a single composed still frame;
+ * no WebGL gets the painted CSS fallback (.no-field). */
+
+const FIELD_VERTEX = `#version 300 es
+layout(location = 0) in vec2 aPos;
+void main() {
+  gl_Position = vec4(aPos, 0.0, 1.0);
+}`;
+
+const FIELD_FRAGMENT = `#version 300 es
+precision highp float;
+
+uniform vec2 uRes;
+uniform float uTime;
+uniform float uEnergy;
+uniform float uAlert;
+uniform float uPending;
+uniform vec2 uPointer;
+uniform float uPointerForce;
+
+out vec4 outColor;
+
+float hash(vec2 p) {
+  p = fract(p * vec2(123.34, 456.21));
+  p += dot(p, p + 45.32);
+  return fract(p.x * p.y);
+}
+
+float noise(vec2 p) {
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  float a = hash(i);
+  float b = hash(i + vec2(1.0, 0.0));
+  float c = hash(i + vec2(0.0, 1.0));
+  float d = hash(i + vec2(1.0, 1.0));
+  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+float fbm(vec2 p) {
+  float value = 0.0;
+  float amp = 0.5;
+  mat2 rot = mat2(0.8, 0.6, -0.6, 0.8);
+  for (int i = 0; i < 5; i++) {
+    value += amp * noise(p);
+    p = rot * p * 2.02;
+    amp *= 0.5;
+  }
+  return value;
+}
+
+void main() {
+  vec2 uv = (gl_FragCoord.xy - 0.5 * uRes) / uRes.y;
+  vec2 toPtr = uv - (uPointer - 0.5 * uRes) / uRes.y;
+  float stir = uPointerForce * exp(-dot(toPtr, toPtr) * 5.0);
+  uv += stir * 0.22 * vec2(-toPtr.y, toPtr.x);
+
+  float t = uTime * (0.045 + uEnergy * 0.035 + uPending * 0.02);
+  float warp = 2.1 + uEnergy * 0.9 + uAlert * 0.5;
+
+  vec2 q = vec2(
+    fbm(uv * 1.35 + vec2(0.0, t)),
+    fbm(uv * 1.35 + vec2(5.2, t * 1.3))
+  );
+  vec2 r = vec2(
+    fbm(uv * 1.35 + warp * q + vec2(1.7, 9.2) + t * 0.6),
+    fbm(uv * 1.35 + warp * q + vec2(8.3, 2.8) - t * 0.4)
+  );
+  float f = fbm(uv * 1.35 + (warp + 0.4) * r);
+  // fbm clusters near 0.5; stretch it so the color bands actually saturate.
+  f = clamp((f - 0.5) * 2.4 + 0.5, 0.0, 1.0);
+
+  float body = smoothstep(0.3, 0.48, f);
+  float mid = smoothstep(0.48, 0.66, f);
+  float core = smoothstep(0.66, 0.92, f);
+  float glow = 0.55 + 0.45 * uEnergy + 0.2 * uPending;
+
+  vec3 deep = vec3(0.028, 0.032, 0.052);
+  vec3 indigo = vec3(0.32, 0.38, 0.9);
+  vec3 teal = vec3(0.2, 0.75, 0.55);
+  vec3 amber = vec3(0.95, 0.75, 0.25);
+  vec3 ember = vec3(0.92, 0.3, 0.28);
+
+  float hueArg = clamp((r.y * 0.6 + q.x * 0.4 - 0.5) * 2.6 + 0.5, 0.0, 1.0);
+  vec3 zone = mix(indigo, teal, smoothstep(0.32, 0.68, hueArg));
+  zone = mix(zone, amber, smoothstep(0.6, 0.95, uEnergy) * core);
+  zone = mix(zone, ember, uAlert * smoothstep(0.32, 0.75, f) * 0.85);
+
+  vec3 col = deep;
+  col += indigo * 0.03 * (0.5 + 0.5 * q.y);
+  col = mix(col, zone * 0.45, body);
+  col = mix(col, zone, mid * 0.9);
+  col += zone * core * 0.6 * glow;
+  col += zone * (0.14 * q.x * uPending + stir * 0.3);
+
+  vec2 sp = uv * 70.0;
+  vec2 cell = floor(sp);
+  float h = hash(cell);
+  if (h > 0.99) {
+    vec2 pos = vec2(hash(cell + 1.3), hash(cell + 2.7));
+    float d = length(fract(sp) - pos);
+    float tw = 0.5 + 0.5 * sin(uTime * (1.0 + h * 3.0) + h * 40.0);
+    col += vec3(0.75, 0.82, 1.0) * (1.0 - smoothstep(0.0, 0.16, d)) * tw * 0.6;
+  }
+
+  vec2 vuv = uv * vec2(0.75, 1.0);
+  col *= clamp(1.0 - 0.35 * dot(vuv, vuv), 0.0, 1.0);
+  col *= 1.0 + uPending * 0.06 * sin(uTime * 2.4) + uAlert * 0.08 * sin(uTime * 1.3);
+  col = col / (1.0 + col * 0.6);
+  col += (hash(gl_FragCoord.xy + vec2(fract(uTime))) - 0.5) * (1.5 / 255.0);
+
+  outColor = vec4(col, 1.0);
+}`;
+
+const createField = (canvas) => {
+  const gl = canvas.getContext('webgl2', {
+    alpha: false,
+    antialias: false,
+    depth: false,
+    powerPreference: 'low-power',
+    stencil: false,
+  });
+  if (!gl) return undefined;
+  const compile = (type, source) => {
+    const shader = gl.createShader(type);
+    gl.shaderSource(shader, source);
+    gl.compileShader(shader);
+    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+      throw new Error(gl.getShaderInfoLog(shader) || 'Field shader failed to compile.');
+    }
+    return shader;
+  };
+  try {
+    const program = gl.createProgram();
+    gl.attachShader(program, compile(gl.VERTEX_SHADER, FIELD_VERTEX));
+    gl.attachShader(program, compile(gl.FRAGMENT_SHADER, FIELD_FRAGMENT));
+    gl.linkProgram(program);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      throw new Error(gl.getProgramInfoLog(program) || 'Field shader failed to link.');
+    }
+    gl.useProgram(program);
+    gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+    const uniforms = {};
+    for (const name of [
+      'uRes',
+      'uTime',
+      'uEnergy',
+      'uAlert',
+      'uPending',
+      'uPointer',
+      'uPointerForce',
+    ]) {
+      uniforms[name] = gl.getUniformLocation(program, name);
+    }
+
+    const current = { energy: 0.12, alert: 0, pending: 0 };
+    const target = { energy: 0.12, alert: 0, pending: 0 };
+    const pointer = { x: 0, y: 0, fx: 0, fy: 0, force: 0, forceTarget: 0 };
+    let raf = 0;
+    let last = 0;
+    let time = 30;
+
+    const pixelScale = () => Math.min(window.devicePixelRatio || 1, 1.5) * 0.5;
+
+    const resize = () => {
+      const scale = pixelScale();
+      const width = Math.max(1, Math.round(canvas.clientWidth * scale));
+      const height = Math.max(1, Math.round(canvas.clientHeight * scale));
+      if (canvas.width !== width || canvas.height !== height) {
+        canvas.width = width;
+        canvas.height = height;
+        gl.viewport(0, 0, width, height);
+      }
+    };
+
+    const draw = () => {
+      gl.uniform2f(uniforms.uRes, canvas.width, canvas.height);
+      gl.uniform1f(uniforms.uTime, time);
+      gl.uniform1f(uniforms.uEnergy, current.energy);
+      gl.uniform1f(uniforms.uAlert, current.alert);
+      gl.uniform1f(uniforms.uPending, current.pending);
+      gl.uniform2f(uniforms.uPointer, pointer.fx, pointer.fy);
+      gl.uniform1f(uniforms.uPointerForce, pointer.force);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+    };
+
+    const frame = (now) => {
+      raf = 0;
+      const dt = Math.min(0.1, Math.max(0.001, (now - last) / 1000));
+      last = now;
+      time += dt;
+      const ease = 1 - Math.exp(-dt * 2.2);
+      current.energy += (target.energy - current.energy) * ease;
+      current.alert += (target.alert - current.alert) * ease;
+      current.pending += (target.pending - current.pending) * ease;
+      const snap = 1 - Math.exp(-dt * 9);
+      pointer.fx += (pointer.x - pointer.fx) * snap;
+      pointer.fy += (pointer.y - pointer.fy) * snap;
+      pointer.forceTarget *= Math.exp(-dt * 1.4);
+      pointer.force += (pointer.forceTarget - pointer.force) * (1 - Math.exp(-dt * 4));
+      resize();
+      draw();
+      if (!reduceMotion.matches && !document.hidden) raf = requestAnimationFrame(frame);
+    };
+
+    const start = () => {
+      if (raf || reduceMotion.matches || document.hidden) return;
+      last = performance.now();
+      raf = requestAnimationFrame(frame);
+    };
+
+    const stop = () => {
+      if (!raf) return;
+      cancelAnimationFrame(raf);
+      raf = 0;
+    };
+
+    const still = () => {
+      resize();
+      draw();
+    };
+
+    window.addEventListener(
+      'pointermove',
+      (event) => {
+        const scale = pixelScale();
+        pointer.x = event.clientX * scale;
+        pointer.y = (canvas.clientHeight - event.clientY) * scale;
+        pointer.forceTarget = 1;
+      },
+      { passive: true },
+    );
+    window.addEventListener('resize', () => {
+      if (!raf) still();
+    });
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) stop();
+      else start();
+    });
+    reduceMotion.addEventListener('change', () => {
+      if (reduceMotion.matches) {
+        stop();
+        still();
+        return;
+      }
+      start();
+    });
+    canvas.addEventListener('webglcontextlost', (event) => {
+      event.preventDefault();
+      stop();
+      document.documentElement.classList.add('no-field');
+    });
+
+    if (reduceMotion.matches) still();
+    else start();
+
+    return {
+      setTargets(next) {
+        Object.assign(target, next);
+        if (!reduceMotion.matches) return;
+        Object.assign(current, target);
+        still();
+      },
+    };
+  } catch {
+    return undefined;
+  }
+};
+
+const field = createField(fieldCanvas);
+if (!field) document.documentElement.classList.add('no-field');
+
+const updateFieldTargets = (state, offline = false) => {
+  if (!field) return;
+  const usages = state.accounts
+    .filter((account) => account.quota)
+    .map((account) => percent(account.quota.monthly.used, account.quota.monthly.monthlyLimit));
+  const energy = usages.length
+    ? usages.reduce((sum, value) => sum + value, 0) / usages.length / 100
+    : 0.12;
+  const errors = state.accounts.filter(
+    (account) => account.login.error || account.login.quotaError,
+  ).length;
+  field.setTargets({
+    alert: offline ? 0.65 : state.accounts.length ? errors / state.accounts.length : 0,
+    energy: Math.max(0.12, energy),
+    pending:
+      state.refreshing || state.accounts.some((account) => account.login.state === 'pending')
+        ? 1
+        : 0,
+  });
+};
+
+/* ---------- Quota gauges ----------
+ * Ring gauges drawn with a conic-gradient over the registered --gauge
+ * property. Sweeps are animated with WAAPI (registered custom property
+ * interpolation); where that is unsupported the gauge renders statically. */
+
+const gaugeMemory = new Map();
+
+const animateGauge = (gauge, from, to) => {
+  if (reduceMotion.matches) return;
+  try {
+    gauge.animate([{ '--gauge': String(from) }, { '--gauge': String(to) }], {
+      duration: 780,
+      easing: 'cubic-bezier(0.22, 0.9, 0.24, 1)',
+    });
+  } catch {
+    // Custom-property WAAPI unsupported: the inline --gauge value already shows the truth.
+  }
+};
+
+const quotaRow = (provider, label, usedLabel, reset, value) => {
   const row = element('div', 'quota');
+  const gauge = element(
+    'div',
+    `quota-gauge${value >= 95 ? ' danger' : value >= 75 ? ' warning' : ''}`,
+  );
+  gauge.style.setProperty('--gauge', value.toFixed(1));
+  gauge.setAttribute('role', 'progressbar');
+  gauge.setAttribute('aria-label', `${label}: ${Math.round(value)} percent used`);
+  gauge.setAttribute('aria-valuemin', '0');
+  gauge.setAttribute('aria-valuemax', '100');
+  gauge.setAttribute('aria-valuenow', String(Math.round(value)));
+  gauge.append(element('span', 'gauge-value', `${Math.round(value)}%`));
+  const key = `${provider}:${label}`;
+  const previous = gaugeMemory.get(key);
+  gaugeMemory.set(key, value);
+  if (!entranceDone) animateGauge(gauge, 0, value);
+  else if (previous !== undefined && Math.abs(previous - value) > 0.5) {
+    animateGauge(gauge, previous, value);
+  }
+  const side = element('div', 'quota-side');
   const header = element('div', 'quota-head');
-  header.append(element('span', '', label), element('span', 'quota-pct', `${Math.round(value)}%`));
-  const meter = element('div', `meter${value >= 95 ? ' danger' : value >= 75 ? ' warning' : ''}`);
-  meter.setAttribute('role', 'progressbar');
-  meter.setAttribute('aria-label', `${label}: ${Math.round(value)} percent used`);
-  meter.setAttribute('aria-valuemin', '0');
-  meter.setAttribute('aria-valuemax', '100');
-  meter.setAttribute('aria-valuenow', String(Math.round(value)));
-  const fill = element('div', 'meter-fill');
-  fill.style.setProperty('--meter-value', `${value}%`);
-  meter.append(fill);
+  header.append(element('span', '', label));
+  if (usedLabel) header.append(element('span', 'mono', usedLabel));
   const meta = element('div', 'quota-meta');
-  if (usedLabel) meta.append(element('span', 'mono', usedLabel));
   meta.append(element('span', '', `Resets ${dateLabel(reset)}`));
-  row.append(header, meter, meta);
+  side.append(header, meta);
+  row.append(gauge, side);
   return row;
 };
 
@@ -173,13 +507,13 @@ const startLogin = async (provider) => {
       showToast('Pop-up blocked. Allow pop-ups, then use Log in on the account card.', true);
       return;
     }
-    await refreshState(true);
+    await refreshState(true, true);
   } catch (error) {
     showToast(error.message, true);
   }
 };
 
-const loginPanel = (account) => {
+const loginPanel = (account, isNew) => {
   const panel = element('form', 'login-panel');
   panel.append(element('p', '', account.login.progress || 'Waiting for browser authorization…'));
   const row = element('div', 'login-row');
@@ -198,7 +532,7 @@ const loginPanel = (account) => {
   cancel.addEventListener('click', async () => {
     try {
       await mutation(`/api/accounts/${account.provider}/login-cancel`, 'POST');
-      await refreshState(true);
+      await refreshState(true, true);
     } catch (error) {
       showToast(error.message, true);
     }
@@ -217,6 +551,15 @@ const loginPanel = (account) => {
       showToast(error.message, true);
     }
   });
+  if (isNew) {
+    panel.animate(
+      [
+        { opacity: 0, translate: '0 8px' },
+        { opacity: 1, translate: '0 0' },
+      ],
+      { duration: 340, easing: 'cubic-bezier(0.22, 0.9, 0.24, 1)' },
+    );
+  }
   return panel;
 };
 
@@ -225,7 +568,7 @@ const cardActions = (account) => {
   const activate = async () => {
     try {
       await mutation(`/api/accounts/${account.provider}/activate`, 'POST');
-      await refreshState(true);
+      await refreshState(true, true);
     } catch (error) {
       showToast(error.message, true);
     }
@@ -273,7 +616,7 @@ const cardActions = (account) => {
           : `/api/accounts/${account.provider}`,
         account.provider === 'grok-cli' ? 'POST' : 'DELETE',
       );
-      await refreshState(true);
+      await refreshState(true, true);
     } catch (error) {
       showToast(error.message, true);
     }
@@ -302,10 +645,13 @@ const cardActions = (account) => {
   return actions;
 };
 
-const accountCard = (account, index) => {
+const accountCard = (account, index, isNewPending) => {
   const card = element('article', `account-card${account.active ? ' active' : ''}`);
   card.dataset.provider = account.provider;
-  card.style.animationDelay = `${Math.min(index * 40, 200)}ms`;
+  card.style.viewTransitionName = `card-${account.provider}`;
+  if (!entranceDone) {
+    card.style.setProperty('--enter-delay', `${Math.min(index * 45, 220)}ms`);
+  }
 
   const head = element('header', 'card-head');
   const titleRow = element('div', 'card-title-row');
@@ -317,7 +663,7 @@ const accountCard = (account, index) => {
 
   const body = element('div', 'card-body');
   if (account.login.state === 'pending') {
-    body.append(loginPanel(account));
+    body.append(loginPanel(account, isNewPending));
     card.append(head, body);
     return card;
   }
@@ -325,8 +671,9 @@ const accountCard = (account, index) => {
   if (account.quota) {
     body.append(
       quotaRow(
+        account.provider,
         'Monthly credits',
-        `${account.quota.monthly.used.toLocaleString()} / ${account.quota.monthly.monthlyLimit.toLocaleString()} used`,
+        `${account.quota.monthly.used.toLocaleString()} / ${account.quota.monthly.monthlyLimit.toLocaleString()}`,
         account.quota.monthly.billingPeriodEnd,
         percent(account.quota.monthly.used, account.quota.monthly.monthlyLimit),
       ),
@@ -334,6 +681,7 @@ const accountCard = (account, index) => {
     body.append(
       account.quota.weekly
         ? quotaRow(
+            account.provider,
             'Weekly credits',
             '',
             account.quota.weekly.billingPeriodEnd,
@@ -366,12 +714,19 @@ const accountCard = (account, index) => {
 
 const render = (state) => {
   const online = state.accounts.filter((account) => account.authenticated).length;
-  statsSummary.textContent = `${state.accounts.length} account${state.accounts.length === 1 ? '' : 's'} · ${online} logged in`;
+  const usages = state.accounts
+    .filter((account) => account.quota)
+    .map((account) => percent(account.quota.monthly.used, account.quota.monthly.monthlyLimit));
+  const averageUsage = usages.length
+    ? Math.round(usages.reduce((sum, value) => sum + value, 0) / usages.length)
+    : undefined;
+  statsSummary.textContent = `${state.accounts.length} account${state.accounts.length === 1 ? '' : 's'} · ${online} logged in${averageUsage === undefined ? '' : ` · ${averageUsage}% avg usage`}`;
   linkState.className = 'link-pill ok';
   linkText.textContent = 'Synced';
   refreshButton.disabled = state.refreshing;
   refreshButton.classList.toggle('is-refreshing', state.refreshing);
   accountsRoot.setAttribute('aria-busy', String(state.refreshing));
+  updateFieldTargets(state);
   const active = document.activeElement;
   const refocus =
     active instanceof HTMLElement && accountsRoot.contains(active) && active.dataset.action
@@ -386,10 +741,22 @@ const render = (state) => {
       .filter(([, value]) => value),
   );
   if (entranceDone) accountsRoot.classList.add('settled');
+  const nextPending = new Set(
+    state.accounts
+      .filter((account) => account.login.state === 'pending')
+      .map((account) => account.provider),
+  );
   const children = state.accounts.length
-    ? state.accounts.map(accountCard)
+    ? state.accounts.map((account, index) =>
+        accountCard(
+          account,
+          index,
+          nextPending.has(account.provider) && !pendingProviders.has(account.provider),
+        ),
+      )
     : [element('p', 'grid-message', 'No accounts configured. Use Add account to connect one.')];
   accountsRoot.replaceChildren(...children);
+  pendingProviders = nextPending;
   entranceDone = true;
   for (const [provider, value] of codes) {
     const input = accountsRoot.querySelector(`[data-provider="${provider}"] input[name="code"]`);
@@ -402,6 +769,20 @@ const render = (state) => {
   }
 };
 
+// Structural, user-initiated changes (add / remove / switch / login) morph via
+// the View Transitions API; everything else re-renders plainly.
+const renderTransition = (state) => {
+  if (
+    reduceMotion.matches ||
+    typeof document.startViewTransition !== 'function' ||
+    accountsRoot.querySelector('input[name="code"]:focus')
+  ) {
+    render(state);
+    return;
+  }
+  document.startViewTransition(() => render(state));
+};
+
 const schedule = (state) => {
   clearTimeout(timer);
   if (document.hidden) return;
@@ -410,13 +791,14 @@ const schedule = (state) => {
   timer = setTimeout(() => refreshState(), pending ? 2000 : 15000);
 };
 
-async function refreshState(force = false) {
+async function refreshState(force = false, animate = false) {
   try {
     const state = await api('/api/state');
     const serialized = JSON.stringify(state);
     if (force || wasOffline || serialized !== lastState) {
       lastState = serialized;
-      render(state);
+      if (animate) renderTransition(state);
+      else render(state);
     }
     wasOffline = false;
     schedule(state);
@@ -425,6 +807,8 @@ async function refreshState(force = false) {
     linkState.className = 'link-pill error';
     linkText.textContent = 'Offline';
     accountsRoot.setAttribute('aria-busy', 'false');
+    if (lastState) updateFieldTargets(JSON.parse(lastState), true);
+    else field?.setTargets({ alert: 0.65, pending: 0 });
     // Keep the last good state on screen once loaded; a stale console beats a blank one.
     if (!lastState) {
       accountsRoot.replaceChildren(
@@ -459,7 +843,7 @@ addAccount.addEventListener('click', async () => {
   if (label === undefined) return;
   try {
     const account = await mutation('/api/accounts', 'POST', { label });
-    await refreshState(true);
+    await refreshState(true, true);
     await startLogin(account.provider);
   } catch (error) {
     showToast(error.message, true);
