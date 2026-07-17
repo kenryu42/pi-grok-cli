@@ -760,7 +760,8 @@ export function registerAccountManagement(pi: ExtensionAPI, registerAccount: Reg
   const dashboard = createAccountDashboard(manager);
 
   pi.registerCommand('grok-cli-accounts', {
-    description: 'Add, switch, rename, relogin, or remove Grok CLI accounts',
+    description:
+      'Add, switch, rename, relogin, or remove Grok CLI accounts; pass gui to open the browser UI',
     handler: async (args, ctx) => {
       const command = args.trim();
       if (command === 'gui') {

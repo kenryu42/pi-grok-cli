@@ -41,7 +41,7 @@ Choose **Grok CLI**, then select one of these methods:
 - **Browser login (default)** — opens xAI authorization and completes a PKCE exchange through a local loopback callback. If xAI shows a one-time code instead of redirecting to pi, paste that code into pi to complete the active PKCE exchange.
 - **Device code login (headless)** — displays a URL and short code for SSH, containers, and other headless environments.
 
-To add another login, run `/grok-cli-accounts`, choose **＋ Add account**, and optionally label it. The extension adds a stable provider alias and pre-fills `/login <provider-id>`; press Enter to complete Pi's native login flow. For a visual account and quota dashboard, run `/grok-cli-accounts gui`; adding an account there starts browser login immediately. Use only accounts you own or are authorized to access.
+To add another login, run `/grok-cli-accounts`, choose **＋ Add account**, and optionally label it. The extension adds a stable provider alias and pre-fills `/login <provider-id>`; press Enter to complete Pi's native login flow. For a browser UI with an account and quota overview, run `/grok-cli-accounts gui`; adding an account there starts browser login immediately. Use only accounts you own or are authorized to access.
 
 ### 3. Select a model
 
@@ -88,7 +88,7 @@ Use `/login` to authenticate through a browser or device code. Pi stores and ref
 
 Run `/grok-cli-accounts` to add, switch, rename, relogin, log out, or remove accounts. Each account is registered as an independent Pi provider (`grok-cli`, `grok-cli-2`, and so on), so Pi keeps its OAuth credential separately in `auth.json`. The base `grok-cli` slot is permanent; aliases can be removed. Existing aliases keep their provider IDs, and a removed alias number is reused by the next account when it is the lowest available slot.
 
-Run `/grok-cli-accounts gui` to open the same account controls as a visual local dashboard with monthly and weekly quota meters. The dashboard binds to a random `127.0.0.1` port for the current Pi session, completes browser login without exposing credentials to the page, and closes on Pi session shutdown or after 15 minutes without requests. Its private local URL grants access to account controls while the server is running; do not share it. Browser login and manual one-time-code entry are supported in the dashboard, while device-code login remains available through the TUI for headless environments.
+Run `/grok-cli-accounts gui` to open the same account controls in a local browser UI with monthly and weekly quota meters. The browser UI binds to a random `127.0.0.1` port for the current Pi session, completes browser login without exposing credentials to the page, and closes on Pi session shutdown or after 15 minutes without requests. Its private local URL grants access to account controls while the server is running; do not share it. Browser login and manual one-time-code entry are supported in the browser UI, while device-code login remains available through the TUI for headless environments.
 
 The account selectors show the last cached quota for every logged-in account as consumed monthly and weekly usage. Press `r` to refresh all logged-in accounts without switching models or changing the selected account. Refreshes run three accounts at a time; a failed account keeps its previous cached value and is marked as failed for the current dialog. Values older than 30 minutes are labeled stale. Opening the selector does not refresh automatically.
 
@@ -149,7 +149,7 @@ Run `/grok-cli-imagine <prompt>` to generate and preview a JPEG, or let any acti
 
 | Command | Description |
 | --- | --- |
-| `/grok-cli-accounts [gui]` | Manage Grok accounts in the TUI, or add `gui` for the local visual account and quota dashboard. |
+| `/grok-cli-accounts [gui]` | Manage Grok accounts in the TUI, or add `gui` for the local browser UI with account and quota controls. |
 | `/grok-cli-usage` | Fetch current quota, update its cache, and show cached data if refresh fails. |
 | `/grok-cli-imagine <prompt>` | Generate and preview an image. Supports `--aspect`, `--out`, and `--resolution 1k`. |
 | `/grok-cli-imagine:tool [on\|off\|status]` | Toggle, set, or report persistent model-callable `image_gen` availability. |
