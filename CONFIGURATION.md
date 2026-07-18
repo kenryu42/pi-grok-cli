@@ -13,3 +13,5 @@ Most users do not need these overrides. Only point base URL overrides at endpoin
 | `PI_GROK_CLI_TOKEN_TIMEOUT_MS` | `30000` | Timeout for OAuth token requests. |
 | `PI_GROK_CLI_IMAGINE_BASE_URL` | `https://api.x.ai/v1` | Override the Imagine API base URL. |
 | `PI_GROK_CLI_IMAGINE_MODEL` | `grok-imagine-image-quality` | Override the Imagine image model. |
+
+OAuth logins store the effective main API base URL in each account's credentials. Changing or removing `PI_GROK_CLI_BASE_URL` or `GROK_CLI_BASE_URL` does not immediately redirect an already authenticated account; its stored URL remains active until token refresh or re-login. Log in again to apply the change immediately.

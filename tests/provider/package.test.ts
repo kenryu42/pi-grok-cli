@@ -11,7 +11,13 @@ describe('npm package manifest', () => {
     expect(packageJson.keywords).toContain('pi-package');
     expect(packageJson.pi?.extensions).toEqual(['./src/index.ts']);
     expect(packageJson.main).toBe('./src/index.ts');
-    expect(packageJson.files).toEqual(['README.md', 'SECURITY.md', 'src', 'tsconfig.json']);
+    expect(packageJson.files).toEqual([
+      'CONFIGURATION.md',
+      'README.md',
+      'SECURITY.md',
+      'src',
+      'tsconfig.json',
+    ]);
   });
 
   it('runs publish checks before packing', () => {
