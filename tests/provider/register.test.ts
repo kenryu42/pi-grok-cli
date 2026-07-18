@@ -429,6 +429,7 @@ describe('Grok CLI status command', () => {
   it('persists successful billing usage in the selected provider cache', async () => {
     process.env.GROK_CLI_OAUTH_TOKEN = 'env-token';
     setupHome();
+    const timeout = vi.spyOn(AbortSignal, 'timeout');
     globalThis.fetch = vi.fn<typeof fetch>(async () =>
       billingResponse(4000, 1421, '2026-07-01T00:00:00+00:00'),
     );
@@ -438,6 +439,7 @@ describe('Grok CLI status command', () => {
     expect(loadQuotaCache().accounts['grok-cli']).toMatchObject({
       monthly: { monthlyLimit: 4000, used: 1421 },
     });
+    expect(timeout).toHaveBeenCalledWith(30_000);
     expect(existsSync(getQuotaCachePath())).toBe(true);
   });
 

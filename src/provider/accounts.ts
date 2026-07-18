@@ -557,7 +557,8 @@ function createAccountManager(
               accountGeneration(account.provider) !== generation ||
               !copyConfig().accounts.items.some(
                 (candidate) => candidate.provider === account.provider,
-              )
+              ) ||
+              !hasAccountAuth(ctx, account.provider)
             ) {
               return false;
             }
@@ -698,7 +699,7 @@ function createAccountManager(
         return { warning: cacheWarning };
       });
     },
-    refresh(
+    async refresh(
       ctx: ExtensionContext,
       signal: AbortSignal,
       onProgress?: (progress: {
@@ -708,23 +709,23 @@ function createAccountManager(
         updated: boolean;
       }) => void,
     ) {
-      return mutate(() =>
+      return refreshAccounts(
+        ctx,
         copyConfig().accounts.items.flatMap((account) =>
           hasAccountAuth(ctx, account.provider)
             ? [{ account, generation: accountGeneration(account.provider) }]
             : [],
         ),
-      ).then((accounts) => refreshAccounts(ctx, accounts, signal, onProgress));
+        signal,
+        onProgress,
+      );
     },
-    refreshOne(ctx: ExtensionContext, provider: string, signal: AbortSignal) {
-      return mutate(() => {
-        const config = copyConfig();
-        const account = accountFrom(config, provider);
-        if (!hasAccountAuth(ctx, provider)) {
-          throw new Error(`Log in to “${account.label}” before refreshing its quota.`);
-        }
-        return { account, generation: accountGeneration(provider) };
-      }).then((account) => refreshAccounts(ctx, [account], signal));
+    async refreshOne(ctx: ExtensionContext, provider: string, signal: AbortSignal) {
+      const account = accountFrom(copyConfig(), provider);
+      if (!hasAccountAuth(ctx, provider)) {
+        throw new Error(`Log in to “${account.label}” before refreshing its quota.`);
+      }
+      return refreshAccounts(ctx, [{ account, generation: accountGeneration(provider) }], signal);
     },
     snapshot(ctx: ExtensionContext): AccountsSnapshot {
       const config = copyConfig();

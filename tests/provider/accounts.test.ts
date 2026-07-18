@@ -513,6 +513,40 @@ describe('/grok-cli-accounts', () => {
     expect(loadQuotaCache().accounts['grok-cli-2']).toBeUndefined();
   });
 
+  it('allows logout during refresh without restoring the logged-out quota cache', async () => {
+    configureAccounts();
+    let releaseMonthly = () => {};
+    globalThis.fetch = vi.fn<typeof fetch>(async (input) => {
+      if (String(input).includes('format=credits')) return new Response(null, { status: 500 });
+      await new Promise<void>((resolve) => {
+        releaseMonthly = resolve;
+      });
+      return Response.json({
+        config: {
+          monthlyLimit: { val: 2000 },
+          used: { val: 900 },
+          billingPeriodEnd: '2026-08-01T00:00:00.000Z',
+        },
+      });
+    });
+    const extension = setup({ auth: authenticatedAccounts(), preserveHome: true });
+    const refresh = extension.accountManagement.manager.refreshOne(
+      extension.context as unknown as ExtensionContext,
+      'grok-cli',
+      new AbortController().signal,
+    );
+    await vi.waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(1));
+
+    await extension.accountManagement.manager.logout(
+      extension.context as unknown as ExtensionContext,
+      'grok-cli',
+    );
+    releaseMonthly();
+    await refresh;
+
+    expect(loadQuotaCache().accounts['grok-cli']).toBeUndefined();
+  });
+
   it('handles uppercase R with no authenticated accounts without fetching', async () => {
     configureAccounts();
     const fetchMock = vi.fn<typeof fetch>();

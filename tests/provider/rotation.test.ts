@@ -180,6 +180,36 @@ describe('Grok CLI exhaustion rotation', () => {
     expect(extension.sendUserMessage).toHaveBeenCalledWith(ROTATION_CONTINUATION);
   });
 
+  it('preserves configuration changes made while switching models', async () => {
+    const extension = setup();
+    let releaseSwitch = () => {};
+    extension.setModel.mockImplementation(async (model) => {
+      await new Promise<void>((resolve) => {
+        releaseSwitch = resolve;
+      });
+      extension.context.model = model;
+      return true;
+    });
+    await extension.emit('message_end', assistant('grok-cli'));
+    const settling = extension.emit('agent_settled');
+    await vi.waitFor(() => expect(extension.setModel).toHaveBeenCalledOnce());
+    const concurrent = loadConfig().config;
+    concurrent.accounts.items.push({ provider: 'grok-cli-3', label: 'Added concurrently' });
+    concurrent.vision.enabled = false;
+    saveConfig(concurrent);
+
+    releaseSwitch();
+    await settling;
+
+    expect(loadConfig().config).toMatchObject({
+      accounts: {
+        selectedProvider: 'grok-cli-2',
+        items: expect.arrayContaining([{ provider: 'grok-cli-3', label: 'Added concurrently' }]),
+      },
+      vision: { enabled: false },
+    });
+  });
+
   it.each([
     ['near match', 'OpenAI API error (402): 402 "Grok Build usage balance exhausted".'],
     ['other 402', 'OpenAI API error (402): payment required'],

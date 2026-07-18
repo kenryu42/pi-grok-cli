@@ -11,6 +11,12 @@ import {
   ModelRegistry,
   ModelRuntime,
 } from '@earendil-works/pi-coding-agent';
+import {
+  type HTMLDialogElement as BrowserDialog,
+  type HTMLElement as BrowserElement,
+  type HTMLInputElement as BrowserInput,
+  Window,
+} from 'happy-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_CONFIG, loadConfig, saveConfig } from '../../src/config.js';
 import { registerAccountManagement } from '../../src/provider/accounts.js';
@@ -115,6 +121,181 @@ const servedFile = (session: Awaited<ReturnType<typeof openDashboard>>, path = '
   fetch(`${session.dashboard.origin}${path}`, { headers: { Cookie: session.cookie } }).then(
     (response) => response.text(),
   );
+
+const accountState = (
+  overrides: Record<string, unknown> = {},
+  login: Record<string, unknown> = { state: 'idle' },
+) => ({
+  provider: 'grok-cli',
+  label: 'Account 1',
+  status: 'Logged in',
+  authenticated: true,
+  active: true,
+  environment: false,
+  login,
+  ...overrides,
+});
+
+async function browserDashboard(
+  session: Awaited<ReturnType<typeof openDashboard>>,
+  states: { refreshing: boolean; accounts: ReturnType<typeof accountState>[] }[],
+  mutate: (path: string, method: string, body: Record<string, unknown>) => unknown = () => ({}),
+  webgl = false,
+) {
+  const [page, styles, script] = await Promise.all([
+    servedFile(session),
+    servedFile(session, '/app.css'),
+    servedFile(session, '/app.js'),
+  ]);
+  const window = new Window({ url: session.dashboard.origin });
+  const timers = new Map<number, { callback: TimerHandler; delay: number }>();
+  const frames = new Map<number, FrameRequestCallback>();
+  const resizeCallbacks: ResizeObserverCallback[] = [];
+  let timerId = 0;
+  let frameId = 0;
+  let stateIndex = 0;
+  let canvasWidth = 800;
+  let canvasHeight = 600;
+  const drawArrays = vi.fn();
+  const viewport = vi.fn();
+  const animations = vi.fn(() => ({ cancel() {} }));
+
+  Object.assign(window, {
+    fetch: vi.fn(async (input: RequestInfo | URL, options: RequestInit = {}) => {
+      const url = new URL(String(input), session.dashboard.origin);
+      if (url.pathname === '/api/state') {
+        const state = states[Math.min(stateIndex, states.length - 1)];
+        stateIndex += 1;
+        return Response.json(state);
+      }
+      return Response.json(
+        mutate(
+          url.pathname,
+          options.method ?? 'GET',
+          options.body ? JSON.parse(String(options.body)) : {},
+        ),
+      );
+    }),
+    matchMedia: () => ({
+      matches: false,
+      addEventListener() {},
+      removeEventListener() {},
+    }),
+    open: () => window,
+    requestAnimationFrame: (callback: FrameRequestCallback) => {
+      frameId += 1;
+      frames.set(frameId, callback);
+      return frameId;
+    },
+    cancelAnimationFrame: (id: number) => frames.delete(id),
+    ResizeObserver: class {
+      constructor(callback: ResizeObserverCallback) {
+        resizeCallbacks.push(callback);
+      }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+    setTimeout: (callback: TimerHandler, delay = 0) => {
+      timerId += 1;
+      timers.set(timerId, { callback, delay });
+      return timerId;
+    },
+    clearTimeout: (id: number) => timers.delete(id),
+  });
+  Object.defineProperties(window.HTMLCanvasElement.prototype, {
+    clientWidth: { configurable: true, get: () => canvasWidth },
+    clientHeight: { configurable: true, get: () => canvasHeight },
+  });
+  Object.defineProperty(window.performance, 'now', { configurable: true, value: () => 0 });
+  window.HTMLCanvasElement.prototype.getContext = vi.fn(() =>
+    webgl
+      ? {
+          ARRAY_BUFFER: 1,
+          COMPILE_STATUS: 1,
+          FLOAT: 1,
+          FRAGMENT_SHADER: 1,
+          LINK_STATUS: 1,
+          STATIC_DRAW: 1,
+          TRIANGLES: 1,
+          VERTEX_SHADER: 1,
+          attachShader() {},
+          bindBuffer() {},
+          bufferData() {},
+          compileShader() {},
+          createBuffer: () => ({}),
+          createProgram: () => ({}),
+          createShader: () => ({}),
+          drawArrays,
+          enableVertexAttribArray() {},
+          getProgramParameter: () => true,
+          getShaderParameter: () => true,
+          getUniformLocation: () => ({}),
+          linkProgram() {},
+          shaderSource() {},
+          uniform1f() {},
+          uniform2f() {},
+          useProgram() {},
+          vertexAttribPointer() {},
+          viewport,
+        }
+      : null,
+  ) as typeof window.HTMLCanvasElement.prototype.getContext;
+  Object.defineProperty(window.Element.prototype, 'animate', {
+    configurable: true,
+    value: animations,
+  });
+  window.HTMLDialogElement.prototype.showModal = function () {
+    this.open = true;
+  };
+  window.HTMLDialogElement.prototype.close = function (returnValue = '') {
+    this.returnValue = returnValue;
+    this.open = false;
+    this.dispatchEvent(new window.Event('close'));
+  };
+  window.document.write(
+    page
+      .replace('<link rel="stylesheet" href="/app.css" />', `<style>${styles}</style>`)
+      .replace('<script type="module" src="/app.js"></script>', ''),
+  );
+  window.eval(script);
+  await vi.waitFor(() => expect(window.document.querySelector('.account-card')).not.toBeNull());
+
+  const flush = async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  };
+  return {
+    animations,
+    drawArrays,
+    resizeCallbacks,
+    viewport,
+    window,
+    async close() {
+      await window.happyDOM.abort();
+    },
+    async runFrame(now: number) {
+      const next = frames.entries().next().value as [number, FrameRequestCallback] | undefined;
+      if (!next) return;
+      frames.delete(next[0]);
+      next[1](now);
+      await flush();
+    },
+    async runTimers(delay: number) {
+      const pending = [...timers].filter(([, timer]) => timer.delay === delay);
+      for (const [id, timer] of pending) {
+        timers.delete(id);
+        if (typeof timer.callback === 'function') timer.callback();
+      }
+      await flush();
+    },
+    resize(width: number, height: number) {
+      canvasWidth = width;
+      canvasHeight = height;
+      for (const callback of resizeCallbacks) callback([], {} as ResizeObserver);
+    },
+  };
+}
 
 async function openDashboard(options?: Parameters<typeof startAccountDashboard>[2]) {
   const extension = await setup();
@@ -381,9 +562,8 @@ describe('account dashboard loopback server', () => {
     expect(state).not.toContain('browser-state');
   });
 
-  it('serves DOM-safe client code and rejects malformed or oversized mutations', async () => {
+  it('rejects malformed or oversized mutations', async () => {
     const session = await openDashboard();
-    const script = await servedFile(session, '/app.js');
     const malformed = await fetch(`${session.dashboard.origin}/api/accounts`, {
       method: 'POST',
       headers: session.headers,
@@ -395,75 +575,189 @@ describe('account dashboard loopback server', () => {
       body: JSON.stringify({ label: 'x'.repeat(9000) }),
     });
 
-    expect(script).toContain('textContent');
-    expect(script).not.toContain('innerHTML');
     expect(malformed.status).toBe(400);
     expect(oversized.status).toBe(413);
   });
 
-  it('serves an accessible page shell with brand-consistent client behavior', async () => {
+  it('renders safely, preserves focused login input, and announces login progress', async () => {
     const session = await openDashboard();
-    const page = await servedFile(session);
-    const script = await servedFile(session, '/app.js');
+    const malicious = '<img src=x onerror=alert(1)>';
+    const browser = await browserDashboard(session, [
+      {
+        refreshing: false,
+        accounts: [
+          accountState(
+            { label: malicious },
+            { state: 'pending', progress: 'Waiting for browser authorization…' },
+          ),
+        ],
+      },
+      {
+        refreshing: false,
+        accounts: [
+          accountState({ label: malicious }, { state: 'pending', progress: 'Enter code' }),
+        ],
+      },
+      {
+        refreshing: false,
+        accounts: [accountState({ label: malicious }, { state: 'success' })],
+      },
+    ]);
+    const document = browser.window.document;
+    const code = document.querySelector('input[name="code"]') as unknown as BrowserInput;
 
-    // The confirm button stays the dialog's default action (Enter submits, never cancels).
-    expect(page).toContain('id="dialog-cancel" type="button"');
-    // Failures are announced assertively; routine status stays polite.
-    expect(page).toContain('role="alert"');
-    expect(page).toContain('role="status"');
-    // A persistent polite region carries login progress across poll-driven re-renders.
-    expect(page).toContain('id="sr-status"');
-    // The appbar separator is decorative and stays out of the accessibility tree.
-    expect(page).toContain('class="brand-sep" aria-hidden="true"');
-    // Card titles are h2s: the heading outline never skips a level under the h1 brand.
-    expect(script).toContain("element('h2'");
-    expect(script).not.toContain("element('h3'");
-    // The favicon matches the in-app brand mark (ink glyph on a raised tile).
-    expect(page).toContain('%23f7f8f8');
-    expect(page).not.toContain('%234fd1e8');
-    // Re-renders preserve keyboard focus and typed login codes.
-    expect(script).toContain('data-action');
-    expect(script).toContain('[data-provider]');
-    // Entrance motion runs once instead of replaying on every poll.
-    expect(script).toContain('settled');
-    // Toasts pause their dismiss timer on hover.
-    expect(script).toContain('pointerenter');
+    expect(document.querySelector('.card-title-row h2')?.textContent).toBe(malicious);
+    expect(document.querySelector('.card-title-row img')).toBeNull();
+    expect(document.querySelector('#dialog-cancel')?.getAttribute('type')).toBe('button');
+    expect(document.querySelector('[role="alert"]')).not.toBeNull();
+    expect(document.querySelectorAll('[role="status"]')).toHaveLength(2);
+    expect(document.querySelector('.brand-sep')?.getAttribute('aria-hidden')).toBe('true');
+    code.value = 'keep-me';
+    code.focus();
+
+    await browser.runTimers(2000);
+    await vi.waitFor(() =>
+      expect(document.querySelector('#sr-status')?.textContent).toBe('Enter code'),
+    );
+
+    const rerenderedCode = document.querySelector('input[name="code"]') as unknown as BrowserInput;
+    expect(rerenderedCode.value).toBe('keep-me');
+    expect(document.activeElement).toBe(rerenderedCode);
+    expect(document.querySelector('#accounts')?.classList.contains('settled')).toBe(true);
+    expect(browser.animations).toHaveBeenCalledOnce();
+
+    await browser.runTimers(2000);
+
+    const toast = document.querySelector('#toast') as unknown as BrowserElement;
+    await vi.waitFor(() => expect(toast.textContent).toBe(`Logged in ${malicious}.`));
+    expect(toast.classList.contains('visible')).toBe(true);
+    toast.dispatchEvent(new browser.window.Event('pointerenter'));
+    await browser.runTimers(4800);
+    expect(toast.classList.contains('visible')).toBe(true);
+    toast.dispatchEvent(new browser.window.Event('pointerleave'));
+    await browser.runTimers(2500);
+    expect(toast.classList.contains('visible')).toBe(false);
+    await browser.runTimers(400);
+    expect(toast.textContent).toBe('');
+    await browser.close();
   });
 
-  it('keeps long labels contained and offline text readable', async () => {
+  it('applies label containment and preserves text contrast while offline', async () => {
     const session = await openDashboard();
-    const styles = await servedFile(session, '/app.css');
+    const browser = await browserDashboard(session, [
+      {
+        refreshing: false,
+        accounts: [accountState({ label: 'A'.repeat(200) })],
+      },
+    ]);
+    const document = browser.window.document;
+    const titleRow = document.querySelector('.card-title-row');
+    const title = document.querySelector('.card-title-row h2');
+    const main = document.querySelector('main');
+    if (!titleRow || !title || !main) throw new Error('Dashboard content did not render.');
 
-    // Long account labels truncate inside the card instead of overflowing the grid.
-    expect(styles).toContain('.card-title-row h2');
-    expect(styles).not.toContain('.card-title-row h3');
-    expect(styles).toMatch(/\.card-title-row\s*\{[^}]*min-width:\s*0/);
-    // Offline desaturation never dims text below AA contrast.
-    expect(styles).toContain('filter: saturate(0.55)');
-    expect(styles).not.toContain('brightness(0.82)');
-    // Component rules derive status hues from tokens instead of repeating raw values.
-    expect(styles).not.toMatch(/border-color: oklch\(0/);
-    expect(styles).toContain('oklch(from var(--red)');
-    expect(styles).toContain('oklch(from var(--amber)');
-    expect(styles).toContain('oklch(from var(--accent)');
-    expect(styles).not.toContain('.brand-meta::before');
+    expect(browser.window.getComputedStyle(titleRow).minWidth).toBe('0');
+    expect(browser.window.getComputedStyle(title).overflow).toBe('hidden');
+    expect(browser.window.getComputedStyle(title).textOverflow).toBe('ellipsis');
+    expect(browser.window.getComputedStyle(title).whiteSpace).toBe('nowrap');
+    document.querySelector('#link-state')?.classList.add('error');
+    const offlineRule = [...document.styleSheets[0].cssRules].find(
+      (rule) => 'selectorText' in rule && rule.selectorText === 'body:has(.link-pill.error) main',
+    ) as unknown as { selectorText: string; style: { filter: string } };
+    expect(document.querySelector(offlineRule.selectorText)).toBe(main);
+    expect(offlineRule.style.filter).toBe('saturate(0.55)');
+    expect(offlineRule.style.filter).not.toContain('brightness');
+    await browser.close();
   });
 
-  it('confirms account operations and throttles the state field', async () => {
+  it('confirms switch, rename, removal, and logout operations', async () => {
     const session = await openDashboard();
-    const script = await servedFile(session, '/app.js');
+    const cases = [
+      {
+        button: 'Switch',
+        initial: accountState({ active: false, label: 'Work', provider: 'grok-cli-2' }),
+        next: accountState({ label: 'Work', provider: 'grok-cli-2' }),
+        toast: 'Switched to Work.',
+      },
+      {
+        button: 'Rename',
+        initial: accountState({ label: 'Work', provider: 'grok-cli-2' }),
+        next: accountState({ label: 'Renamed', provider: 'grok-cli-2' }),
+        response: { label: 'Renamed' },
+        value: 'Renamed',
+        toast: 'Renamed to Renamed.',
+      },
+      {
+        button: 'Remove',
+        initial: accountState({ active: false, label: 'Work', provider: 'grok-cli-2' }),
+        next: undefined,
+        toast: 'Removed Work.',
+      },
+      {
+        button: 'Log out',
+        initial: accountState({ label: 'Personal' }),
+        next: accountState({
+          authenticated: false,
+          active: false,
+          label: 'Personal',
+          status: 'Login required',
+        }),
+        toast: 'Logged out Personal.',
+      },
+    ];
 
-    // Successful account operations confirm audibly, not only visually.
-    expect(script).toContain(`Switched to \${account.label}.`);
-    expect(script).toContain(`Renamed to \${updated.label}.`);
-    expect(script).toContain(`Removed \${account.label}.`);
-    expect(script).toContain(`Logged out \${account.label}.`);
-    expect(script).toContain(`Logged in \${account.label}.`);
-    // Hidden toasts clear their text so stale messages leave the accessibility tree.
-    expect(script).toContain("node.textContent = ''");
-    // The state field renders on its documented 30fps cadence and resizes via observer.
-    expect(script).toContain('1000 / 30');
-    expect(script).toContain('ResizeObserver');
+    for (const operation of cases) {
+      const browser = await browserDashboard(
+        session,
+        [
+          { refreshing: false, accounts: [operation.initial] },
+          { refreshing: false, accounts: operation.next ? [operation.next] : [] },
+        ],
+        () => operation.response ?? {},
+      );
+      const button = [...browser.window.document.querySelectorAll('button')].find(
+        (candidate) => candidate.textContent === operation.button,
+      );
+      button?.click();
+      if (operation.value) {
+        const input = browser.window.document.querySelector(
+          '#dialog-input',
+        ) as unknown as BrowserInput;
+        input.value = operation.value;
+        (browser.window.document.querySelector('#action-dialog') as unknown as BrowserDialog).close(
+          'confirm',
+        );
+      } else if (operation.button === 'Remove' || operation.button === 'Log out') {
+        (browser.window.document.querySelector('#action-dialog') as unknown as BrowserDialog).close(
+          'confirm',
+        );
+      }
+      await vi.waitFor(() =>
+        expect(browser.window.document.querySelector('#toast')?.textContent).toBe(operation.toast),
+      );
+      await browser.close();
+    }
+  });
+
+  it('throttles state-field drawing and resizes through ResizeObserver', async () => {
+    const session = await openDashboard();
+    const browser = await browserDashboard(
+      session,
+      [{ refreshing: false, accounts: [accountState()] }],
+      undefined,
+      true,
+    );
+
+    expect(browser.resizeCallbacks).toHaveLength(1);
+    expect(browser.viewport).toHaveBeenLastCalledWith(0, 0, 400, 300);
+    await browser.runFrame(10);
+    await browser.runFrame(20);
+    expect(browser.drawArrays).not.toHaveBeenCalled();
+    await browser.runFrame(40);
+    expect(browser.drawArrays).toHaveBeenCalledOnce();
+    browser.resize(1000, 500);
+    expect(browser.viewport).toHaveBeenLastCalledWith(0, 0, 500, 250);
+    await browser.close();
   });
 
   it('reuses one server, reports browser-launch failures, and closes cleanly', async () => {

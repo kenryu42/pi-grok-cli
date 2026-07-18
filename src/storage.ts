@@ -39,7 +39,7 @@ export function writeFileAtomic(path: string, contents: string, mode?: number) {
   }
 }
 
-export function migrateStoredFile(source: string, destination: string) {
+export function migrateStoredFile(source: string, destination: string, preserveSource = false) {
   if (!existsSync(source)) return undefined;
   if (existsSync(destination)) {
     return `Could not migrate ${source}: ${destination} already exists. The legacy file was preserved.`;
@@ -52,10 +52,10 @@ export function migrateStoredFile(source: string, destination: string) {
       throw new Error(`could not verify ${destination}`);
     }
     verified = true;
-    unlinkSync(source);
+    if (!preserveSource) unlinkSync(source);
     return undefined;
   } catch (error) {
-    if (!verified) rmSync(destination, { force: true });
+    if (!verified && existsSync(destination)) rmSync(destination, { force: true });
     return `Could not migrate ${source} to ${destination}: ${error instanceof Error ? error.message : String(error)}. The legacy file was preserved.`;
   }
 }

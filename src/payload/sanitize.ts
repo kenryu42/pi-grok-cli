@@ -271,7 +271,7 @@ export function sanitizePayload(
           delete obj.status;
           const content = normalizeReasoningContent(obj.content);
           if (content) obj.content = content;
-          else delete obj.content;
+          if (!content) delete obj.content;
         }
 
         // Drop empty string content
@@ -323,18 +323,16 @@ export function sanitizePayload(
   const reasoningSupported = supportsReasoning(modelId);
   delete next.reasoningEffort;
 
-  if (!reasoningSupported || !reasoning) {
-    delete next.reasoning;
-  } else {
-    if (supportsReasoningEffort(modelId)) {
+  if (!reasoningSupported || !reasoning) delete next.reasoning;
+  if (reasoningSupported && reasoning) {
+    const effortSupported = supportsReasoningEffort(modelId);
+    if (effortSupported) {
       if (reasoning.effort === 'minimal') reasoning.effort = 'low';
       if (reasoning.effort === undefined) delete reasoning.effort;
-    } else {
-      delete reasoning.effort;
     }
-
+    if (!effortSupported) delete reasoning.effort;
     if (Object.keys(reasoning).length === 0) delete next.reasoning;
-    else next.reasoning = reasoning;
+    if (Object.keys(reasoning).length > 0) next.reasoning = reasoning;
   }
 
   // ── Strip unsupported fields ─────────────────────────────────────────

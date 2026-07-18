@@ -467,8 +467,9 @@ function removeLegacyConfigs(paths: string[]) {
 }
 
 export function migrateLegacyConfig(): { warning?: string } {
+  const migratedLegacyConfig = existsSync(getLegacyConfigPath()) && !existsSync(getConfigPath());
   const storageWarning = combineWarnings([
-    migrateStoredFile(getLegacyConfigPath(), getConfigPath()),
+    migrateStoredFile(getLegacyConfigPath(), getConfigPath(), true),
     migrateStoredFile(getLegacyVisionCachePath(), getVisionCachePath()),
   ]);
   if (!existsSync(getConfigPath()) && existsSync(getLegacyConfigPath())) {
@@ -506,7 +507,10 @@ export function migrateLegacyConfig(): { warning?: string } {
         };
       }
     }
-    const cleanupWarning = removeLegacyConfigs(legacy.recognizedPaths);
+    const cleanupWarning = removeLegacyConfigs([
+      ...legacy.recognizedPaths,
+      ...(migratedLegacyConfig ? [getLegacyConfigPath()] : []),
+    ]);
     const warning = combineWarnings([
       storageWarning,
       loaded.warning,

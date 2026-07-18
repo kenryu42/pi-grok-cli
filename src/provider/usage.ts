@@ -35,7 +35,7 @@ export function registerUsageCommand(pi: Pick<ExtensionAPI, 'registerCommand'>) 
 
         try {
           ctx.ui.notify('Fetching grok cli usage…', 'info');
-          const usage = await fetchBillingUsage(apiKey);
+          const usage = await fetchBillingUsage(apiKey, AbortSignal.timeout(30_000));
           try {
             await saveQuotaUsage(provider, usage);
           } catch (error) {

@@ -1,10 +1,9 @@
-import type { Api, Model, OAuthCredentials, OAuthLoginCallbacks } from '@earendil-works/pi-ai';
 import type { ExtensionAPI, ProviderConfig } from '@earendil-works/pi-coding-agent';
 import * as oauth from '../auth/oauth.js';
 import { getBaseUrl, type XaiOAuthCredentials } from '../auth/oauth.js';
 import { type GrokCliAccount, loadConfig, migrateLegacyConfig } from '../config.js';
 import { registerImagineFeature } from '../imagine/register.js';
-import { type GrokCliModelConfig, resolveModels } from '../models/catalog.js';
+import { resolveModels } from '../models/catalog.js';
 import { sanitizePayload } from '../payload/sanitize.js';
 import { registerGrokTools } from '../tools/register.js';
 import { bindLivePiWebAccess, ensureWebSearchDelegate } from '../tools/webSearchDelegate.js';
@@ -27,22 +26,22 @@ export default function registerGrokCli(pi: ExtensionAPI) {
       name: `Grok CLI — ${account.label}`,
       usesCallbackServer: true,
 
-      async login(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials> {
+      async login(callbacks) {
         const credentials = await oauth.login(callbacks);
         await removeQuotaUsage(account.provider).catch(() => undefined);
         exhaustionRotation.clearRecentExhaustion(account.provider);
         return credentials;
       },
 
-      async refreshToken(credentials: OAuthCredentials): Promise<OAuthCredentials> {
+      async refreshToken(credentials) {
         return oauth.refresh(credentials);
       },
 
-      getApiKey(credentials: OAuthCredentials): string {
+      getApiKey(credentials) {
         return credentials.access;
       },
 
-      modifyModels(registeredModels: Model<Api>[], credentials: OAuthCredentials) {
+      modifyModels(registeredModels, credentials) {
         const effectiveBaseUrl = String(
           (credentials as XaiOAuthCredentials).baseUrl ?? getBaseUrl(),
         ).replace(/\/+$/, '');
@@ -58,25 +57,25 @@ export default function registerGrokCli(pi: ExtensionAPI) {
       baseUrl,
       ...(account.provider === 'grok-cli' ? { apiKey: '$GROK_CLI_OAUTH_TOKEN' } : {}),
       api: 'openai-responses',
-      models: models.map((m: GrokCliModelConfig) => ({
-        id: m.id,
-        name: m.name,
-        reasoning: m.reasoning,
-        thinkingLevelMap: m.thinkingLevelMap,
-        input: m.input,
-        cost: m.cost,
-        contextWindow: m.contextWindow,
-        maxTokens: m.maxTokens,
+      models: models.map((model) => ({
+        id: model.id,
+        name: model.name,
+        reasoning: model.reasoning,
+        thinkingLevelMap: model.thinkingLevelMap,
+        input: model.input,
+        cost: model.cost,
+        contextWindow: model.contextWindow,
+        maxTokens: model.maxTokens,
         // Carried as model.headers so the version-gate headers reach the server on
         // every request even when the API-provider registry reverts to pi-ai's
         // built-in openai-responses handler (see grokCliModelHeaders).
-        headers: grokCliModelHeaders(m.id),
+        headers: grokCliModelHeaders(model.id),
       })),
       oauth: oauthProvider,
     });
   };
 
-  for (const account of loadConfig().config.accounts.items) registerAccount(account);
+  loadConfig().config.accounts.items.forEach(registerAccount);
   const accountManagement = registerAccountManagement(pi, registerAccount);
 
   const { webSearchRegistered } = registerGrokTools(pi);

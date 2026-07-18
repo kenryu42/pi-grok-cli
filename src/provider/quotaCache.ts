@@ -87,11 +87,12 @@ async function updateQuotaCache(
   path = getQuotaCachePath(),
 ) {
   const previous = cacheUpdates.get(path) ?? Promise.resolve();
-  const next = previous.then(() => {
+  const operation = () => {
     const cache = loadQuotaCache(path);
     if (!update(cache)) return;
     writeFileAtomic(path, `${JSON.stringify(cache, null, 2)}\n`, 0o600);
-  });
+  };
+  const next = previous.then(operation, operation);
   cacheUpdates.set(path, next);
   try {
     await next;

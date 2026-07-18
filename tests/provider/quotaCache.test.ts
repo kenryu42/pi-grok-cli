@@ -87,6 +87,22 @@ describe('Grok CLI quota cache', () => {
     expect(Object.keys(loadQuotaCache().accounts)).toEqual(['grok-cli']);
   });
 
+  it('runs a queued update after the previous update fails', async () => {
+    setupHome();
+    const invalid = Object.defineProperty({}, 'monthly', {
+      get() {
+        throw new Error('invalid usage');
+      },
+    }) as BillingUsage;
+
+    const failed = saveQuotaUsage('grok-cli', invalid);
+    const recovered = saveQuotaUsage('grok-cli-2', usage(900));
+
+    await expect(failed).rejects.toThrow('invalid usage');
+    await expect(recovered).resolves.toBeUndefined();
+    expect(loadQuotaCache().accounts['grok-cli-2']?.monthly.used).toBe(900);
+  });
+
   it('formats fresh, stale, and weekly-unavailable usage explicitly as consumed quota', () => {
     expect(
       formatCachedQuota(

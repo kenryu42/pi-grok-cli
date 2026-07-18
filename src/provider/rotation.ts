@@ -162,16 +162,17 @@ export function registerExhaustionRotation(pi: ExtensionAPI) {
         continue;
       }
 
-      const failedLabel = config.accounts.items.find(
+      const refreshed = loadConfig().config;
+      const failedLabel = refreshed.accounts.items.find(
         (account) => account.provider === failed.provider,
       )?.label;
-      const selected = config.accounts.items.find((account) => account.provider === provider);
+      const selected = refreshed.accounts.items.find((account) => account.provider === provider);
       if (!failedLabel || !selected) {
         unavailable.add(provider);
         continue;
       }
-      config.accounts.selectedProvider = provider;
-      saveConfig(config);
+      refreshed.accounts.selectedProvider = provider;
+      saveConfig(refreshed);
       ctx.ui.notify(
         `Grok CLI: “${failedLabel}” exhausted; switched to “${selected.label}” and continuing.`,
         'info',
@@ -187,12 +188,13 @@ export function registerExhaustionRotation(pi: ExtensionAPI) {
       )
     ) {
       ctx.ui.notify('Grok CLI: all logged-in accounts are exhausted.', 'warning');
-    } else {
-      ctx.ui.notify(
-        'Grok CLI: no other logged-in account is available for automatic rotation.',
-        'warning',
-      );
+      clearChain();
+      return;
     }
+    ctx.ui.notify(
+      'Grok CLI: no other logged-in account is available for automatic rotation.',
+      'warning',
+    );
     clearChain();
   });
 

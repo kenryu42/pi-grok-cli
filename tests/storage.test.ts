@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_CONFIG, loadConfig, migrateLegacyConfig } from '../src/config.js';
@@ -72,22 +72,17 @@ describe('Grok CLI storage', () => {
 
   it('falls back to legacy files when the destination directory cannot be created', () => {
     const home = setupHome();
-    const piDirectory = join(home, '.pi');
-    mkdirSync(piDirectory, { recursive: true });
+    mkdirSync(join(home, '.pi'), { recursive: true });
     writeJson(getLegacyConfigPath(), { ...DEFAULT_CONFIG, imagine: { enabled: false } });
     writeJson(getLegacyVisionCachePath(), { version: 1, entries: {} });
-    chmodSync(piDirectory, 0o500);
+    writeFileSync(getGrokCliDirectory(), 'not a directory');
 
-    try {
-      const migration = migrateLegacyConfig();
+    const migration = migrateLegacyConfig();
 
-      expect(migration.warning).toMatch(/Could not migrate/);
-      expect(loadConfig().config.imagine.enabled).toBe(false);
-      expect(getCachePath()).toBe(getLegacyVisionCachePath());
-      expect(existsSync(getLegacyConfigPath())).toBe(true);
-      expect(existsSync(getLegacyVisionCachePath())).toBe(true);
-    } finally {
-      chmodSync(piDirectory, 0o700);
-    }
+    expect(migration.warning).toMatch(/Could not migrate/);
+    expect(loadConfig().config.imagine.enabled).toBe(false);
+    expect(getCachePath()).toBe(getLegacyVisionCachePath());
+    expect(existsSync(getLegacyConfigPath())).toBe(true);
+    expect(existsSync(getLegacyVisionCachePath())).toBe(true);
   });
 });
