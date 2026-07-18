@@ -109,6 +109,11 @@ const mutationHeaders = (dashboard: AccountDashboardHandle, cookie: string) => (
   'X-Grok-CSRF': dashboard.csrfToken,
 });
 
+const servedFile = (session: Awaited<ReturnType<typeof openDashboard>>, path = '') =>
+  fetch(`${session.dashboard.origin}${path}`, { headers: { Cookie: session.cookie } }).then(
+    (response) => response.text(),
+  );
+
 async function openDashboard(options?: Parameters<typeof startAccountDashboard>[2]) {
   const extension = await setup();
   const dashboard = await startAccountDashboard(
@@ -318,11 +323,7 @@ describe('account dashboard loopback server', () => {
 
   it('serves DOM-safe client code and rejects malformed or oversized mutations', async () => {
     const session = await openDashboard();
-    const script = await (
-      await fetch(`${session.dashboard.origin}/app.js`, {
-        headers: { Cookie: session.cookie },
-      })
-    ).text();
+    const script = await servedFile(session, '/app.js');
     const malformed = await fetch(`${session.dashboard.origin}/api/accounts`, {
       method: 'POST',
       headers: session.headers,
@@ -342,22 +343,21 @@ describe('account dashboard loopback server', () => {
 
   it('serves an accessible page shell with brand-consistent client behavior', async () => {
     const session = await openDashboard();
-    const page = await (
-      await fetch(session.dashboard.origin, {
-        headers: { Cookie: session.cookie },
-      })
-    ).text();
-    const script = await (
-      await fetch(`${session.dashboard.origin}/app.js`, {
-        headers: { Cookie: session.cookie },
-      })
-    ).text();
+    const page = await servedFile(session);
+    const script = await servedFile(session, '/app.js');
 
     // The confirm button stays the dialog's default action (Enter submits, never cancels).
     expect(page).toContain('id="dialog-cancel" type="button"');
     // Failures are announced assertively; routine status stays polite.
     expect(page).toContain('role="alert"');
     expect(page).toContain('role="status"');
+    // A persistent polite region carries login progress across poll-driven re-renders.
+    expect(page).toContain('id="sr-status"');
+    // The appbar separator is decorative and stays out of the accessibility tree.
+    expect(page).toContain('class="brand-sep" aria-hidden="true"');
+    // Card titles are h2s: the heading outline never skips a level under the h1 brand.
+    expect(script).toContain("element('h2'");
+    expect(script).not.toContain("element('h3'");
     // The favicon matches the in-app brand mark (ink glyph on a raised tile).
     expect(page).toContain('%23f7f8f8');
     expect(page).not.toContain('%234fd1e8');
@@ -368,6 +368,42 @@ describe('account dashboard loopback server', () => {
     expect(script).toContain('settled');
     // Toasts pause their dismiss timer on hover.
     expect(script).toContain('pointerenter');
+  });
+
+  it('keeps long labels contained and offline text readable', async () => {
+    const session = await openDashboard();
+    const styles = await servedFile(session, '/app.css');
+
+    // Long account labels truncate inside the card instead of overflowing the grid.
+    expect(styles).toContain('.card-title-row h2');
+    expect(styles).not.toContain('.card-title-row h3');
+    expect(styles).toMatch(/\.card-title-row\s*\{[^}]*min-width:\s*0/);
+    // Offline desaturation never dims text below AA contrast.
+    expect(styles).toContain('filter: saturate(0.55)');
+    expect(styles).not.toContain('brightness(0.82)');
+    // Component rules derive status hues from tokens instead of repeating raw values.
+    expect(styles).not.toMatch(/border-color: oklch\(0/);
+    expect(styles).toContain('oklch(from var(--red)');
+    expect(styles).toContain('oklch(from var(--amber)');
+    expect(styles).toContain('oklch(from var(--accent)');
+    expect(styles).not.toContain('.brand-meta::before');
+  });
+
+  it('confirms account operations and throttles the state field', async () => {
+    const session = await openDashboard();
+    const script = await servedFile(session, '/app.js');
+
+    // Successful account operations confirm audibly, not only visually.
+    expect(script).toContain(`Switched to \${account.label}.`);
+    expect(script).toContain(`Renamed to \${updated.label}.`);
+    expect(script).toContain(`Removed \${account.label}.`);
+    expect(script).toContain(`Logged out \${account.label}.`);
+    expect(script).toContain(`Logged in \${account.label}.`);
+    // Hidden toasts clear their text so stale messages leave the accessibility tree.
+    expect(script).toContain("node.textContent = ''");
+    // The state field renders on its documented 30fps cadence and resizes via observer.
+    expect(script).toContain('1000 / 30');
+    expect(script).toContain('ResizeObserver');
   });
 
   it('reuses one server, reports browser-launch failures, and closes cleanly', async () => {

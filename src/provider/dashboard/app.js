@@ -14,6 +14,7 @@ const dialogConfirm = document.querySelector('#dialog-confirm');
 const dialogCancel = document.querySelector('#dialog-cancel');
 const toastStatus = document.querySelector('#toast');
 const toastAlert = document.querySelector('#toast-alert');
+const srStatus = document.querySelector('#sr-status');
 const fieldCanvas = document.querySelector('#field');
 
 let lastState = '';
@@ -21,6 +22,7 @@ let wasOffline = false;
 let entranceDone = false;
 let timer;
 let pendingProviders = new Set();
+let lastProgress = '';
 let quotaRefreshInFlight = false;
 
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
@@ -37,6 +39,13 @@ const makeToast = (node) => {
   const hide = () => {
     clearTimeout(dismiss);
     node.classList.remove('visible');
+    // Clear after the hide transition so stale text leaves the accessibility tree.
+    const message = node.textContent;
+    setTimeout(() => {
+      if (!node.classList.contains('visible') && node.textContent === message) {
+        node.textContent = '';
+      }
+    }, 400);
   };
   node.addEventListener('pointerenter', () => clearTimeout(dismiss));
   node.addEventListener('pointerleave', () => {
@@ -277,6 +286,8 @@ const createField = (canvas) => {
       uniforms[name] = gl.getUniformLocation(program, name);
     }
 
+    // The field renders on a 30fps cadence; rAF ticks faster only to pace the next draw.
+    const FRAME_MS = 1000 / 30;
     const current = { energy: 0.12, alert: 0, pending: 0 };
     const target = { energy: 0.12, alert: 0, pending: 0 };
     const pointer = { x: 0, y: 0, fx: 0, fy: 0, force: 0, forceTarget: 0 };
@@ -310,6 +321,10 @@ const createField = (canvas) => {
 
     const frame = (now) => {
       raf = 0;
+      if (now - last < FRAME_MS) {
+        raf = requestAnimationFrame(frame);
+        return;
+      }
       const dt = Math.min(0.1, Math.max(0.001, (now - last) / 1000));
       last = now;
       time += dt;
@@ -322,7 +337,6 @@ const createField = (canvas) => {
       pointer.fy += (pointer.y - pointer.fy) * snap;
       pointer.forceTarget *= Math.exp(-dt * 1.4);
       pointer.force += (pointer.forceTarget - pointer.force) * (1 - Math.exp(-dt * 4));
-      resize();
       draw();
       if (!reduceMotion.matches && !document.hidden) raf = requestAnimationFrame(frame);
     };
@@ -354,9 +368,6 @@ const createField = (canvas) => {
       },
       { passive: true },
     );
-    window.addEventListener('resize', () => {
-      if (!raf) still();
-    });
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) stop();
       else start();
@@ -374,6 +385,9 @@ const createField = (canvas) => {
       stop();
       document.documentElement.classList.add('no-field');
     });
+
+    resize();
+    new ResizeObserver(() => (raf ? resize() : still())).observe(canvas);
 
     if (reduceMotion.matches) still();
     else start();
@@ -577,6 +591,7 @@ const cardActions = (account) => {
     try {
       await mutation(`/api/accounts/${account.provider}/activate`, 'POST');
       await refreshState(true, true);
+      showToast(`Switched to ${account.label}.`);
     } catch (error) {
       showToast(error.message, true);
     }
@@ -590,8 +605,9 @@ const cardActions = (account) => {
     });
     if (label === undefined) return;
     try {
-      await mutation(`/api/accounts/${account.provider}`, 'PATCH', { label });
+      const updated = await mutation(`/api/accounts/${account.provider}`, 'PATCH', { label });
       await refreshState(true);
+      showToast(`Renamed to ${updated.label}.`);
     } catch (error) {
       showToast(error.message, true);
     }
@@ -625,6 +641,11 @@ const cardActions = (account) => {
         account.provider === 'grok-cli' ? 'POST' : 'DELETE',
       );
       await refreshState(true, true);
+      showToast(
+        account.provider === 'grok-cli'
+          ? `Logged out ${account.label}.`
+          : `Removed ${account.label}.`,
+      );
     } catch (error) {
       showToast(error.message, true);
     }
@@ -663,7 +684,7 @@ const accountCard = (account, index, isNewPending, refreshing) => {
 
   const head = element('header', 'card-head');
   const titleRow = element('div', 'card-title-row');
-  titleRow.append(element('h3', '', account.label));
+  titleRow.append(element('h2', '', account.label));
   if (account.active) titleRow.append(element('span', 'active-badge', 'Active'));
   const metaRow = element('div', 'card-meta-row');
   metaRow.append(element('span', 'card-provider', account.provider), statusPill(account));
@@ -760,6 +781,24 @@ const render = (state) => {
       .filter((account) => account.login.state === 'pending')
       .map((account) => account.provider),
   );
+  // A login that left pending since the last render resolves audibly, not only visually.
+  for (const provider of pendingProviders) {
+    if (nextPending.has(provider)) continue;
+    const account = state.accounts.find((candidate) => candidate.provider === provider);
+    if (account?.login.state === 'success') showToast(`Logged in ${account.label}.`);
+    if (account?.login.state === 'failed') showToast(account.login.error || 'Login failed.', true);
+    if (account?.login.quotaError) showToast(account.login.quotaError, true);
+  }
+  // Login progress goes to a persistent live region: poll re-renders replace the
+  // panel itself, so aria-live on the panel would never announce anything.
+  const progress = state.accounts
+    .filter((account) => account.login.state === 'pending')
+    .map((account) => account.login.progress || 'Waiting for browser authorization…')
+    .join(' ');
+  if (progress !== lastProgress) {
+    lastProgress = progress;
+    if (progress) srStatus.textContent = progress;
+  }
   const children = state.accounts.length
     ? state.accounts.map((account, index) =>
         accountCard(

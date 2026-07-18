@@ -61,7 +61,7 @@ body {
 }
 
 ::selection {
-  background: oklch(0.55 0.16 275 / 38%);
+  background: oklch(from var(--accent) l c h / 38%);
 }
 
 button,
@@ -96,6 +96,16 @@ p {
   display: none;
 }
 
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 /* ---------- State field backdrop ---------- */
 
 #field {
@@ -118,8 +128,9 @@ p {
   inset: 0;
   z-index: -1;
   background:
-    radial-gradient(65% 55% at 18% 8%, oklch(0.55 0.16 275 / 11%), transparent 70%),
-    radial-gradient(50% 45% at 85% 85%, oklch(0.72 0.14 160 / 7%), transparent 70%), var(--bg);
+    radial-gradient(65% 55% at 18% 8%, oklch(from var(--accent) l c h / 11%), transparent 70%),
+    radial-gradient(50% 45% at 85% 85%, oklch(from var(--ok) l c h / 7%), transparent 70%),
+    var(--bg);
 }
 
 /* Dim the field while a modal owns attention. */
@@ -172,10 +183,9 @@ body:has(dialog[open]) #field {
   white-space: nowrap;
 }
 
-.brand-meta::before {
+.brand-sep {
   margin: 0 8px 0 0;
   color: var(--border-strong);
-  content: "·";
 }
 
 .appbar-actions {
@@ -216,7 +226,7 @@ body:has(dialog[open]) #field {
 }
 
 .link-pill.error {
-  border-color: oklch(0.65 0.19 25 / 35%);
+  border-color: oklch(from var(--red) l c h / 35%);
   color: var(--red);
 }
 
@@ -349,9 +359,10 @@ main {
   transition: filter 300ms ease;
 }
 
-/* Offline: the whole board desaturates until the link recovers. */
+/* Offline: the whole board desaturates until the link recovers. Saturation only —
+   dimming with brightness() would pull dim text below AA contrast. */
 body:has(.link-pill.error) main {
-  filter: saturate(0.55) brightness(0.82);
+  filter: saturate(0.55);
 }
 
 .account-grid {
@@ -430,11 +441,12 @@ body:has(.link-pill.error) main {
 .account-card.active {
   border-color: var(--accent-ring);
   background:
-    linear-gradient(160deg, oklch(0.55 0.16 275 / 7%), transparent 45%), var(--panel-veil);
+    linear-gradient(160deg, oklch(from var(--accent) l c h / 7%), transparent 45%),
+    var(--panel-veil);
 }
 
 .account-card:has(.login-panel) {
-  border-color: oklch(0.84 0.14 90 / 32%);
+  border-color: oklch(from var(--amber) l c h / 32%);
 }
 
 .card-head {
@@ -444,12 +456,13 @@ body:has(.link-pill.error) main {
 
 .card-title-row {
   display: flex;
+  min-width: 0;
   gap: 10px;
   align-items: center;
   justify-content: space-between;
 }
 
-.card-title-row h3 {
+.card-title-row h2 {
   overflow: hidden;
   font-size: 15px;
   font-weight: 600;
@@ -529,7 +542,7 @@ body:has(.link-pill.error) main {
 }
 
 .status-pill.pending {
-  border-color: oklch(0.84 0.14 90 / 30%);
+  border-color: oklch(from var(--amber) l c h / 30%);
   color: var(--amber);
 }
 
@@ -539,7 +552,7 @@ body:has(.link-pill.error) main {
 }
 
 .status-pill.error {
-  border-color: oklch(0.65 0.19 25 / 30%);
+  border-color: oklch(from var(--red) l c h / 30%);
   color: var(--red);
 }
 
@@ -592,7 +605,7 @@ body:has(.link-pill.error) main {
 
 .quota-gauge.danger {
   --gauge-color: var(--red);
-  filter: drop-shadow(0 0 7px oklch(0.65 0.19 25 / 35%));
+  filter: drop-shadow(0 0 7px oklch(from var(--red) l c h / 35%));
 }
 
 .account-grid.refreshing .quota-gauge {
@@ -681,7 +694,7 @@ body:has(.link-pill.error) main {
 
 .card-error {
   margin: 0;
-  border: 1px solid oklch(0.65 0.19 25 / 28%);
+  border: 1px solid oklch(from var(--red) l c h / 28%);
   border-radius: 6px;
   padding: 9px 11px;
   background: var(--red-soft);
@@ -727,10 +740,10 @@ body:has(.link-pill.error) main {
 .login-panel {
   display: grid;
   gap: 10px;
-  border: 1px solid oklch(0.84 0.14 90 / 25%);
+  border: 1px solid oklch(from var(--amber) l c h / 25%);
   border-radius: 6px;
   padding: 12px;
-  background: oklch(0.84 0.14 90 / 6%);
+  background: oklch(from var(--amber) l c h / 6%);
 }
 
 .login-panel p {
@@ -886,7 +899,7 @@ dialog[open]::backdrop {
 }
 
 .toast.error {
-  border-color: oklch(0.65 0.19 25 / 40%);
+  border-color: oklch(from var(--red) l c h / 40%);
 }
 
 /* ---------- View transitions ---------- */
