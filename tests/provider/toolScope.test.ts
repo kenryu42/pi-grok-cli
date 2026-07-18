@@ -88,12 +88,13 @@ function sync(
 
 describe('syncGrokTools', () => {
   it.each([
-    'grok-build',
-    'grok-composer-2.5-fast',
-  ])('uses compatibility names for exact legacy model %s', (id) => {
+    ['grok-cli', 'grok-build'],
+    ['grok-cli', 'grok-composer-2.5-fast'],
+    ['grok-cli-2', 'grok-build'],
+  ])('uses compatibility names for exact legacy model %s/%s', (provider, id) => {
     const state = toolState(['read', 'write', 'edit', 'grep', 'find', 'ls', 'bash']);
 
-    sync(state, 'grok-cli', id, { captureDelete: true });
+    sync(state, provider, id, { captureDelete: true });
 
     expect(state.tools()).toEqual([
       'Read',

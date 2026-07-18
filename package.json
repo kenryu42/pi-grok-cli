@@ -16,6 +16,7 @@
   "type": "module",
   "main": "./src/index.ts",
   "files": [
+    "CONFIGURATION.md",
     "README.md",
     "SECURITY.md",
     "src",
@@ -53,9 +54,9 @@
     ]
   },
   "peerDependencies": {
-    "@earendil-works/pi-ai": ">=0.80.0",
-    "@earendil-works/pi-coding-agent": ">=0.80.0",
-    "@earendil-works/pi-tui": ">=0.80.0",
+    "@earendil-works/pi-ai": ">=0.80.9",
+    "@earendil-works/pi-coding-agent": ">=0.80.9",
+    "@earendil-works/pi-tui": ">=0.80.9",
     "pi-web-access": ">=0.13.0"
   },
   "peerDependenciesMeta": {
@@ -65,11 +66,12 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.16",
-    "@earendil-works/pi-agent-core": "^0.80.6",
-    "@earendil-works/pi-ai": "^0.80.6",
-    "@earendil-works/pi-coding-agent": "^0.80.6",
-    "@earendil-works/pi-tui": "^0.80.6",
+    "@earendil-works/pi-agent-core": "^0.80.9",
+    "@earendil-works/pi-ai": "^0.80.9",
+    "@earendil-works/pi-coding-agent": "^0.80.9",
+    "@earendil-works/pi-tui": "^0.80.9",
     "@vitest/coverage-v8": "^4.1.8",
+    "happy-dom": "^20.10.6",
     "husky": "^9.1.7",
     "jscpd": "^4.2.4",
     "knip": "^6.15.0",

@@ -1,10 +1,12 @@
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { getLegacyVisionCachePath, getVisionCachePath } from '../storage.js';
 
 export const getCachePath = () =>
-  join(process.env.HOME || homedir(), '.pi', 'grok-cli-vision-cache.json');
+  existsSync(getVisionCachePath()) || !existsSync(getLegacyVisionCachePath())
+    ? getVisionCachePath()
+    : getLegacyVisionCachePath();
 
 export interface CacheEntry {
   createdAt: string;

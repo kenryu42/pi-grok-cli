@@ -12,7 +12,6 @@
 import { createServer } from 'node:http';
 import { XaiErrorCode, XaiOAuthError } from '../shared/errors.js';
 import { getBaseUrl, XAI_ISSUER, XAI_OAUTH_CLIENT_ID } from './config.js';
-import { readGrokCredentials } from './grokCredentials.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -621,48 +620,21 @@ async function loginWithBrowserCallback() {
 
 export async function login(
   callbacks: import('@earendil-works/pi-ai').OAuthLoginCallbacks,
-  credentialReader: typeof readGrokCredentials = readGrokCredentials,
 ): Promise<import('@earendil-works/pi-ai').OAuthCredentials> {
-  const existing = await credentialReader();
   const hasDeviceLoginUi =
     typeof callbacks.onSelect === 'function' &&
     typeof (callbacks as { onDeviceCode?: unknown }).onDeviceCode === 'function';
-  const existingMethod =
-    existing && typeof callbacks.onSelect === 'function'
-      ? await callbacks.onSelect({
-          message: 'Select Grok CLI login method:',
-          options: [
-            { id: 'browser', label: 'Browser login (default)' },
-            ...(hasDeviceLoginUi ? [{ id: 'device', label: 'Device code login (headless)' }] : []),
-            { id: 'existing', label: 'Use existing Grok Build login' },
-          ],
-        })
-      : undefined;
-  if (existing && existingMethod === 'existing') {
-    if (existing.expires > Date.now()) return existing;
-    try {
-      return await refresh(existing);
-    } catch {
-      callbacks.onProgress?.(
-        'Existing Grok CLI login could not be refreshed. Choose a fresh login method.',
-      );
-    }
-  }
-
   const discovery = await discover();
   const supportsDeviceLogin = Boolean(discovery.device_authorization_endpoint && hasDeviceLoginUi);
-  const method =
-    existingMethod === 'browser' || existingMethod === 'device'
-      ? existingMethod
-      : supportsDeviceLogin
-        ? await callbacks.onSelect({
-            message: 'Select Grok CLI login method:',
-            options: [
-              { id: 'browser', label: 'Browser login (default)' },
-              { id: 'device', label: 'Device code login (headless)' },
-            ],
-          })
-        : 'browser';
+  const method = supportsDeviceLogin
+    ? await callbacks.onSelect({
+        message: 'Select Grok CLI login method:',
+        options: [
+          { id: 'browser', label: 'Browser login (default)' },
+          { id: 'device', label: 'Device code login (headless)' },
+        ],
+      })
+    : 'browser';
   if (!method) throw new Error('Login cancelled');
   if (method === 'device') return loginWithDeviceCode(discovery, callbacks);
 

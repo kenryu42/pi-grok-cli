@@ -27,15 +27,14 @@ async function setupExtension() {
 }
 
 describe('registerVisionFeature', () => {
-  it('registers the tool_result handler and four commands', async () => {
+  it('registers the tool_result handler and three commands', async () => {
     setupHome();
     const { commands, toolResultHandlers } = await setupExtension();
 
     expect(toolResultHandlers).toHaveLength(1);
     expect([...commands.keys()].sort()).toEqual([
+      'grok-cli-vision',
       'grok-cli-vision:cache-clear',
-      'grok-cli-vision:off',
-      'grok-cli-vision:on',
       'grok-cli-vision:status',
     ]);
   });
@@ -55,18 +54,21 @@ describe('registerVisionFeature', () => {
     expect(text).toMatch(/cache: ON \(0 entries/);
   });
 
-  it('on/off persist enabled state to the config file', async () => {
+  it('toggles enabled state and persists it to the config file', async () => {
     setupHome();
     const { commands } = await setupExtension();
+    const notify = vi.fn();
     saveConfig({ ...DEFAULT_CONFIG, imagine: { enabled: false } });
 
-    await commands.get('grok-cli-vision:off')?.handler([], { ui: { notify: vi.fn() } });
+    await commands.get('grok-cli-vision')?.handler([], { ui: { notify } });
     expect(loadConfig().config.vision.enabled).toBe(false);
     expect(loadConfig().config.imagine.enabled).toBe(false);
+    expect(notify).toHaveBeenCalledWith('grok-cli-vision: OFF', 'info');
 
-    await commands.get('grok-cli-vision:on')?.handler([], { ui: { notify: vi.fn() } });
+    await commands.get('grok-cli-vision')?.handler([], { ui: { notify } });
     expect(loadConfig().config.vision.enabled).toBe(true);
     expect(loadConfig().config.imagine.enabled).toBe(false);
+    expect(notify).toHaveBeenCalledWith('grok-cli-vision: ON (grok-build)', 'info');
   });
 
   it('clears cached vision descriptions and notifies the user', async () => {

@@ -1,9 +1,10 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_CONFIG,
   describableModels,
+  getConfigPath,
   loadConfig,
   normalizeVisionConfig,
   saveConfig,
@@ -13,7 +14,7 @@ import { useTempHome } from './helpers.js';
 const setupHome = useTempHome();
 
 function writeConfig(config: unknown) {
-  const configPath = join(process.env.HOME as string, '.pi', 'grok-cli.json');
+  const configPath = getConfigPath();
   mkdirSync(dirname(configPath), { recursive: true });
   writeFileSync(configPath, JSON.stringify({ version: 1, vision: config }));
 }
@@ -67,8 +68,8 @@ describe('grok-cli-vision config', () => {
   });
 
   it('warns when the config file is not a JSON object', () => {
-    const home = setupHome();
-    const configPath = join(home, '.pi', 'grok-cli.json');
+    setupHome();
+    const configPath = getConfigPath();
     mkdirSync(dirname(configPath), { recursive: true });
     writeFileSync(configPath, JSON.stringify([1, 2, 3]));
 
@@ -79,7 +80,7 @@ describe('grok-cli-vision config', () => {
 
   it('warns on invalid JSON', () => {
     setupHome();
-    const configPath = join(process.env.HOME as string, '.pi', 'grok-cli.json');
+    const configPath = getConfigPath();
     mkdirSync(dirname(configPath), { recursive: true });
     writeFileSync(configPath, '{ not json');
 

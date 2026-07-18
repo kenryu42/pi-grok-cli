@@ -4,15 +4,22 @@
 [![npm version](https://img.shields.io/npm/v/pi-grok-cli?label=npm&color=blue)](https://www.npmjs.com/package/pi-grok-cli)
 [![License: MIT](https://img.shields.io/badge/License-MIT-red.svg)](./LICENSE)
 
+<div align="center">
+
+[![Pi Grok CLI](./.github/assets/pi-grok-cli.png)](./.github/assets/pi-grok-cli.png)
+
+</div>
+
 Use your X Premium or SuperGrok subscription in [pi](https://pi.dev/) with a clean, focused toolset.
 
-- **Vision for text-only models** — automatically describe images with a vision-capable Grok model and cache descriptions locally.
-- **Grok Imagine** — generate JPEGs from the TUI or let Grok call the `image_gen` tool, with inline previews.
-- **Subscription OAuth** — sign in through a browser or device code or reuse an official Grok Build login; tokens refresh automatically.
-- **Model-scoped compatibility** — Cursor-style tool names only for Grok Build and Composer 2.5. All other models keep Pi's native tools.
+- **Subscription OAuth** — sign in through a browser or device code; tokens refresh automatically.
+- **Multiple accounts** — keep independent Pi logins, switch from a TUI or browser UI, and rotate automatically on exhausted-balance error.
 - **Usage tracking** — check account limits, remaining credits, and reset times from pi.
+- **Grok Imagine** — generate JPEGs from the TUI or let Grok call the `image_gen` tool, with inline previews.
+- **Vision for text-only models** — automatically describe images with a vision-capable Grok model and cache descriptions locally.
+- **Model-scoped compatibility** — Cursor-style tool names only for Grok Build and Composer 2.5. All other models keep Pi's native tools.
 
-> Requires pi 0.80.0 or newer and an xAI/Grok account with access to the selected model. Model availability varies by account, plan, region, and xAI rollout. The Grok Build executable is not required.
+> Requires pi 0.80.9 or newer and an xAI/Grok account with access to the selected model. Model availability varies by account, plan, region, and xAI rollout. The Grok Build executable is not required.
 >
 > pi-grok-cli is an unofficial community integration. It does not bypass xAI access controls, quotas, or billing.
 
@@ -39,7 +46,8 @@ Choose **Grok CLI**, then select one of these methods:
 
 - **Browser login (default)** — opens xAI authorization and completes a PKCE exchange through a local loopback callback. If xAI shows a one-time code instead of redirecting to pi, paste that code into pi to complete the active PKCE exchange.
 - **Device code login (headless)** — displays a URL and short code for SSH, containers, and other headless environments.
-- **Use existing Grok Build login** — appears when a valid official `~/.grok/auth.json` entry is available. The file is read-only to this extension.
+
+To add another login, run `/grok-cli-accounts`, choose **＋ Add account**, and optionally label it. The extension adds a stable provider alias and pre-fills `/login <provider-id>`; press Enter to complete Pi's native login flow. For a browser UI with an account and quota overview, run `/grok-cli-accounts gui`; adding an account there starts browser login immediately. Use only accounts you own or are authorized to access.
 
 ### 3. Select a model
 
@@ -71,7 +79,7 @@ The table describes metadata bundled with this extension, not live model discove
 | Model ID | Registered context | Reasoning | Input | Coding tools |
 | --- | ---: | --- | --- | --- |
 | `grok-composer-2.5-fast` | 200K | no | text; images can be described through vision routing | Cursor-compatible names |
-| `grok-build` | 512K | yes | text + image | Cursor-compatible names |
+| `grok-build` | 500K | yes | text + image | Cursor-compatible names |
 | `grok-4.3` | 1M | yes | text + image | native pi names |
 | `grok-4.5` | 500K | yes | text + image | native pi names |
 | `grok-4.20-0309-reasoning` | 2M | yes | text + image | native pi names |
@@ -82,7 +90,27 @@ The table describes metadata bundled with this extension, not live model discove
 
 ### OAuth authentication
 
-Use `/login` to authenticate through a browser or device code, or reuse an official Grok Build login. Pi stores and refreshes OAuth credentials automatically. For automation, `GROK_CLI_OAUTH_TOKEN` supplies a direct token without automatic refresh.
+Use `/login` to authenticate through a browser or device code. Pi stores and refreshes OAuth credentials automatically. For automation, `GROK_CLI_OAUTH_TOKEN` supplies a direct token without automatic refresh.
+
+Run `/grok-cli-accounts` to add, switch, rename, relogin, log out, or remove accounts. Each account is registered as an independent Pi provider (`grok-cli`, `grok-cli-2`, and so on), so Pi keeps its OAuth credential separately in `auth.json`. The base `grok-cli` slot is permanent; aliases can be removed. Existing aliases keep their provider IDs, and a removed alias number is reused by the next account when it is the lowest available slot.
+
+Run `/grok-cli-accounts gui` to open the same account controls in a local browser UI with monthly and weekly quota meters. The browser UI binds to a random `127.0.0.1` port for the current Pi session, completes browser login without exposing credentials to the page, and closes on Pi session shutdown or after 15 minutes without requests. Its private local URL grants access to account controls while the server is running; do not share it. Browser login and manual one-time-code entry are supported in the browser UI, while device-code login remains available through the TUI for headless environments.
+
+The account selectors show the last cached quota for every logged-in account as consumed monthly and weekly usage. Press `r` to refresh all logged-in accounts without switching models or changing the selected account. Refreshes run three accounts at a time; a failed account keeps its previous cached value and is marked as failed for the current dialog. Values older than 30 minutes are labeled stale. Opening the selector does not refresh automatically.
+
+`GROK_CLI_OAUTH_TOKEN` applies only to the permanent base account. When it is set, the accounts UI identifies the environment token and tells you to unset it instead of presenting a logout action that cannot remove it.
+
+#### Automatic exhaustion rotation
+
+When at least two configured accounts are logged in, pi-grok-cli rotates after a final Grok assistant error whose trimmed message is exactly:
+
+```text
+OpenAI API error (402): 402 "Grok Build usage balance exhausted"
+```
+
+Rotation waits until Pi has finished retries, compaction, and tool activity. It preserves the current model when available and automatically continues the interrupted request once. Accounts that returned the exact error are skipped for five minutes within the current Pi session, including across new requests and successful continuations. A successful relogin makes that account immediately eligible again. If every logged-in account is exhausted or still cooling down, the extension stops without wrapping and reports that all accounts are exhausted.
+
+Within the eligible circular fallback order, quota values cached less than 30 minutes ago rank candidates by their tightest remaining monthly or weekly percentage. Candidates with stale, missing, or invalid quota keep their circular slots, and equal scores keep circular order. Failover reads the cache only—it never fetches billing data—and quota ranking never rotates a healthy account or chooses the initial account. Similar 402 messages, 401s, 429s, non-Grok errors, and non-final errors do not trigger rotation. A manual model change before failover cancels the pending rotation.
 
 ### Model-scoped Cursor compatibility
 
@@ -90,6 +118,8 @@ Pi's native tool vocabulary remains the default. Cursor-compatible tool names ar
 
 - `grok-cli/grok-build`
 - `grok-cli/grok-composer-2.5-fast`
+
+Managed account aliases expose the same two model IDs with the same compatibility behavior.
 
 Only these two models get Cursor-compatible tool names. Grok 4.5, future Grok models, and other providers continue to use Pi's native tools. No extra shims.
 
@@ -117,7 +147,7 @@ When `read` or `Read` returns an image to a text-only model, pi-grok-cli describ
 
 ### Grok Imagine image generation
 
-Run `/grok-cli-imagine <prompt>` to generate and preview a JPEG, or let any active model call the `image_gen` tool. Both use the current Grok CLI OAuth token and save the result under the current session or a requested output path. The command supports `--aspect`, `--out`, and `--resolution 1k`.
+Run `/grok-cli-imagine <prompt>` to generate and preview a JPEG, or let any active model call the `image_gen` tool. Both use the current or last successfully selected Grok account and save the result under the current session or a requested output path. The command supports `--aspect`, `--out`, and `--resolution 1k`.
 
 `image_gen` is enabled by default across providers and is independent of Cursor compatibility. Use `/grok-cli-imagine:tool [on|off|status]` to manage its persisted availability without disabling the direct command.
 
@@ -125,20 +155,42 @@ Run `/grok-cli-imagine <prompt>` to generate and preview a JPEG, or let any acti
 
 | Command | Description |
 | --- | --- |
-| `/grok-cli-usage` | Fetch current quota, remaining credits, and reset times. |
+| `/grok-cli-accounts [gui]` | Manage Grok accounts in the TUI, or add `gui` for the local browser UI with account and quota controls. |
+| `/grok-cli-usage` | Fetch current quota, update its cache, and show cached data if refresh fails. |
 | `/grok-cli-imagine <prompt>` | Generate and preview an image. Supports `--aspect`, `--out`, and `--resolution 1k`. |
 | `/grok-cli-imagine:tool [on\|off\|status]` | Toggle, set, or report persistent model-callable `image_gen` availability. |
+| `/grok-cli-vision` | Toggle vision routing on or off. |
 | `/grok-cli-vision:status` | Show vision state, describer model, configuration path, and cache statistics. |
-| `/grok-cli-vision:on` / `/grok-cli-vision:off` | Enable or disable vision routing. |
 | `/grok-cli-vision:cache-clear` | Remove all cached image descriptions. |
 
 ## Configuration
 
-All extension settings are read from `~/.pi/grok-cli.json`. The file is created after the first setting change and defaults to:
+Extension-owned data is grouped under `~/.pi/grok-cli/`:
+
+```text
+~/.pi/grok-cli/
+├── config.json
+├── vision-cache.json
+└── quota-cache.json
+```
+
+`config.json` contains settings and account labels. The two cache files contain derived vision descriptions and quota responses; neither contains OAuth tokens. Pi owns OAuth credentials in its `auth.json`; this extension does not read Grok Build credentials.
+
+The configuration file is created after the first setting change and defaults to:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
+  "accounts": {
+    "nextAccountNumber": 2,
+    "selectedProvider": "grok-cli",
+    "items": [
+      {
+        "provider": "grok-cli",
+        "label": "Account 1"
+      }
+    ]
+  },
   "imagine": {
     "enabled": true
   },
@@ -152,7 +204,7 @@ All extension settings are read from `~/.pi/grok-cli.json`. The file is created 
 }
 ```
 
-Legacy Imagine and vision settings are migrated automatically. The vision cache remains separate at `~/.pi/grok-cli-vision-cache.json`.
+Existing `~/.pi/grok-cli.json`, `~/.pi/grok-cli-vision-cache.json`, version 1 configuration, and legacy Imagine and vision settings are migrated atomically while preserving feature settings and cache data. A conflicting file at the new location remains authoritative and the legacy file is preserved with a warning instead of being overwritten.
 
 `model` must identify an image-capable model. Invalid values are reported and replaced with safe defaults. Manual changes apply on the next image read.
 
@@ -170,7 +222,7 @@ See [Advanced configuration](./CONFIGURATION.md) for OAuth, callback, endpoint, 
 | Problem | What to do |
 | --- | --- |
 | grok-cli is missing from `/model` | Confirm the package appears in `pi list`, run `/login`, choose **Grok CLI**, then restart pi or run `/reload`. |
-| Browser login cannot bind or complete | Paste the complete callback URL into pi when prompted. If xAI displays a one-time code instead, paste it into the same prompt. Otherwise, use device-code login or adjust `PI_GROK_CLI_CALLBACK_HOST` and `PI_GROK_CLI_CALLBACK_PORT`. Never post the callback URL or authorization code publicly. |
+| Browser login cannot bind or complete | If the callback listener started but the browser redirect does not complete, paste the complete callback URL into pi when prompted. If xAI displays a one-time code instead, paste it into the same prompt. If pi reports that the listener could not bind, use device-code login or adjust `PI_GROK_CLI_CALLBACK_HOST` and `PI_GROK_CLI_CALLBACK_PORT`. Never post the callback URL or authorization code publicly. |
 | Authentication returns HTTP 401 or 403 | Run `/login` again and confirm the account can access the selected model. Replace an expired `GROK_CLI_OAUTH_TOKEN` if using the bypass. |
 | A listed model is unavailable | Availability can differ by account or region, and the catalog is bundled rather than discovered live. Try another model or update the extension. |
 | Images are not being described | Run `/grok-cli-vision:status`, confirm routing is on, and verify Grok authentication. Native image-capable models bypass routing by design. |

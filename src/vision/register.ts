@@ -29,27 +29,19 @@ export function registerVisionFeature(pi: ExtensionAPI) {
     },
   });
 
-  pi.registerCommand('grok-cli-vision:on', {
-    description: 'Enable grok-cli-vision image routing',
+  pi.registerCommand('grok-cli-vision', {
+    description: 'Toggle grok-cli-vision image routing',
     handler: async (_args, ctx) => {
       const loaded = loadConfig();
+      const enabled = !loaded.config.vision.enabled;
       saveConfig({
         ...loaded.config,
-        vision: { ...loaded.config.vision, enabled: true },
+        vision: { ...loaded.config.vision, enabled },
       });
-      ctx.ui.notify(`grok-cli-vision: ON (${loaded.config.vision.model})`, 'info');
-    },
-  });
-
-  pi.registerCommand('grok-cli-vision:off', {
-    description: 'Disable grok-cli-vision image routing',
-    handler: async (_args, ctx) => {
-      const loaded = loadConfig();
-      saveConfig({
-        ...loaded.config,
-        vision: { ...loaded.config.vision, enabled: false },
-      });
-      ctx.ui.notify('grok-cli-vision: OFF', 'info');
+      ctx.ui.notify(
+        enabled ? `grok-cli-vision: ON (${loaded.config.vision.model})` : 'grok-cli-vision: OFF',
+        'info',
+      );
     },
   });
 

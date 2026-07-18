@@ -11,7 +11,13 @@ describe('npm package manifest', () => {
     expect(packageJson.keywords).toContain('pi-package');
     expect(packageJson.pi?.extensions).toEqual(['./src/index.ts']);
     expect(packageJson.main).toBe('./src/index.ts');
-    expect(packageJson.files).toEqual(['README.md', 'SECURITY.md', 'src', 'tsconfig.json']);
+    expect(packageJson.files).toEqual([
+      'CONFIGURATION.md',
+      'README.md',
+      'SECURITY.md',
+      'src',
+      'tsconfig.json',
+    ]);
   });
 
   it('runs publish checks before packing', () => {
@@ -27,10 +33,10 @@ describe('npm package manifest', () => {
     expect(existsSync(new URL('../../vitest.config.ts', import.meta.url))).toBe(true);
   });
 
-  it('declares the Pi runtime version required by web search delegation', () => {
-    expect(packageJson.peerDependencies?.['@earendil-works/pi-ai']).toBe('>=0.80.0');
-    expect(packageJson.peerDependencies?.['@earendil-works/pi-coding-agent']).toBe('>=0.80.0');
-    expect(packageJson.peerDependencies?.['@earendil-works/pi-tui']).toBe('>=0.80.0');
+  it('declares the Pi runtime version required by dashboard auth and web search', () => {
+    expect(packageJson.peerDependencies?.['@earendil-works/pi-ai']).toBe('>=0.80.9');
+    expect(packageJson.peerDependencies?.['@earendil-works/pi-coding-agent']).toBe('>=0.80.9');
+    expect(packageJson.peerDependencies?.['@earendil-works/pi-tui']).toBe('>=0.80.9');
     expect(packageJson.peerDependencies?.['pi-web-access']).toBe('>=0.13.0');
     expect(packageJson.dependencies?.jiti).toBeUndefined();
     expect(packageJson.dependencies?.typebox).toBeUndefined();
@@ -47,7 +53,6 @@ describe('repository layout', () => {
   it('contains the expected domain source files', () => {
     expect(globSync('src/**/*.ts').sort()).toEqual([
       'src/auth/config.ts',
-      'src/auth/grokCredentials.ts',
       'src/auth/oauth.ts',
       'src/config.ts',
       'src/imagine/aspect.ts',
@@ -62,12 +67,17 @@ describe('repository layout', () => {
       'src/index.ts',
       'src/models/catalog.ts',
       'src/payload/sanitize.ts',
+      'src/provider/accounts.ts',
       'src/provider/billing.ts',
+      'src/provider/dashboard/server.ts',
+      'src/provider/quotaCache.ts',
       'src/provider/register.ts',
+      'src/provider/rotation.ts',
       'src/provider/stream.ts',
       'src/provider/toolScope.ts',
       'src/provider/usage.ts',
       'src/shared/errors.ts',
+      'src/storage.ts',
       'src/tools/files.ts',
       'src/tools/glob.ts',
       'src/tools/read.ts',

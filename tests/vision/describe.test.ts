@@ -3,8 +3,9 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { ExtensionContext, ToolResultEvent } from '@earendil-works/pi-coding-agent';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DEFAULT_CONFIG } from '../../src/config.js';
+import { DEFAULT_CONFIG, getConfigPath } from '../../src/config.js';
 import { handleReadResult } from '../../src/vision/describe.js';
+import { saveTestAccounts } from './helpers.js';
 
 const BASE_URL = 'https://cli-chat-proxy.grok.com/v1';
 const PNG = Buffer.from('fake-png-bytes').toString('base64');
@@ -109,8 +110,8 @@ describe('handleReadResult — no-op cases', () => {
   });
 
   it('does nothing when routing is disabled via config', async () => {
-    const configPath = join(process.env.HOME as string, '.pi', 'grok-cli.json');
-    mkdirSync(join(process.env.HOME as string, '.pi'), { recursive: true });
+    const configPath = getConfigPath();
+    mkdirSync(dirname(configPath), { recursive: true });
     writeFileSync(
       configPath,
       JSON.stringify({
@@ -170,6 +171,22 @@ describe('handleReadResult — image routing', () => {
     expect(headers.Authorization).toBe('Bearer env-token');
   });
 
+  it('uses the last selected Grok alias while a non-Grok model is active', async () => {
+    saveTestAccounts();
+    const getApiKeyForProvider = vi.fn(async () => 'work-token');
+    const ctx = {
+      ...buildCtx(),
+      model: { provider: 'openai', input: ['text'] },
+      modelRegistry: { getApiKeyForProvider },
+    } as unknown as ExtensionContext;
+
+    await handleReadResult(readEvent([imageBlock()]), ctx);
+
+    expect(getApiKeyForProvider).toHaveBeenCalledWith('grok-cli-2');
+    const headers = (fetchMock.mock.calls[0]?.[1] as RequestInit).headers as Record<string, string>;
+    expect(headers.Authorization).toBe('Bearer work-token');
+  });
+
   it('describes multiple images with preserved order and labels', async () => {
     const result = await handleReadResult(
       readEvent([
@@ -206,7 +223,7 @@ describe('handleReadResult — image routing', () => {
       expect.stringMatching(/Describing image/),
       'info',
     );
-    const cachePath = join(process.env.HOME as string, '.pi', 'grok-cli-vision-cache.json');
+    const cachePath = join(process.env.HOME as string, '.pi', 'grok-cli', 'vision-cache.json');
     expect(existsSync(cachePath)).toBe(true);
     const cache = JSON.parse(readFileSync(cachePath, 'utf-8'));
     expect(Object.keys(cache.entries)).toHaveLength(1);
@@ -385,7 +402,7 @@ describe('handleReadResult — response shapes and resilience', () => {
   });
 
   it('caps described images at maxImages and notes the skipped remainder', async () => {
-    const configPath = join(process.env.HOME as string, '.pi', 'grok-cli.json');
+    const configPath = getConfigPath();
     mkdirSync(dirname(configPath), { recursive: true });
     writeFileSync(
       configPath,

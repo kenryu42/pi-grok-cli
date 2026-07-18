@@ -4,3 +4,9 @@ dist/
 docs/
 *.tgz
 .DS_Store
+.agents
+.impeccable
+DESIGN.md
+PRODUCT.md
+.playwright-cli
+.codex

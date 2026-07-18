@@ -4,7 +4,7 @@ import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_CONFIG, loadConfig, saveConfig } from '../../src/config.js';
 import { registerImagineFeature } from '../../src/imagine/register.js';
-import { useTempHome } from '../vision/helpers.js';
+import { saveTestAccounts, useTempHome } from '../vision/helpers.js';
 import { imagineDependencies } from './helpers.js';
 
 const setupHome = useTempHome();
@@ -20,6 +20,7 @@ function setup(token?: string, initialActiveTools: readonly string[] = ['read'])
   const setActiveTools = vi.fn((toolsToActivate: string[]) => {
     activeTools = [...toolsToActivate];
   });
+  const getApiKeyForProvider = vi.fn(async () => token);
   registerImagineFeature(
     {
       registerCommand(name: string, command: unknown) {
@@ -46,7 +47,7 @@ function setup(token?: string, initialActiveTools: readonly string[] = ['read'])
     cwd: '/project',
     model: { provider: 'openai' },
     ui: { notify },
-    modelRegistry: { getApiKeyForProvider: vi.fn(async () => token) },
+    modelRegistry: { getApiKeyForProvider },
     sessionManager: {
       getSessionDir: () => '/sessions',
       getSessionId: () => 'id',
@@ -67,6 +68,7 @@ function setup(token?: string, initialActiveTools: readonly string[] = ['read'])
     home,
     setActiveTools,
     getActiveTools: () => activeTools,
+    getApiKeyForProvider,
   };
 }
 
@@ -114,6 +116,18 @@ describe('registerImagineFeature command', () => {
     expect(extension.notify).toHaveBeenLastCalledWith(
       'Image saved to images/1.jpg (/sessions/id/images/1.jpg)',
       'info',
+    );
+  });
+
+  it('uses the last selected Grok alias while a non-Grok model is active', async () => {
+    const extension = setup('work-token');
+    saveTestAccounts();
+
+    await extension.commands.get('grok-cli-imagine')?.handler('cat', extension.context);
+
+    expect(extension.getApiKeyForProvider).toHaveBeenCalledWith('grok-cli-2');
+    expect(extension.generate).toHaveBeenCalledWith(
+      expect.objectContaining({ token: 'work-token' }),
     );
   });
 
