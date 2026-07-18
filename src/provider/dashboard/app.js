@@ -716,10 +716,10 @@ const accountCard = (account, index, isNewPending, refreshing) => {
             account.provider,
             'Weekly credits',
             '',
-            account.quota.weekly
+            !isFree && account.quota.weekly
               ? `Resets ${dateLabel(account.quota.weekly.billingPeriodEnd)}`
               : 'Not available',
-            account.quota.weekly
+            !isFree && account.quota.weekly
               ? Math.max(0, Math.min(100, 100 - account.quota.weekly.creditUsagePercent))
               : 0,
           )

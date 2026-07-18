@@ -670,6 +670,44 @@ describe('account dashboard loopback server', () => {
     await browser.close();
   });
 
+  it('renders free-plan monthly and weekly quotas as unavailable at zero percent', async () => {
+    const session = await openDashboard();
+    const browser = await browserDashboard(session, [
+      {
+        refreshing: false,
+        accounts: [
+          accountState({
+            plan: 'free',
+            quota: {
+              updatedAt: '2026-07-18T11:05:00.000Z',
+              fresh: true,
+              monthly: {
+                monthlyLimit: 0,
+                used: 0,
+                billingPeriodEnd: '2026-08-01T00:00:00.000Z',
+              },
+              weekly: {
+                creditUsagePercent: 0,
+                billingPeriodEnd: '2026-07-22T00:00:00.000Z',
+              },
+            },
+          }),
+        ],
+      },
+    ]);
+    const meters = [...browser.window.document.querySelectorAll('[role="meter"]')];
+
+    expect(meters.map((meter) => meter.getAttribute('aria-valuenow'))).toEqual(['0', '0']);
+    expect(meters.map((meter) => meter.querySelector('.gauge-value')?.textContent)).toEqual([
+      '0%',
+      '0%',
+    ]);
+    expect(
+      [...browser.window.document.querySelectorAll('.quota-meta')].map((meta) => meta.textContent),
+    ).toEqual(['Not available', 'Not available']);
+    await browser.close();
+  });
+
   it('confirms switch, rename, removal, and logout operations', async () => {
     const session = await openDashboard();
     const cases = [
