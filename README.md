@@ -4,14 +4,20 @@
 [![npm version](https://img.shields.io/npm/v/pi-grok-cli?label=npm&color=blue)](https://www.npmjs.com/package/pi-grok-cli)
 [![License: MIT](https://img.shields.io/badge/License-MIT-red.svg)](./LICENSE)
 
+<div align="center">
+
+[![Pi Grok CLI](./.github/assets/pi-grok-cli.png)](./.github/assets/pi-grok-cli.png)
+
+</div>
+
 Use your X Premium or SuperGrok subscription in [pi](https://pi.dev/) with a clean, focused toolset.
 
-- **Vision for text-only models** — automatically describe images with a vision-capable Grok model and cache descriptions locally.
-- **Grok Imagine** — generate JPEGs from the TUI or let Grok call the `image_gen` tool, with inline previews.
 - **Subscription OAuth** — sign in through a browser or device code; tokens refresh automatically.
-- **Multiple accounts** — keep independent Pi logins, switch from a TUI, and continue automatically on an exact exhausted-balance error.
-- **Model-scoped compatibility** — Cursor-style tool names only for Grok Build and Composer 2.5. All other models keep Pi's native tools.
+- **Multiple accounts** — keep independent Pi logins, switch from a TUI or browser UI, and rotate automatically on exhausted-balance error.
 - **Usage tracking** — check account limits, remaining credits, and reset times from pi.
+- **Grok Imagine** — generate JPEGs from the TUI or let Grok call the `image_gen` tool, with inline previews.
+- **Vision for text-only models** — automatically describe images with a vision-capable Grok model and cache descriptions locally.
+- **Model-scoped compatibility** — Cursor-style tool names only for Grok Build and Composer 2.5. All other models keep Pi's native tools.
 
 > Requires pi 0.80.9 or newer and an xAI/Grok account with access to the selected model. Model availability varies by account, plan, region, and xAI rollout. The Grok Build executable is not required.
 >
