@@ -468,7 +468,7 @@ describe('/grok-cli-accounts', () => {
     expect(loadQuotaCache().accounts['grok-cli-2']?.monthly.used).toBe(700);
   });
 
-  it('does not restore quota cache after an account is removed during refresh', async () => {
+  it('allows removal during refresh without restoring the removed quota cache', async () => {
     configureAccounts();
     let releaseMonthly = () => {};
     globalThis.fetch = vi.fn<typeof fetch>(async (input) => {
@@ -498,12 +498,18 @@ describe('/grok-cli-accounts', () => {
       'grok-cli-2',
     );
 
-    releaseMonthly();
-    await Promise.all([refresh, removal]);
-
+    await removal;
+    await extension.accountManagement.manager.add(
+      extension.context as unknown as ExtensionContext,
+      'Replacement',
+    );
     expect(loadConfig().config.accounts.items).toEqual([
       { provider: 'grok-cli', label: 'Personal' },
+      { provider: 'grok-cli-2', label: 'Replacement' },
     ]);
+    releaseMonthly();
+    await refresh;
+
     expect(loadQuotaCache().accounts['grok-cli-2']).toBeUndefined();
   });
 
@@ -1031,15 +1037,41 @@ describe('/grok-cli-accounts', () => {
     }
   });
 
-  it('persists a Grok alias selected through Pi model controls', () => {
+  it('persists a Grok alias selected through Pi model controls', async () => {
     configureAccounts();
     const extension = setup({ preserveHome: true });
 
-    extension.accountManagement.handleModelSelect({
+    await extension.accountManagement.handleModelSelect({
       model: { provider: 'grok-cli-2' },
       previousModel: { provider: 'grok-cli' },
     });
 
     expect(loadConfig().config.accounts.selectedProvider).toBe('grok-cli-2');
+  });
+
+  it('applies model selections after an overlapping account mutation', async () => {
+    configureAccounts();
+    const extension = setup({ auth: authenticatedAccounts(), preserveHome: true });
+    let finishModelSwitch = () => {};
+    extension.setModel.mockImplementationOnce(
+      () =>
+        new Promise<boolean>((resolve) => {
+          finishModelSwitch = () => resolve(true);
+        }),
+    );
+    const activation = extension.accountManagement.manager.activate(
+      extension.context as unknown as ExtensionContext,
+      'grok-cli-2',
+    );
+    await vi.waitFor(() => expect(extension.setModel).toHaveBeenCalledTimes(1));
+
+    const selection = extension.accountManagement.handleModelSelect({
+      model: { provider: 'grok-cli' },
+      previousModel: { provider: 'grok-cli-2' },
+    });
+    finishModelSwitch();
+    await Promise.all([activation, selection]);
+
+    expect(loadConfig().config.accounts.selectedProvider).toBe('grok-cli');
   });
 });

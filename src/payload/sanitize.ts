@@ -236,9 +236,12 @@ function normalizeReasoningContent(content: unknown) {
       return part ? [{ type: 'reasoning_text', text: part }] : [];
     }
     if (!part || typeof part !== 'object' || Array.isArray(part)) return [];
-    if (typeof (part as Record<string, unknown>).type === 'string') return [part];
-    if (typeof (part as Record<string, unknown>).text !== 'string') return [];
-    return [{ ...(part as Record<string, unknown>), type: 'reasoning_text' }];
+    const reasoningPart = part as Record<string, unknown>;
+    if (reasoningPart.type === 'reasoning_text' && typeof reasoningPart.text === 'string') {
+      return [part];
+    }
+    if (reasoningPart.type !== undefined || typeof reasoningPart.text !== 'string') return [];
+    return [{ ...reasoningPart, type: 'reasoning_text' }];
   });
   return normalized.length ? normalized : undefined;
 }

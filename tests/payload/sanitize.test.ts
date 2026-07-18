@@ -63,7 +63,7 @@ describe('payload sanitization', () => {
     expect(payload.prompt_cache_key).toBe('session-123');
   });
 
-  it('preserves encrypted reasoning and repairs only missing reasoning-text types', () => {
+  it('preserves encrypted reasoning and drops invalid reasoning-content types', () => {
     const payload = sanitizePayload(
       {
         input: [
@@ -92,10 +92,7 @@ describe('payload sanitization', () => {
         type: 'reasoning',
         id: 'reasoning-1',
         summary: [{ type: 'summary_text', text: 'summary' }],
-        content: [
-          { type: 'reasoning_text', text: 'missing discriminator' },
-          { type: 'future_reasoning_type', text: 'keep discriminator' },
-        ],
+        content: [{ type: 'reasoning_text', text: 'missing discriminator' }],
         encrypted_content: 'encrypted-reasoning',
         future_field: { keep: true },
       },
@@ -132,7 +129,6 @@ describe('payload sanitization', () => {
         content: [
           { type: 'reasoning_text', text: 'plain text' },
           { type: 'reasoning_text', text: 'missing discriminator' },
-          { type: 'future_reasoning_type', text: 'keep discriminator' },
         ],
       },
     ]);

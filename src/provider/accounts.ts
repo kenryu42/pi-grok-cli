@@ -168,9 +168,9 @@ async function resolveAccountToken(ctx: ExtensionContext, provider: string) {
   }
 }
 
-async function refreshAccountBatches(
-  accounts: GrokCliAccount[],
-  refresh: (account: GrokCliAccount) => Promise<void>,
+async function refreshAccountBatches<T>(
+  accounts: T[],
+  refresh: (account: T) => Promise<void>,
   signal: AbortSignal,
 ): Promise<void> {
   if (signal.aborted) return;
@@ -502,6 +502,7 @@ function createAccountManager(
   deferredRemovals: Set<string>,
 ) {
   let mutations = Promise.resolve();
+  const accountGenerations = new Map<string, number>();
   const mutate = <T>(operation: () => Promise<T> | T) => {
     const result = mutations.then(operation, operation);
     mutations = result.then(
@@ -510,6 +511,9 @@ function createAccountManager(
     );
     return result;
   };
+  const accountGeneration = (provider: string) => accountGenerations.get(provider) ?? 0;
+  const invalidateAccount = (provider: string) =>
+    accountGenerations.set(provider, accountGeneration(provider) + 1);
   const accountFrom = (config: GrokCliConfig, provider: string) => {
     const account = config.accounts.items.find((candidate) => candidate.provider === provider);
     if (!account) throw new Error(`Unknown Grok CLI account: ${provider}`);
@@ -525,7 +529,7 @@ function createAccountManager(
   };
   const refreshAccounts = async (
     ctx: ExtensionContext,
-    accounts: GrokCliAccount[],
+    accounts: { account: GrokCliAccount; generation: number }[],
     signal: AbortSignal,
     onProgress?: (progress: {
       provider: string;
@@ -539,17 +543,28 @@ function createAccountManager(
     const failed: string[] = [];
     await refreshAccountBatches(
       accounts,
-      async (account) => {
+      async ({ account, generation }) => {
         let succeeded = false;
         try {
           const token = await resolveAccountToken(ctx, account.provider);
           if (!token) throw new Error('authentication unavailable');
-          await saveQuotaUsage(
-            account.provider,
-            await fetchBillingUsage(token, AbortSignal.any([signal, AbortSignal.timeout(30_000)])),
+          const usage = await fetchBillingUsage(
+            token,
+            AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
           );
-          updated += 1;
-          succeeded = true;
+          succeeded = await mutate(async () => {
+            if (
+              accountGeneration(account.provider) !== generation ||
+              !copyConfig().accounts.items.some(
+                (candidate) => candidate.provider === account.provider,
+              )
+            ) {
+              return false;
+            }
+            await saveQuotaUsage(account.provider, usage);
+            return true;
+          });
+          if (succeeded) updated += 1;
         } catch {
           if (!signal.aborted) failed.push(account.provider);
         } finally {
@@ -587,6 +602,7 @@ function createAccountManager(
           config.accounts.items.map((candidate) => candidate.provider),
         );
         saveConfig(config);
+        invalidateAccount(provider);
         registerAccount(account);
         return account;
       });
@@ -621,13 +637,15 @@ function createAccountManager(
         return account;
       });
     },
-    login(ctx: ExtensionContext, provider: string, interaction: AuthInteraction) {
+    async login(ctx: ExtensionContext, provider: string, interaction: AuthInteraction) {
       const config = copyConfig();
       const account = accountFrom(config, provider);
       if (provider === GROK_CLI_PROVIDER && process.env.GROK_CLI_OAUTH_TOKEN) {
         throw new Error('Unset GROK_CLI_OAUTH_TOKEN before logging in from the dashboard.');
       }
-      return accountRuntime(ctx).login(account.provider, 'oauth', interaction);
+      const result = await accountRuntime(ctx).login(account.provider, 'oauth', interaction);
+      invalidateAccount(provider);
+      return result;
     },
     logout(ctx: ExtensionContext, provider: string) {
       return mutate(async () => {
@@ -642,6 +660,7 @@ function createAccountManager(
         const config = copyConfig();
         const account = accountFrom(config, provider);
         await accountRuntime(ctx).logout(provider);
+        invalidateAccount(provider);
         account.label = 'Account 1';
         saveConfig(config);
         registerAccount(account);
@@ -660,6 +679,7 @@ function createAccountManager(
           throw new Error('Could not switch to another authenticated Grok CLI account.');
         }
         await accountRuntime(ctx).logout(provider);
+        invalidateAccount(provider);
         config.accounts.items = config.accounts.items.filter(
           (candidate) => candidate.provider !== provider,
         );
@@ -689,13 +709,12 @@ function createAccountManager(
       }) => void,
     ) {
       return mutate(() =>
-        refreshAccounts(
-          ctx,
-          copyConfig().accounts.items.filter((account) => hasAccountAuth(ctx, account.provider)),
-          signal,
-          onProgress,
+        copyConfig().accounts.items.flatMap((account) =>
+          hasAccountAuth(ctx, account.provider)
+            ? [{ account, generation: accountGeneration(account.provider) }]
+            : [],
         ),
-      );
+      ).then((accounts) => refreshAccounts(ctx, accounts, signal, onProgress));
     },
     refreshOne(ctx: ExtensionContext, provider: string, signal: AbortSignal) {
       return mutate(() => {
@@ -704,8 +723,8 @@ function createAccountManager(
         if (!hasAccountAuth(ctx, provider)) {
           throw new Error(`Log in to “${account.label}” before refreshing its quota.`);
         }
-        return refreshAccounts(ctx, [account], signal);
-      });
+        return { account, generation: accountGeneration(provider) };
+      }).then((account) => refreshAccounts(ctx, [account], signal));
     },
     snapshot(ctx: ExtensionContext): AccountsSnapshot {
       const config = copyConfig();
@@ -746,12 +765,14 @@ function createAccountManager(
         pi.unregisterProvider(event.previousModel.provider);
       }
       if (!isGrokCliProvider(event.model.provider)) return;
-      const config = copyConfig();
-      if (!config.accounts.items.some((account) => account.provider === event.model.provider))
-        return;
-      if (config.accounts.selectedProvider === event.model.provider) return;
-      config.accounts.selectedProvider = event.model.provider;
-      saveConfig(config);
+      return mutate(() => {
+        const config = copyConfig();
+        if (!config.accounts.items.some((account) => account.provider === event.model.provider))
+          return;
+        if (config.accounts.selectedProvider === event.model.provider) return;
+        config.accounts.selectedProvider = event.model.provider;
+        saveConfig(config);
+      });
     },
   };
 }

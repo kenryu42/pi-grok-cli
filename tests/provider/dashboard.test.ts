@@ -1,3 +1,5 @@
+import { once } from 'node:events';
+import { createConnection } from 'node:net';
 import {
   InMemoryCredentialStore,
   type OAuthCredentials,
@@ -129,6 +131,26 @@ async function openDashboard(options?: Parameters<typeof startAccountDashboard>[
     cookie,
     headers: mutationHeaders(dashboard, cookie),
   };
+}
+
+async function openIncompleteMutation(session: Awaited<ReturnType<typeof openDashboard>>) {
+  const url = new URL(session.dashboard.origin);
+  const socket = createConnection({ host: url.hostname, port: Number(url.port) });
+  await once(socket, 'connect');
+  socket.write(
+    [
+      'POST /api/accounts HTTP/1.1',
+      `Host: ${url.host}`,
+      `Cookie: ${session.cookie}`,
+      `Origin: ${session.dashboard.origin}`,
+      'Content-Type: application/json',
+      `X-Grok-CSRF: ${session.dashboard.csrfToken}`,
+      'Content-Length: 100',
+      '',
+      '{',
+    ].join('\r\n'),
+  );
+  return socket;
 }
 
 async function waitForAccount(
@@ -462,6 +484,38 @@ describe('account dashboard loopback server', () => {
     );
     await dashboard.close();
     await expect(fetch(first.origin)).rejects.toThrow();
+  });
+
+  it('times out incomplete mutation request bodies', async () => {
+    const session = await openDashboard({ bodyTimeoutMs: 20 });
+    const socket = await openIncompleteMutation(session);
+    const response = await Promise.race([
+      once(socket, 'data').then(([data]) => data.toString()),
+      new Promise<string>((resolve) => setTimeout(() => resolve(''), 100)),
+    ]);
+    const connectionClosed = await Promise.race([
+      once(socket, 'close').then(() => true),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 100)),
+    ]);
+    socket.destroy();
+
+    expect(response).toContain('408 Request Timeout');
+    expect(connectionClosed).toBe(true);
+  });
+
+  it('closes promptly with an incomplete mutation request body', async () => {
+    const session = await openDashboard();
+    const socket = await openIncompleteMutation(session);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const closing = session.dashboard.close();
+    const closedPromptly = await Promise.race([
+      closing.then(() => true),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 100)),
+    ]);
+    socket.destroy();
+    await closing;
+
+    expect(closedPromptly).toBe(true);
   });
 
   it('expires an abandoned server after its idle timeout', async () => {

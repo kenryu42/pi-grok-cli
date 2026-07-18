@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import type { Api, Model, OAuthCredentials, OAuthLoginCallbacks } from '@earendil-works/pi-ai';
 import type { ExtensionAPI, ProviderConfig } from '@earendil-works/pi-coding-agent';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DEFAULT_CONFIG, saveConfig } from '../../src/config.js';
+import { DEFAULT_CONFIG, loadConfig, saveConfig } from '../../src/config.js';
 import { loadQuotaCache, saveQuotaUsage } from '../../src/provider/quotaCache.js';
 import { getQuotaCachePath } from '../../src/storage.js';
 import { GROK_SHIM_TOOL_NAMES } from '../../src/tools/register.js';
@@ -894,6 +894,21 @@ describe('Grok CLI tool scoping', () => {
     expect(next).not.toContain('web_search');
     expect(next).toEqual(['Read', 'custom_tool', 'WebSearch', 'image_gen']);
     expect(next).not.toEqual(expect.arrayContaining(['Write', 'Delete', 'Shell']));
+  });
+
+  it('queues model selection persistence without blocking the event handler', async () => {
+    saveTestAccounts('grok-cli');
+    const extension = await setupExtension();
+
+    const result = extension.handlers.get('model_select')?.(
+      { model: { provider: 'grok-cli-2', id: 'grok-build' } },
+      contextForModel('grok-cli-2', 'grok-build'),
+    );
+
+    expect(result).toBeUndefined();
+    await vi.waitFor(() => {
+      expect(loadConfig().config.accounts.selectedProvider).toBe('grok-cli-2');
+    });
   });
 
   it('translates compatibility names back to native tools for non-Grok models', async () => {

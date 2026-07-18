@@ -9,6 +9,7 @@ import type { AccountManager } from '../accounts.js';
 const HOST = '127.0.0.1';
 const COOKIE_PREFIX = 'grok_cli_dashboard_';
 const MAX_BODY_BYTES = 8 * 1024;
+const DEFAULT_BODY_TIMEOUT_MS = 5_000;
 const DEFAULT_IDLE_MS = 15 * 60_000;
 const SECURITY_HEADERS = {
   'Cache-Control': 'no-store',
@@ -37,6 +38,7 @@ export interface AccountDashboardHandle {
 }
 
 interface DashboardOptions {
+  bodyTimeoutMs?: number;
   idleMs?: number;
   refreshAfterLogin?: boolean;
 }
@@ -81,23 +83,55 @@ function json(res: ServerResponse, status: number, value: unknown) {
   send(res, status, JSON.stringify(value), 'application/json');
 }
 
-async function readJson(req: IncomingMessage) {
+function readJson(req: IncomingMessage, timeoutMs: number) {
   if (!req.headers['content-type']?.toLowerCase().startsWith('application/json')) {
     throw new HttpError(415, 'Expected application/json.');
   }
-  const chunks: Buffer[] = [];
-  let size = 0;
-  for await (const chunk of req) {
-    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    size += buffer.length;
-    if (size > MAX_BODY_BYTES) throw new HttpError(413, 'Request body is too large.');
-    chunks.push(buffer);
-  }
-  try {
-    return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
-  } catch {
-    throw new HttpError(400, 'Request body must be valid JSON.');
-  }
+  return new Promise<unknown>((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const cleanup = (keepErrorListener = false) => {
+      if (timer) clearTimeout(timer);
+      req.removeListener('data', onData);
+      req.removeListener('end', onEnd);
+      req.removeListener('aborted', onAborted);
+      if (!keepErrorListener) req.removeListener('error', onError);
+    };
+    const fail = (error: unknown) => {
+      cleanup(true);
+      req.once('close', () => req.removeListener('error', onError));
+      reject(error);
+    };
+    const onData = (chunk: Buffer | string) => {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      size += buffer.length;
+      if (size > MAX_BODY_BYTES) {
+        fail(new HttpError(413, 'Request body is too large.'));
+        return;
+      }
+      chunks.push(buffer);
+    };
+    const onEnd = () => {
+      cleanup();
+      try {
+        resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown);
+      } catch {
+        reject(new HttpError(400, 'Request body must be valid JSON.'));
+      }
+    };
+    const onAborted = () => fail(new HttpError(400, 'Request body was interrupted.'));
+    const onError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+    req.on('data', onData);
+    req.once('end', onEnd);
+    req.once('aborted', onAborted);
+    req.once('error', onError);
+    timer = setTimeout(() => fail(new HttpError(408, 'Request body timed out.')), timeoutMs);
+    timer.unref();
+  });
 }
 
 function objectBody(value: unknown) {
@@ -216,6 +250,7 @@ export async function startAccountDashboard(
         return;
       }
       const status = error instanceof HttpError ? error.status : 500;
+      if (status === 408 || status === 413) res.shouldKeepAlive = false;
       if (req.headers.accept?.includes('text/html')) {
         send(
           res,
@@ -243,6 +278,7 @@ export async function startAccountDashboard(
         return;
       }
       server.close(() => resolve());
+      server.closeAllConnections();
     });
     return closing;
   };
@@ -404,7 +440,9 @@ export async function startAccountDashboard(
     }
     if (req.method === 'POST' && url.pathname === '/api/accounts') {
       requireMutation(req);
-      const body = objectBody(await readJson(req));
+      const body = objectBody(
+        await readJson(req, options.bodyTimeoutMs ?? DEFAULT_BODY_TIMEOUT_MS),
+      );
       if (body.label !== undefined && typeof body.label !== 'string') {
         throw new HttpError(400, 'Account label must be text.');
       }
@@ -414,7 +452,9 @@ export async function startAccountDashboard(
     const renameProvider = accountProvider(url.pathname);
     if (req.method === 'PATCH' && renameProvider) {
       requireMutation(req);
-      const body = objectBody(await readJson(req));
+      const body = objectBody(
+        await readJson(req, options.bodyTimeoutMs ?? DEFAULT_BODY_TIMEOUT_MS),
+      );
       if (typeof body.label !== 'string') {
         throw new HttpError(400, 'Account label must be text.');
       }
@@ -480,7 +520,9 @@ export async function startAccountDashboard(
     const codeProvider = accountProvider(url.pathname, '/login-code');
     if (req.method === 'POST' && codeProvider) {
       requireMutation(req);
-      const body = objectBody(await readJson(req));
+      const body = objectBody(
+        await readJson(req, options.bodyTimeoutMs ?? DEFAULT_BODY_TIMEOUT_MS),
+      );
       if (typeof body.code !== 'string' || !body.code.trim()) {
         throw new HttpError(400, 'Authorization code is required.');
       }
