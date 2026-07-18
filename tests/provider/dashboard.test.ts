@@ -148,6 +148,21 @@ async function waitForAccount(
 }
 
 describe('account dashboard loopback server', () => {
+  it('keeps simultaneous dashboard sessions isolated by cookie name', async () => {
+    const first = await openDashboard();
+    const second = await openDashboard();
+    const cookies = `${first.cookie}; ${second.cookie}`;
+
+    expect(first.cookie.split('=')[0]).not.toBe(second.cookie.split('=')[0]);
+    expect(
+      (await fetch(`${first.dashboard.origin}/api/state`, { headers: { Cookie: cookies } })).status,
+    ).toBe(200);
+    expect(
+      (await fetch(`${second.dashboard.origin}/api/state`, { headers: { Cookie: cookies } }))
+        .status,
+    ).toBe(200);
+  });
+
   it('requires its capability cookie and serves credential-free state with strict headers', async () => {
     const session = await openDashboard({ refreshAfterLogin: false });
 
@@ -223,6 +238,29 @@ describe('account dashboard loopback server', () => {
     expect(loadConfig().config.accounts.items.at(-1)).toEqual({
       provider: 'grok-cli-2',
       label: 'Work',
+    });
+  });
+
+  it('accepts account routes for two-digit provider aliases', async () => {
+    const session = await openDashboard();
+    for (let account = 2; account <= 10; account += 1) {
+      await fetch(`${session.dashboard.origin}/api/accounts`, {
+        method: 'POST',
+        headers: session.headers,
+        body: JSON.stringify({ label: `Account ${account}` }),
+      });
+    }
+
+    const renamed = await fetch(`${session.dashboard.origin}/api/accounts/grok-cli-10`, {
+      method: 'PATCH',
+      headers: session.headers,
+      body: JSON.stringify({ label: 'Account ten' }),
+    });
+
+    expect(renamed.status).toBe(200);
+    expect(loadConfig().config.accounts.items.at(-1)).toEqual({
+      provider: 'grok-cli-10',
+      label: 'Account ten',
     });
   });
 

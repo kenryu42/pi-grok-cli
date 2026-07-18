@@ -7,7 +7,7 @@ import type { ExtensionContext } from '@earendil-works/pi-coding-agent';
 import type { AccountManager } from '../accounts.js';
 
 const HOST = '127.0.0.1';
-const COOKIE = 'grok_cli_dashboard';
+const COOKIE_PREFIX = 'grok_cli_dashboard_';
 const MAX_BODY_BYTES = 8 * 1024;
 const DEFAULT_IDLE_MS = 15 * 60_000;
 const SECURITY_HEADERS = {
@@ -62,11 +62,11 @@ function safeEqual(left: string, right: string) {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-function cookieValue(req: IncomingMessage) {
+function cookieValue(req: IncomingMessage, cookieName: string) {
   return req.headers.cookie
     ?.split(';')
     .map((part) => part.trim().split('='))
-    .find(([name]) => name === COOKIE)?.[1];
+    .find(([name]) => name === cookieName)?.[1];
 }
 
 function send(res: ServerResponse, status: number, body = '', contentType = 'text/plain') {
@@ -117,7 +117,9 @@ function escapeHtml(value: string) {
 }
 
 function accountProvider(pathname: string, suffix = '') {
-  const match = new RegExp(`^/api/accounts/(grok-cli(?:-[2-9][0-9]*)?)${suffix}$`).exec(pathname);
+  const match = new RegExp(`^/api/accounts/(grok-cli(?:-(?:[2-9]|[1-9][0-9]+))?)${suffix}$`).exec(
+    pathname,
+  );
   return match?.[1];
 }
 
@@ -191,6 +193,7 @@ export async function startAccountDashboard(
   options: DashboardOptions = {},
 ): Promise<AccountDashboardHandle> {
   const capability = randomBytes(32).toString('base64url');
+  const cookieName = `${COOKIE_PREFIX}${randomBytes(8).toString('hex')}`;
   const csrfToken = randomBytes(32).toString('base64url');
   const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8').replace(
     '__GROK_CSRF_TOKEN__',
@@ -372,12 +375,12 @@ export async function startAccountDashboard(
       res.writeHead(302, {
         ...SECURITY_HEADERS,
         Location: '/',
-        'Set-Cookie': `${COOKIE}=${capability}; HttpOnly; SameSite=Strict; Path=/`,
+        'Set-Cookie': `${cookieName}=${capability}; HttpOnly; SameSite=Strict; Path=/`,
       });
       res.end();
       return;
     }
-    if (!safeEqual(cookieValue(req) ?? '', capability)) {
+    if (!safeEqual(cookieValue(req, cookieName) ?? '', capability)) {
       throw new HttpError(
         401,
         'Dashboard session expired — reopen it with /grok-cli-accounts gui.',

@@ -49,7 +49,10 @@ describe('payload sanitization', () => {
       'existing instruction\n\nsystem instruction\n\ndeveloper instruction\noutput text instruction\n\nlater system instruction',
     );
     expect(payload.input).toEqual([
-      { type: 'reasoning', content: 'cached reasoning' },
+      {
+        type: 'reasoning',
+        content: [{ type: 'reasoning_text', text: 'cached reasoning' }],
+      },
       { role: 'user', content: 'hello' },
     ]);
     expect(payload.include).toEqual(['reasoning.encrypted_content', 'message.output_text']);
@@ -98,6 +101,41 @@ describe('payload sanitization', () => {
       },
     ]);
     expect(payload.include).toEqual(['reasoning.encrypted_content']);
+  });
+
+  it('drops malformed reasoning content while normalizing text parts', () => {
+    const payload = sanitizePayload(
+      {
+        input: [
+          {
+            type: 'reasoning',
+            content: [
+              'plain text',
+              null,
+              42,
+              ['nested'],
+              { ignored: true },
+              { text: 'missing discriminator' },
+              { type: 'future_reasoning_type', text: 'keep discriminator' },
+            ],
+          },
+        ],
+      },
+      'grok-build',
+      'session-123',
+      process.cwd(),
+    );
+
+    expect(payload.input).toEqual([
+      {
+        type: 'reasoning',
+        content: [
+          { type: 'reasoning_text', text: 'plain text' },
+          { type: 'reasoning_text', text: 'missing discriminator' },
+          { type: 'future_reasoning_type', text: 'keep discriminator' },
+        ],
+      },
+    ]);
   });
 
   it('maintains serialized input prefixes across three cumulative turns', () => {

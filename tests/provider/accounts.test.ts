@@ -468,6 +468,45 @@ describe('/grok-cli-accounts', () => {
     expect(loadQuotaCache().accounts['grok-cli-2']?.monthly.used).toBe(700);
   });
 
+  it('does not restore quota cache after an account is removed during refresh', async () => {
+    configureAccounts();
+    let releaseMonthly = () => {};
+    globalThis.fetch = vi.fn<typeof fetch>(async (input) => {
+      if (String(input).includes('format=credits')) {
+        return new Response('no weekly', { status: 500 });
+      }
+      await new Promise<void>((resolve) => {
+        releaseMonthly = resolve;
+      });
+      return Response.json({
+        config: {
+          monthlyLimit: { val: 2000 },
+          used: { val: 900 },
+          billingPeriodEnd: '2026-08-01T00:00:00.000Z',
+        },
+      });
+    });
+    const extension = setup({ auth: authenticatedAccounts(), preserveHome: true });
+    const refresh = extension.accountManagement.manager.refreshOne(
+      extension.context as unknown as ExtensionContext,
+      'grok-cli-2',
+      new AbortController().signal,
+    );
+    await vi.waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(1));
+    const removal = extension.accountManagement.manager.remove(
+      extension.context as unknown as ExtensionContext,
+      'grok-cli-2',
+    );
+
+    releaseMonthly();
+    await Promise.all([refresh, removal]);
+
+    expect(loadConfig().config.accounts.items).toEqual([
+      { provider: 'grok-cli', label: 'Personal' },
+    ]);
+    expect(loadQuotaCache().accounts['grok-cli-2']).toBeUndefined();
+  });
+
   it('handles uppercase R with no authenticated accounts without fetching', async () => {
     configureAccounts();
     const fetchMock = vi.fn<typeof fetch>();

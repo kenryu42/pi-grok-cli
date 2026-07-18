@@ -226,6 +226,23 @@ function rewriteFunctionCallOutput(input: Record<string, unknown>[]): Record<str
 
 // ─── Main sanitization ────────────────────────────────────────────────────────
 
+function normalizeReasoningContent(content: unknown) {
+  if (typeof content === 'string') {
+    return content ? [{ type: 'reasoning_text', text: content }] : undefined;
+  }
+  if (!Array.isArray(content)) return undefined;
+  const normalized = content.flatMap((part) => {
+    if (typeof part === 'string') {
+      return part ? [{ type: 'reasoning_text', text: part }] : [];
+    }
+    if (!part || typeof part !== 'object' || Array.isArray(part)) return [];
+    if (typeof (part as Record<string, unknown>).type === 'string') return [part];
+    if (typeof (part as Record<string, unknown>).text !== 'string') return [];
+    return [{ ...(part as Record<string, unknown>), type: 'reasoning_text' }];
+  });
+  return normalized.length ? normalized : undefined;
+}
+
 /**
  * Sanitize a provider request payload for xAI's Responses API via
  * cli-chat-proxy.grok.com.
@@ -249,13 +266,9 @@ export function sanitizePayload(
 
         if (obj.type === 'reasoning') {
           delete obj.status;
-          if (Array.isArray(obj.content)) {
-            obj.content = obj.content.map((part) => {
-              if (!part || typeof part !== 'object' || Array.isArray(part)) return part;
-              if (typeof (part as Record<string, unknown>).type === 'string') return part;
-              return { ...(part as Record<string, unknown>), type: 'reasoning_text' };
-            });
-          }
+          const content = normalizeReasoningContent(obj.content);
+          if (content) obj.content = content;
+          else delete obj.content;
         }
 
         // Drop empty string content

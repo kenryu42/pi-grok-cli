@@ -688,20 +688,24 @@ function createAccountManager(
         updated: boolean;
       }) => void,
     ) {
-      return refreshAccounts(
-        ctx,
-        copyConfig().accounts.items.filter((account) => hasAccountAuth(ctx, account.provider)),
-        signal,
-        onProgress,
+      return mutate(() =>
+        refreshAccounts(
+          ctx,
+          copyConfig().accounts.items.filter((account) => hasAccountAuth(ctx, account.provider)),
+          signal,
+          onProgress,
+        ),
       );
     },
     refreshOne(ctx: ExtensionContext, provider: string, signal: AbortSignal) {
-      const config = copyConfig();
-      const account = accountFrom(config, provider);
-      if (!hasAccountAuth(ctx, provider)) {
-        throw new Error(`Log in to “${account.label}” before refreshing its quota.`);
-      }
-      return refreshAccounts(ctx, [account], signal);
+      return mutate(() => {
+        const config = copyConfig();
+        const account = accountFrom(config, provider);
+        if (!hasAccountAuth(ctx, provider)) {
+          throw new Error(`Log in to “${account.label}” before refreshing its quota.`);
+        }
+        return refreshAccounts(ctx, [account], signal);
+      });
     },
     snapshot(ctx: ExtensionContext): AccountsSnapshot {
       const config = copyConfig();
