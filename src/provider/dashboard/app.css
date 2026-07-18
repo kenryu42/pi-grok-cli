@@ -318,13 +318,13 @@ input:hover {
 }
 
 .button.ghost {
-  border-color: var(--border);
+  border-color: var(--border-strong);
   background: transparent;
   color: var(--text);
 }
 
 .button.ghost:hover:not(:disabled) {
-  border-color: var(--border-strong);
+  border-color: rgb(255 255 255 / 22%);
   background: var(--panel-raised);
 }
 
