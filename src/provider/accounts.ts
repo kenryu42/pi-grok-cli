@@ -1,4 +1,4 @@
-import type { AuthInteraction } from '@earendil-works/pi-ai';
+import type { AuthInteraction, Models } from '@earendil-works/pi-ai';
 import type {
   ExtensionAPI,
   ExtensionCommandContext,
@@ -26,6 +26,7 @@ import {
 
 export const GROK_CLI_PROVIDER = 'grok-cli';
 export const DEFAULT_GROK_MODEL = 'grok-build';
+const AUTH_REFRESH_TIMEOUT_MS = 5_000;
 
 type RegisterAccount = (account: GrokCliAccount) => void;
 
@@ -126,10 +127,59 @@ function hasStoredAuth(ctx: ExtensionContext, provider: string) {
   return ctx.modelRegistry.getProviderAuthStatus(provider).configured;
 }
 
-function accountRuntime(ctx: ExtensionContext) {
-  const runtime = (ctx.modelRegistry as unknown as { runtime?: ModelRuntime }).runtime;
-  if (!runtime) throw new Error('Pi account authentication runtime is unavailable.');
+type AccountRuntime = Pick<ModelRuntime, 'refresh'> & {
+  models: Pick<Models, 'login' | 'logout'>;
+};
+
+function accountRuntime(ctx: ExtensionContext): AccountRuntime {
+  // ModelRuntime.login/logout also await a network-enabled model refresh. Use the underlying
+  // Models auth boundary so credential persistence is not coupled to a network refresh, then
+  // publish Pi's model snapshot through a bounded offline refresh.
+  const runtime = (ctx.modelRegistry as unknown as { runtime?: AccountRuntime }).runtime;
+  if (!runtime?.models) throw new Error('Pi account authentication runtime is unavailable.');
   return runtime;
+}
+
+async function refreshAuthState(ctx: ExtensionContext, authenticated: boolean) {
+  const runtime = accountRuntime(ctx);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const outcome = await Promise.race([
+    runtime.refresh({ allowNetwork: false }).then(
+      (result) => ({ state: 'complete', result }) as const,
+      (error: unknown) =>
+        ({
+          state: 'failed',
+          error: error instanceof Error ? error.message : String(error),
+        }) as const,
+    ),
+    new Promise<{ state: 'timed-out' }>((resolve) => {
+      timer = setTimeout(() => resolve({ state: 'timed-out' }), AUTH_REFRESH_TIMEOUT_MS);
+    }),
+  ]);
+  if (timer) clearTimeout(timer);
+  const action = authenticated ? 'logged in' : 'logged out';
+  if (outcome.state === 'failed') {
+    ctx.ui.notify(
+      `Grok CLI account was ${action}, but Pi could not refresh its model list: ${outcome.error}`,
+      'warning',
+    );
+    return;
+  }
+  if (outcome.state === 'timed-out') {
+    ctx.ui.notify(
+      `Grok CLI account was ${action}, but Pi's offline model refresh did not finish within 5 seconds.`,
+      'warning',
+    );
+    return;
+  }
+  if (outcome.result.errors.size === 0) return;
+  ctx.ui.notify(
+    `Grok CLI account was ${action}, but Pi could not refresh its model list: ${Array.from(
+      outcome.result.errors,
+      ([provider, error]) => `${provider}: ${error.message}`,
+    ).join('; ')}`,
+    'warning',
+  );
 }
 
 function hasAccountAuth(ctx: ExtensionContext, provider: string) {
@@ -139,13 +189,18 @@ function hasAccountAuth(ctx: ExtensionContext, provider: string) {
   );
 }
 
-function accountStatus(ctx: ExtensionContext, config: GrokCliConfig, provider: string) {
+function accountStatus(
+  ctx: ExtensionContext,
+  config: GrokCliConfig,
+  provider: string,
+  authenticated = hasAccountAuth(ctx, provider),
+) {
   const environment = provider === GROK_CLI_PROVIDER && Boolean(process.env.GROK_CLI_OAUTH_TOKEN);
-  if (config.accounts.selectedProvider === provider && hasAccountAuth(ctx, provider)) {
+  if (config.accounts.selectedProvider === provider && authenticated) {
     return environment ? 'Active (environment)' : 'Active';
   }
   if (environment) return 'Authenticated (environment)';
-  return hasStoredAuth(ctx, provider) ? 'Authenticated' : 'Login required';
+  return authenticated ? 'Authenticated' : 'Login required';
 }
 
 // Tier from the monthly credit cap: 0 free, up to 4,000 Lite, up to 20,000 SuperGrok, above Heavy.
@@ -393,9 +448,10 @@ async function fallbackBeforeRemoval(
   ctx: ExtensionContext,
   config: GrokCliConfig,
   removed: GrokCliAccount,
+  authenticated = hasAccountAuth,
 ) {
   const candidates = config.accounts.items.filter(
-    (account) => account.provider !== removed.provider && hasAccountAuth(ctx, account.provider),
+    (account) => account.provider !== removed.provider && authenticated(ctx, account.provider),
   );
   if (ctx.model?.provider !== removed.provider) {
     return config.accounts.selectedProvider === removed.provider
@@ -502,6 +558,7 @@ function createAccountManager(
 ) {
   let mutations = Promise.resolve();
   const accountGenerations = new Map<string, number>();
+  const authOverrides = new Map<string, boolean>();
   const mutate = <T>(operation: () => Promise<T> | T) => {
     const result = mutations.then(operation, operation);
     mutations = result.then(
@@ -513,6 +570,13 @@ function createAccountManager(
   const accountGeneration = (provider: string) => accountGenerations.get(provider) ?? 0;
   const invalidateAccount = (provider: string) =>
     accountGenerations.set(provider, accountGeneration(provider) + 1);
+  const accountHasAuth = (ctx: ExtensionContext, provider: string) => {
+    const authenticated = hasAccountAuth(ctx, provider);
+    const override = authOverrides.get(provider);
+    if (override === undefined) return authenticated;
+    if (authenticated === override) authOverrides.delete(provider);
+    return override;
+  };
   const accountFrom = (config: GrokCliConfig, provider: string) => {
     const account = config.accounts.items.find((candidate) => candidate.provider === provider);
     if (!account) throw new Error(`Unknown Grok CLI account: ${provider}`);
@@ -557,7 +621,7 @@ function createAccountManager(
               !copyConfig().accounts.items.some(
                 (candidate) => candidate.provider === account.provider,
               ) ||
-              !hasAccountAuth(ctx, account.provider)
+              !accountHasAuth(ctx, account.provider)
             ) {
               return false;
             }
@@ -621,7 +685,7 @@ function createAccountManager(
       return mutate(async () => {
         const config = copyConfig();
         const account = accountFrom(config, provider);
-        if (!hasAccountAuth(ctx, provider)) {
+        if (!accountHasAuth(ctx, provider)) {
           throw new Error(`Log in to “${account.label}” before making it active.`);
         }
         const modelId = isGrokCliProvider(ctx.model?.provider) ? ctx.model?.id : DEFAULT_GROK_MODEL;
@@ -643,8 +707,11 @@ function createAccountManager(
       if (provider === GROK_CLI_PROVIDER && process.env.GROK_CLI_OAUTH_TOKEN) {
         throw new Error('Unset GROK_CLI_OAUTH_TOKEN before logging in from the dashboard.');
       }
-      const result = await accountRuntime(ctx).login(account.provider, 'oauth', interaction);
+      const runtime = accountRuntime(ctx);
+      const result = await runtime.models.login(account.provider, 'oauth', interaction);
+      authOverrides.set(provider, true);
       invalidateAccount(provider);
+      await refreshAuthState(ctx, true);
       return result;
     },
     logout(ctx: ExtensionContext, provider: string) {
@@ -659,11 +726,14 @@ function createAccountManager(
         }
         const config = copyConfig();
         const account = accountFrom(config, provider);
-        await accountRuntime(ctx).logout(provider);
+        const runtime = accountRuntime(ctx);
+        await runtime.models.logout(provider);
+        authOverrides.set(provider, false);
         invalidateAccount(provider);
         account.label = 'Account 1';
         saveConfig(config);
         registerAccount(account);
+        await refreshAuthState(ctx, false);
         return { warning: await clearQuota(provider) };
       });
     },
@@ -674,28 +744,31 @@ function createAccountManager(
         }
         const config = copyConfig();
         const account = accountFrom(config, provider);
-        const fallback = await fallbackBeforeRemoval(pi, ctx, config, account);
+        const fallback = await fallbackBeforeRemoval(pi, ctx, config, account, accountHasAuth);
         if (fallback === null) {
           throw new Error('Could not switch to another authenticated Grok CLI account.');
         }
-        await accountRuntime(ctx).logout(provider);
+        const runtime = accountRuntime(ctx);
+        await runtime.models.logout(provider);
         invalidateAccount(provider);
         config.accounts.items = config.accounts.items.filter(
           (candidate) => candidate.provider !== provider,
         );
         config.accounts.selectedProvider = fallback ?? GROK_CLI_PROVIDER;
         saveConfig(config);
+        authOverrides.set(provider, false);
         const cacheWarning = await clearQuota(provider);
-        if (ctx.model?.provider === provider && fallback === undefined) {
-          deferredRemovals.add(provider);
-          return {
-            warning:
-              cacheWarning ??
-              'Grok CLI account removed. The current model now requires login and will disappear after you switch models.',
-          };
-        }
-        pi.unregisterProvider(provider);
-        return { warning: cacheWarning };
+        const currentWithoutFallback = ctx.model?.provider === provider && fallback === undefined;
+        if (currentWithoutFallback) deferredRemovals.add(provider);
+        if (!currentWithoutFallback) pi.unregisterProvider(provider);
+        await refreshAuthState(ctx, false);
+        return {
+          warning:
+            cacheWarning ??
+            (currentWithoutFallback
+              ? 'Grok CLI account removed. The current model now requires login and will disappear after you switch models.'
+              : undefined),
+        };
       });
     },
     async refresh(
@@ -711,7 +784,7 @@ function createAccountManager(
       return refreshAccounts(
         ctx,
         copyConfig().accounts.items.flatMap((account) =>
-          hasAccountAuth(ctx, account.provider)
+          accountHasAuth(ctx, account.provider)
             ? [{ account, generation: accountGeneration(account.provider) }]
             : [],
         ),
@@ -721,7 +794,7 @@ function createAccountManager(
     },
     async refreshOne(ctx: ExtensionContext, provider: string, signal: AbortSignal) {
       const account = accountFrom(copyConfig(), provider);
-      if (!hasAccountAuth(ctx, provider)) {
+      if (!accountHasAuth(ctx, provider)) {
         throw new Error(`Log in to “${account.label}” before refreshing its quota.`);
       }
       return refreshAccounts(ctx, [{ account, generation: accountGeneration(provider) }], signal);
@@ -733,12 +806,12 @@ function createAccountManager(
         accounts: config.accounts.items.map((account) => {
           const environment =
             account.provider === GROK_CLI_PROVIDER && Boolean(process.env.GROK_CLI_OAUTH_TOKEN);
-          const authenticated = hasAccountAuth(ctx, account.provider);
+          const authenticated = accountHasAuth(ctx, account.provider);
           const quota = cache.accounts[account.provider];
           return {
             provider: account.provider,
             label: account.label,
-            status: accountStatus(ctx, config, account.provider),
+            status: accountStatus(ctx, config, account.provider, authenticated),
             authenticated,
             active: config.accounts.selectedProvider === account.provider && authenticated,
             environment,

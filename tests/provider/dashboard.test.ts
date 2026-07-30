@@ -729,7 +729,8 @@ describe('account dashboard loopback server', () => {
         button: 'Remove',
         initial: accountState({ active: false, label: 'Work', provider: 'grok-cli-2' }),
         next: undefined,
-        toast: 'Removed Work.',
+        response: { warning: 'Credential cleanup continues in the background.' },
+        toast: 'Removed Work. Credential cleanup continues in the background.',
       },
       {
         button: 'Log out',
@@ -775,6 +776,30 @@ describe('account dashboard loopback server', () => {
       );
       await browser.close();
     }
+  });
+
+  it('hides log out when the permanent account is already logged out', async () => {
+    const session = await openDashboard();
+    const browser = await browserDashboard(session, [
+      {
+        refreshing: false,
+        accounts: [
+          accountState({
+            authenticated: false,
+            active: false,
+            status: 'Login required',
+          }),
+        ],
+      },
+    ]);
+    const actions = [...browser.window.document.querySelectorAll('.card-actions button')].map(
+      (button) => button.textContent,
+    );
+
+    expect(actions).toContain('Log in');
+    expect(actions).toContain('Rename');
+    expect(actions).not.toContain('Log out');
+    await browser.close();
   });
 
   it('throttles state-field drawing and resizes through ResizeObserver', async () => {

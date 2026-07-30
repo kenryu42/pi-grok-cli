@@ -634,7 +634,7 @@ const cardActions = (account) => {
     });
     if (!confirmed) return;
     try {
-      await mutation(
+      const result = await mutation(
         account.provider === 'grok-cli'
           ? '/api/accounts/grok-cli/logout'
           : `/api/accounts/${account.provider}`,
@@ -642,9 +642,11 @@ const cardActions = (account) => {
       );
       await refreshState(true, true);
       showToast(
-        account.provider === 'grok-cli'
-          ? `Logged out ${account.label}.`
-          : `Removed ${account.label}.`,
+        `${
+          account.provider === 'grok-cli'
+            ? `Logged out ${account.label}.`
+            : `Removed ${account.label}.`
+        }${result.warning ? ` ${result.warning}` : ''}`,
       );
     } catch (error) {
       showToast(error.message, true);
@@ -663,7 +665,7 @@ const cardActions = (account) => {
     actions.append(actionButton('How to remove', tokenInstructions));
   }
   actions.append(actionButton('Rename', rename));
-  if (!account.environment) {
+  if (!account.environment && (account.provider !== 'grok-cli' || account.authenticated)) {
     const button = actionButton(
       account.provider === 'grok-cli' ? 'Log out' : 'Remove',
       destructive,

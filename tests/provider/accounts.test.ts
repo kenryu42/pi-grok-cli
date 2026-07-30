@@ -95,7 +95,24 @@ function setup(
   const accountManagement = registerAccountManagement(pi, registerAccount);
 
   const credentials = new Map(Object.entries(options.auth ?? {}));
+  const runtimeLogin = vi.fn();
+  const runtimeLogout = vi.fn(async (provider: string) => {
+    credentials.delete(provider);
+  });
+  const runtimeModelsLogin = vi.fn(async (provider: string) => {
+    const credential = oauthCredential('new-login');
+    credentials.set(provider, credential);
+    return credential;
+  });
+  const runtimeModelsLogout = vi.fn(async (provider: string) => {
+    credentials.delete(provider);
+  });
+  const runtimeRefresh = vi.fn(async () => ({ aborted: false, errors: new Map() }));
+  const providerAuthStatus = vi.fn((provider: string) => ({
+    configured: credentials.has(provider),
+  }));
   const authStorage = {
+    delete: (provider: string) => credentials.delete(provider),
     get: (provider: string) => credentials.get(provider),
     has: (provider: string) => credentials.has(provider),
     set: (provider: string, credential: ReturnType<typeof oauthCredential>) =>
@@ -118,13 +135,16 @@ function setup(
     model: options.model,
     modelRegistry: {
       runtime: {
-        login: vi.fn(),
-        logout: async (provider: string) => {
-          credentials.delete(provider);
+        login: runtimeLogin,
+        logout: runtimeLogout,
+        models: {
+          login: runtimeModelsLogin,
+          logout: runtimeModelsLogout,
         },
+        refresh: runtimeRefresh,
       },
       find: (provider: string, id: string) => models.get(`${provider}/${id}`),
-      getProviderAuthStatus: (provider: string) => ({ configured: credentials.has(provider) }),
+      getProviderAuthStatus: providerAuthStatus,
       getApiKeyForProvider: async (provider: string) => {
         const credential = authStorage.get(provider);
         return credential?.type === 'oauth' ? credential.access : undefined;
@@ -193,7 +213,13 @@ function setup(
     context,
     customRenders,
     notify,
+    providerAuthStatus,
     registerAccount,
+    runtimeLogin,
+    runtimeModelsLogin,
+    runtimeModelsLogout,
+    runtimeRefresh,
+    runtimeLogout,
     setEditorText,
     setModel,
     unregisterProvider,
@@ -303,6 +329,127 @@ describe('/grok-cli-accounts', () => {
       expect.objectContaining({ provider: 'grok-cli', authenticated: true }),
       expect.objectContaining({ provider: 'grok-cli-2', authenticated: true }),
     ]);
+  });
+
+  it('waits for Pi to publish its offline model refresh before finishing login', async () => {
+    const extension = setup();
+    extension.runtimeLogin.mockImplementation(() => new Promise(() => {}));
+    let finishRefresh = (_result: { aborted: boolean; errors: Map<string, Error> }) => {};
+    extension.runtimeRefresh.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishRefresh = resolve;
+        }),
+    );
+    let settled = false;
+
+    const login = extension.accountManagement.manager
+      .login(extension.context as unknown as ExtensionContext, 'grok-cli', {
+        notify: vi.fn(),
+        prompt: vi.fn(),
+        signal: new AbortController().signal,
+      })
+      .then(() => {
+        settled = true;
+      });
+
+    await vi.waitFor(() =>
+      expect(extension.runtimeRefresh).toHaveBeenCalledWith({ allowNetwork: false }),
+    );
+    expect(settled).toBe(false);
+    finishRefresh({ aborted: false, errors: new Map() });
+    await login;
+
+    expect(settled).toBe(true);
+    expect(extension.runtimeLogin).not.toHaveBeenCalled();
+    expect(extension.runtimeModelsLogin).toHaveBeenCalledWith(
+      'grok-cli',
+      'oauth',
+      expect.any(Object),
+    );
+    expect(
+      extension.accountManagement.manager.snapshot(extension.context as unknown as ExtensionContext)
+        .accounts[0],
+    ).toMatchObject({ authenticated: true, active: true });
+  });
+
+  it('bounds login when Pi does not finish its offline model refresh', async () => {
+    vi.useFakeTimers();
+    try {
+      const extension = setup();
+      extension.runtimeRefresh.mockImplementation(() => new Promise(() => {}));
+
+      const login = extension.accountManagement.manager.login(
+        extension.context as unknown as ExtensionContext,
+        'grok-cli',
+        {
+          notify: vi.fn(),
+          prompt: vi.fn(),
+          signal: new AbortController().signal,
+        },
+      );
+      await vi.advanceTimersByTimeAsync(30_000);
+      await login;
+
+      expect(extension.notify).toHaveBeenCalledWith(
+        "Grok CLI account was logged in, but Pi's offline model refresh did not finish within 5 seconds.",
+        'warning',
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps a logged-out account unauthenticated when a later login is cancelled', async () => {
+    const extension = setup({ auth: { 'grok-cli': oauthCredential('personal') } });
+    extension.providerAuthStatus.mockReturnValue({ configured: true });
+    await extension.accountManagement.manager.logout(
+      extension.context as unknown as ExtensionContext,
+      'grok-cli',
+    );
+    extension.runtimeModelsLogin.mockRejectedValue(new Error('Login cancelled'));
+
+    await expect(
+      extension.accountManagement.manager.login(
+        extension.context as unknown as ExtensionContext,
+        'grok-cli',
+        {
+          notify: vi.fn(),
+          prompt: vi.fn(),
+          signal: new AbortController().signal,
+        },
+      ),
+    ).rejects.toThrow('Login cancelled');
+
+    expect(
+      extension.accountManagement.manager.snapshot(extension.context as unknown as ExtensionContext)
+        .accounts[0],
+    ).toMatchObject({ authenticated: false, active: false });
+  });
+
+  it('warns when Pi reports an offline model refresh failure', async () => {
+    const extension = setup();
+    extension.runtimeRefresh.mockResolvedValue({
+      aborted: false,
+      errors: new Map([['grok-cli', new Error('catalog unavailable')]]),
+    });
+
+    await extension.accountManagement.manager.login(
+      extension.context as unknown as ExtensionContext,
+      'grok-cli',
+      {
+        notify: vi.fn(),
+        prompt: vi.fn(),
+        signal: new AbortController().signal,
+      },
+    );
+
+    await vi.waitFor(() =>
+      expect(extension.notify).toHaveBeenCalledWith(
+        'Grok CLI account was logged in, but Pi could not refresh its model list: grok-cli: catalog unavailable',
+        'warning',
+      ),
+    );
   });
 
   it('shares add and rename mutations with alternate interfaces', async () => {
@@ -812,6 +959,61 @@ describe('/grok-cli-accounts', () => {
     expect(loadQuotaCache().accounts['grok-cli-2']).toBeUndefined();
   });
 
+  it('removes an alias without waiting for Pi network model refresh', async () => {
+    configureAccounts();
+    const extension = setup({
+      auth: authenticatedAccounts(),
+      model: { provider: 'grok-cli', id: 'grok-build' },
+      preserveHome: true,
+    });
+    extension.runtimeLogout.mockImplementation(() => new Promise<void>(() => {}));
+
+    const removal = await extension.accountManagement.manager.remove(
+      extension.context as unknown as ExtensionContext,
+      'grok-cli-2',
+    );
+
+    expect(removal.warning).toBeUndefined();
+    expect(extension.runtimeLogout).not.toHaveBeenCalled();
+    expect(extension.runtimeModelsLogout).toHaveBeenCalledWith('grok-cli-2');
+    expect(extension.runtimeRefresh).toHaveBeenCalledWith({ allowNetwork: false });
+    expect(extension.authStorage.has('grok-cli-2')).toBe(false);
+    expect(loadConfig().config.accounts.items).toEqual([
+      { provider: 'grok-cli', label: 'Personal' },
+    ]);
+    expect(extension.unregisterProvider).toHaveBeenCalledWith('grok-cli-2');
+  });
+
+  it('keeps a reused alias unauthenticated while Pi still has its old auth snapshot', async () => {
+    configureAccounts();
+    const extension = setup({
+      auth: authenticatedAccounts(),
+      model: { provider: 'grok-cli', id: 'grok-build' },
+      preserveHome: true,
+    });
+
+    await extension.accountManagement.manager.remove(
+      extension.context as unknown as ExtensionContext,
+      'grok-cli-2',
+    );
+    extension.providerAuthStatus.mockImplementation((provider: string) => ({
+      configured: provider === 'grok-cli-2' || extension.authStorage.has(provider),
+    }));
+    await extension.accountManagement.manager.add(
+      extension.context as unknown as ExtensionContext,
+      'Replacement',
+    );
+
+    expect(
+      extension.accountManagement.manager.snapshot(extension.context as unknown as ExtensionContext)
+        .accounts[1],
+    ).toMatchObject({
+      provider: 'grok-cli-2',
+      authenticated: false,
+      active: false,
+    });
+  });
+
   it('reuses grok-cli-2 for the next account after removing that alias', async () => {
     configureAccounts();
     const extension = setup({
@@ -1025,6 +1227,37 @@ describe('/grok-cli-accounts', () => {
       { provider: 'grok-cli', label: 'Account 1' },
     ]);
     expect(extension.unregisterProvider).not.toHaveBeenCalled();
+    expect(loadQuotaCache().accounts['grok-cli']).toBeUndefined();
+  });
+
+  it('logs out the permanent base account without waiting for Pi network model refresh', async () => {
+    configureAccounts('grok-cli', [{ provider: 'grok-cli', label: 'Personal' }], 2);
+    await saveQuotaUsage('grok-cli', {
+      monthly: {
+        monthlyLimit: 2000,
+        used: 300,
+        billingPeriodEnd: '2026-08-01T00:00:00.000Z',
+      },
+    });
+    const extension = setup({
+      auth: { 'grok-cli': oauthCredential('personal') },
+      preserveHome: true,
+    });
+    extension.runtimeLogout.mockImplementation(() => new Promise<void>(() => {}));
+
+    const logout = await extension.accountManagement.manager.logout(
+      extension.context as unknown as ExtensionContext,
+      'grok-cli',
+    );
+
+    expect(logout.warning).toBeUndefined();
+    expect(extension.runtimeLogout).not.toHaveBeenCalled();
+    expect(extension.runtimeModelsLogout).toHaveBeenCalledWith('grok-cli');
+    expect(extension.runtimeRefresh).toHaveBeenCalledWith({ allowNetwork: false });
+    expect(extension.authStorage.has('grok-cli')).toBe(false);
+    expect(loadConfig().config.accounts.items).toEqual([
+      { provider: 'grok-cli', label: 'Account 1' },
+    ]);
     expect(loadQuotaCache().accounts['grok-cli']).toBeUndefined();
   });
 
