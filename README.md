@@ -16,7 +16,7 @@ Use your X Premium or SuperGrok subscription in [pi](https://pi.dev/) with a cle
 - **Multiple accounts:** Manage accounts and quotas from the terminal or browser dashboard, and automatically continue with another account when quota runs out.
 - **Usage tracking:** Check account limits, remaining credits, and reset times.
 - **Image generation:** Generate images directly or let Grok use the `image_gen` tool.
-- **Vision routing:** Let text-only models understand images through a vision-capable Grok model.
+- **Native image input:** Send images directly to supported Grok models, including Composer 2.5.
 - **Model-specific tools:** Use Cursor-compatible tool names only where Grok Build and Composer 2.5 need them.
 
 > Requires pi 0.80.9 or newer and an xAI/Grok account with access to the selected model. Availability varies by account, plan, region, and xAI rollout. The Grok Build executable is not required.
@@ -53,7 +53,7 @@ Choose **Grok CLI**, then select one of these methods:
 /model grok-cli/grok-composer-2.5-fast
 ```
 
-Composer 2.5 is the recommended starting point for agentic coding. Choose an image-capable model when native image input matters.
+Composer 2.5 is the recommended starting point for agentic coding and supports native image input.
 
 ### 4. Verify account usage
 
@@ -92,7 +92,7 @@ Models are bundled rather than discovered live. Registered context limits may di
 
 | Model ID | Registered context | Reasoning | Input | Coding tools |
 | --- | ---: | --- | --- | --- |
-| `grok-composer-2.5-fast` | 200K | no | text; vision routing available | Cursor-compatible names |
+| `grok-composer-2.5-fast` | 200K | no | text + image | Cursor-compatible names |
 | `grok-build` | 500K | yes | text + image | Cursor-compatible names |
 | `grok-4.3` | 1M | yes | text + image | native pi names |
 | `grok-4.5` | 500K | yes | text + image | native pi names |
@@ -124,10 +124,6 @@ pi install npm:pi-web-access@^0.13.0
 
 Restart pi or run `/reload` after installing it in an existing session. Other models and providers retain the native `web_search` tool.
 
-### Vision routing for text-only models
-
-When a text-only model reads an image, pi-grok-cli describes it with an image-capable Grok model (`grok-build` by default) and passes back the description. Routing is enabled by default for up to four images, caches descriptions locally, and is bypassed for models that support images natively.
-
 ### Grok Imagine image generation
 
 Run `/grok-cli-imagine <prompt>` to generate and preview a JPEG, or let any active model call the `image_gen` tool. Images use the current or most recently selected Grok account and are saved under the current session unless you request another path.
@@ -142,9 +138,6 @@ Run `/grok-cli-imagine <prompt>` to generate and preview a JPEG, or let any acti
 | `/grok-cli-usage` | Fetch current quota, update its cache, and show cached data if refresh fails. |
 | `/grok-cli-imagine <prompt>` | Generate and preview an image. Supports `--aspect`, `--out`, and `--resolution 1k`. |
 | `/grok-cli-imagine:tool [on\|off\|status]` | Toggle, set, or report persistent model-callable `image_gen` availability. |
-| `/grok-cli-vision` | Toggle vision routing on or off. |
-| `/grok-cli-vision:status` | Show vision state, describer model, configuration path, and cache statistics. |
-| `/grok-cli-vision:cache-clear` | Remove all cached image descriptions. |
 
 ## Configuration
 
@@ -153,11 +146,10 @@ Extension-owned data is grouped under `~/.pi/grok-cli/`:
 ```text
 ~/.pi/grok-cli/
 ├── config.json
-├── vision-cache.json
 └── quota-cache.json
 ```
 
-`config.json` stores settings and account labels. The cache files store derived vision descriptions and quota responses. None contain OAuth tokens; pi stores credentials separately. Legacy settings are migrated automatically.
+`config.json` stores settings and account labels. `quota-cache.json` stores quota responses. Neither contains OAuth tokens; pi stores credentials separately. Legacy settings are migrated automatically.
 
 ### Common environment variables
 
@@ -179,11 +171,10 @@ See [Advanced configuration](./CONFIGURATION.md) for OAuth, callback, endpoint, 
 | Authentication returns HTTP 401 or 403 | Run `/login` again and confirm the account can access the selected model. Replace an expired `GROK_CLI_OAUTH_TOKEN` if using an external token. |
 | A listed model is unavailable | Availability can differ by account or region, and the catalog is bundled rather than discovered live. Try another model or update the extension. |
 | Account rotation does not start | Confirm at least two accounts are logged in. Rotation responds only to Grok Build's final balance-exhausted error, not authentication failures, rate limits, or similar messages. |
-| Images are not being described | Run `/grok-cli-vision:status`, confirm routing is on, and verify Grok authentication. Native image-capable models bypass routing by design. |
 
 ## Security and data flow
 
-Enabled tools run with your system permissions and can modify files or execute commands. Prompts, model context, tool data, and routed images are sent to the configured xAI endpoints.
+Enabled tools run with your system permissions and can modify files or execute commands. Prompts, model context, tool data, and native image inputs are sent to the configured xAI endpoints.
 
 See [SECURITY.md](./SECURITY.md) for trust boundaries and private vulnerability reporting. Never include tokens, authorization codes, callback URLs, prompts, or private project data in public issues.
 

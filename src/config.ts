@@ -1,33 +1,18 @@
 import { existsSync, readFileSync, unlinkSync } from 'node:fs';
-import { resolveModels } from './models/catalog.js';
 import {
   getConfigPath,
   getLegacyConfigPath,
   getLegacyImagineConfigPath,
-  getLegacyVisionCachePath,
-  getLegacyVisionConfigPath,
-  getVisionCachePath,
   migrateStoredFile,
   writeFileAtomic,
 } from './storage.js';
 
-export { getConfigPath, getLegacyImagineConfigPath, getLegacyVisionConfigPath } from './storage.js';
+export { getConfigPath, getLegacyImagineConfigPath } from './storage.js';
 
 export const CONFIG_VERSION = 2 as const;
 const LEGACY_CONFIG_VERSION = 1;
-export const DEFAULT_DESCRIBE_MODEL = 'grok-build';
-export const DEFAULT_MAX_IMAGES = 4;
-export const DEFAULT_CACHE_MAX_ENTRIES = 100;
 
 export type ImagineConfig = { enabled: boolean };
-
-export interface VisionConfig {
-  enabled: boolean;
-  model: string;
-  maxImages: number;
-  cacheEnabled: boolean;
-  cacheMaxEntries: number;
-}
 
 export interface GrokCliAccount {
   provider: string;
@@ -44,18 +29,9 @@ export interface GrokCliConfig {
   version: typeof CONFIG_VERSION;
   accounts: AccountsConfig;
   imagine: ImagineConfig;
-  vision: VisionConfig;
 }
 
 export const DEFAULT_IMAGINE_CONFIG: ImagineConfig = { enabled: true };
-
-export const DEFAULT_VISION_CONFIG: VisionConfig = {
-  enabled: true,
-  model: DEFAULT_DESCRIBE_MODEL,
-  maxImages: DEFAULT_MAX_IMAGES,
-  cacheEnabled: true,
-  cacheMaxEntries: DEFAULT_CACHE_MAX_ENTRIES,
-};
 
 export const DEFAULT_ACCOUNTS_CONFIG: AccountsConfig = {
   nextAccountNumber: 2,
@@ -67,7 +43,6 @@ export const DEFAULT_CONFIG: GrokCliConfig = {
   version: CONFIG_VERSION,
   accounts: DEFAULT_ACCOUNTS_CONFIG,
   imagine: DEFAULT_IMAGINE_CONFIG,
-  vision: DEFAULT_VISION_CONFIG,
 };
 
 export interface LoadedConfig {
@@ -90,7 +65,6 @@ function defaultConfig(): GrokCliConfig {
       items: DEFAULT_ACCOUNTS_CONFIG.items.map((account) => ({ ...account })),
     },
     imagine: { ...DEFAULT_IMAGINE_CONFIG },
-    vision: { ...DEFAULT_VISION_CONFIG },
   };
 }
 
@@ -197,12 +171,6 @@ function normalizeAccountsConfig(raw: unknown, warnings: string[]): AccountsConf
   };
 }
 
-export function describableModels(): string[] {
-  return resolveModels()
-    .filter((model) => model.input.includes('image'))
-    .map((model) => model.id);
-}
-
 function normalizeImagineConfig(raw: unknown, warnings: string[]): ImagineConfig {
   if (raw === undefined) return { ...DEFAULT_IMAGINE_CONFIG };
   if (!isObject(raw)) {
@@ -216,81 +184,14 @@ function normalizeImagineConfig(raw: unknown, warnings: string[]): ImagineConfig
   return { ...DEFAULT_IMAGINE_CONFIG };
 }
 
-export function normalizeVisionConfig(
-  raw: Partial<VisionConfig>,
-  warnings: string[] = [],
-): VisionConfig {
-  const config: VisionConfig = { ...DEFAULT_VISION_CONFIG };
-
-  if ('enabled' in raw) {
-    if (typeof raw.enabled === 'boolean') {
-      config.enabled = raw.enabled;
-    } else if (raw.enabled !== undefined) {
-      warnings.push('enabled must be true or false. Using enabled=true.');
-    }
-  }
-
-  if ('model' in raw) {
-    if (typeof raw.model === 'string' && describableModels().includes(raw.model)) {
-      config.model = raw.model;
-    } else if (raw.model !== undefined) {
-      warnings.push(
-        `Unknown model "${String(raw.model)}". Available: ${describableModels().join(', ')}. Using ${DEFAULT_DESCRIBE_MODEL}.`,
-      );
-    }
-  }
-
-  if ('maxImages' in raw) {
-    if (
-      typeof raw.maxImages === 'number' &&
-      Number.isFinite(raw.maxImages) &&
-      raw.maxImages > 0 &&
-      Number.isInteger(raw.maxImages)
-    ) {
-      config.maxImages = raw.maxImages;
-    } else if (raw.maxImages !== undefined) {
-      warnings.push(`maxImages must be a positive integer. Using ${DEFAULT_MAX_IMAGES}.`);
-    }
-  }
-
-  if ('cacheEnabled' in raw) {
-    if (typeof raw.cacheEnabled === 'boolean') {
-      config.cacheEnabled = raw.cacheEnabled;
-    } else if (raw.cacheEnabled !== undefined) {
-      warnings.push('cacheEnabled must be true or false. Using cacheEnabled=true.');
-    }
-  }
-
-  if ('cacheMaxEntries' in raw) {
-    if (
-      typeof raw.cacheMaxEntries === 'number' &&
-      Number.isInteger(raw.cacheMaxEntries) &&
-      raw.cacheMaxEntries > 0
-    ) {
-      config.cacheMaxEntries = raw.cacheMaxEntries;
-    } else if (raw.cacheMaxEntries !== undefined) {
-      warnings.push(
-        `cacheMaxEntries must be a positive integer. Using ${DEFAULT_CACHE_MAX_ENTRIES}.`,
-      );
-    }
-  }
-
-  return config;
-}
-
 function normalizeConfig(
-  raw: { accounts?: unknown; imagine?: unknown; vision?: unknown },
+  raw: { accounts?: unknown; imagine?: unknown },
   warnings: string[],
 ): GrokCliConfig {
-  const vision = raw.vision;
-  if (vision !== undefined && !isObject(vision)) {
-    warnings.push('vision must be a JSON object. Using defaults.');
-  }
   return {
     version: CONFIG_VERSION,
     accounts: normalizeAccountsConfig(raw.accounts, warnings),
     imagine: normalizeImagineConfig(raw.imagine, warnings),
-    vision: normalizeVisionConfig(isObject(vision) ? vision : {}, warnings),
   };
 }
 
@@ -371,56 +272,22 @@ function parseLegacyImagine(configPath: string): {
   }
 }
 
-function parseLegacyVision(configPath: string): {
-  config: VisionConfig;
-  recognized: boolean;
-  warning?: string;
-} {
-  try {
-    const parsed: unknown = JSON.parse(readFileSync(configPath, 'utf8'));
-    if (!isObject(parsed)) {
-      return {
-        config: { ...DEFAULT_VISION_CONFIG },
-        recognized: false,
-        warning: `Legacy config ${configPath} must be a JSON object.`,
-      };
-    }
-    const warnings: string[] = [];
-    const config = normalizeVisionConfig(parsed, warnings);
-    return {
-      config,
-      recognized: warnings.length === 0,
-      warning: warnings.length ? `Invalid ${configPath}: ${warnings.join(' ')}` : undefined,
-    };
-  } catch (error) {
-    return {
-      config: { ...DEFAULT_VISION_CONFIG },
-      recognized: false,
-      warning: `Could not read ${configPath}: ${errorMessage(error)}.`,
-    };
-  }
-}
-
 function loadLegacyConfig(): LegacyConfig {
   const imaginePath = getLegacyImagineConfigPath();
-  const visionPath = getLegacyVisionConfigPath();
   const imagine = existsSync(imaginePath) ? parseLegacyImagine(imaginePath) : undefined;
-  const vision = existsSync(visionPath) ? parseLegacyVision(visionPath) : undefined;
   return {
     config: {
       version: CONFIG_VERSION,
       accounts: defaultConfig().accounts,
       imagine: imagine?.config ?? { ...DEFAULT_IMAGINE_CONFIG },
-      vision: vision?.config ?? { ...DEFAULT_VISION_CONFIG },
     },
-    existingPaths: [imagine ? imaginePath : undefined, vision ? visionPath : undefined].filter(
+    existingPaths: [imagine ? imaginePath : undefined].filter((path): path is string =>
+      Boolean(path),
+    ),
+    recognizedPaths: [imagine?.recognized ? imaginePath : undefined].filter(
       (path): path is string => Boolean(path),
     ),
-    recognizedPaths: [
-      imagine?.recognized ? imaginePath : undefined,
-      vision?.recognized ? visionPath : undefined,
-    ].filter((path): path is string => Boolean(path)),
-    warning: combineWarnings([imagine?.warning, vision?.warning]),
+    warning: imagine?.warning,
   };
 }
 
@@ -468,10 +335,7 @@ function removeLegacyConfigs(paths: string[]) {
 
 export function migrateLegacyConfig(): { warning?: string } {
   const migratedLegacyConfig = existsSync(getLegacyConfigPath()) && !existsSync(getConfigPath());
-  const storageWarning = combineWarnings([
-    migrateStoredFile(getLegacyConfigPath(), getConfigPath(), true),
-    migrateStoredFile(getLegacyVisionCachePath(), getVisionCachePath()),
-  ]);
+  const storageWarning = migrateStoredFile(getLegacyConfigPath(), getConfigPath(), true);
   if (!existsSync(getConfigPath()) && existsSync(getLegacyConfigPath())) {
     return { warning: storageWarning };
   }

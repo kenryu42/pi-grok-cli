@@ -10,7 +10,7 @@ import {
   resolveGrokToken,
 } from '../../src/provider/accounts.js';
 import { loadQuotaCache, saveQuotaUsage } from '../../src/provider/quotaCache.js';
-import { oauthCredential, TEST_ACCOUNTS, useTempHome } from '../vision/helpers.js';
+import { oauthCredential, TEST_ACCOUNTS, useTempHome } from '../stateTestHelpers.js';
 
 const setupHome = useTempHome();
 const originalFetch = globalThis.fetch;

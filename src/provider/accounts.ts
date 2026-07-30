@@ -71,7 +71,6 @@ function copyConfig(): GrokCliConfig {
       items: config.accounts.items.map((account) => ({ ...account })),
     },
     imagine: { ...config.imagine },
-    vision: { ...config.vision },
   };
 }
 

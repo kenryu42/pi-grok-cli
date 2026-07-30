@@ -10,7 +10,6 @@
     "grok-cli",
     "oauth",
     "xai-oauth",
-    "vision",
     "multimodal"
   ],
   "type": "module",

@@ -87,9 +87,6 @@ describe('repository layout', () => {
       'src/tools/shell.ts',
       'src/tools/webSearch.ts',
       'src/tools/webSearchDelegate.ts',
-      'src/vision/cache.ts',
-      'src/vision/describe.ts',
-      'src/vision/register.ts',
     ]);
   });
 

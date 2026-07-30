@@ -8,7 +8,7 @@ import {
   ROTATION_CONTINUATION,
   registerExhaustionRotation,
 } from '../../src/provider/rotation.js';
-import { useTempHome } from '../vision/helpers.js';
+import { useTempHome } from '../stateTestHelpers.js';
 
 const setupHome = useTempHome();
 const THREE_ACCOUNTS = [
@@ -195,7 +195,7 @@ describe('Grok CLI exhaustion rotation', () => {
     await vi.waitFor(() => expect(extension.setModel).toHaveBeenCalledOnce());
     const concurrent = loadConfig().config;
     concurrent.accounts.items.push({ provider: 'grok-cli-3', label: 'Added concurrently' });
-    concurrent.vision.enabled = false;
+    concurrent.imagine.enabled = false;
     saveConfig(concurrent);
 
     releaseSwitch();
@@ -206,7 +206,7 @@ describe('Grok CLI exhaustion rotation', () => {
         selectedProvider: 'grok-cli-2',
         items: expect.arrayContaining([{ provider: 'grok-cli-3', label: 'Added concurrently' }]),
       },
-      vision: { enabled: false },
+      imagine: { enabled: false },
     });
   });
 

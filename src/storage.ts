@@ -15,13 +15,10 @@ const homePath = () => process.env.HOME || homedir();
 
 export const getGrokCliDirectory = () => join(homePath(), '.pi', 'grok-cli');
 export const getConfigPath = () => join(getGrokCliDirectory(), 'config.json');
-export const getVisionCachePath = () => join(getGrokCliDirectory(), 'vision-cache.json');
 export const getQuotaCachePath = () => join(getGrokCliDirectory(), 'quota-cache.json');
 
 export const getLegacyConfigPath = () => join(homePath(), '.pi', 'grok-cli.json');
 export const getLegacyImagineConfigPath = () => join(homePath(), '.pi', 'grok-cli-imagine.json');
-export const getLegacyVisionConfigPath = () => join(homePath(), '.pi', 'grok-cli-vision.json');
-export const getLegacyVisionCachePath = () => join(homePath(), '.pi', 'grok-cli-vision-cache.json');
 
 export function writeFileAtomic(path: string, contents: string, mode?: number) {
   const tempPath = join(dirname(path), `.${basename(path)}.${process.pid}.${randomUUID()}.tmp`);

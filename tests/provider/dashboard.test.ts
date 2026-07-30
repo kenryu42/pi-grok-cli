@@ -25,7 +25,7 @@ import {
   createAccountDashboard,
   startAccountDashboard,
 } from '../../src/provider/dashboard/server.js';
-import { oauthCredential, useTempHome } from '../vision/helpers.js';
+import { oauthCredential, useTempHome } from '../stateTestHelpers.js';
 
 const setupHome = useTempHome();
 const dashboards: AccountDashboardHandle[] = [];

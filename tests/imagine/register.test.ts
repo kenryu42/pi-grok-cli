@@ -4,7 +4,7 @@ import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_CONFIG, loadConfig, saveConfig } from '../../src/config.js';
 import { registerImagineFeature } from '../../src/imagine/register.js';
-import { saveTestAccounts, useTempHome } from '../vision/helpers.js';
+import { saveTestAccounts, useTempHome } from '../stateTestHelpers.js';
 import { imagineDependencies } from './helpers.js';
 
 const setupHome = useTempHome();
@@ -236,22 +236,6 @@ describe('registerImagineFeature command', () => {
     expect(extension.getActiveTools()).toEqual(['read', 'custom']);
     expect(extension.setActiveTools).not.toHaveBeenCalled();
     expect(loadConfig().config.imagine).toEqual({ enabled: true });
-  });
-
-  it('preserves vision settings when image_gen persistence changes', async () => {
-    const extension = setup('token', ['read', 'image_gen']);
-    saveConfig({
-      ...DEFAULT_CONFIG,
-      vision: { ...DEFAULT_CONFIG.vision, enabled: false, maxImages: 2 },
-    });
-
-    await extension.commands.get('grok-cli-imagine:tool')?.handler('off', extension.context);
-
-    expect(loadConfig().config).toEqual({
-      ...DEFAULT_CONFIG,
-      imagine: { enabled: false },
-      vision: { ...DEFAULT_CONFIG.vision, enabled: false, maxImages: 2 },
-    });
   });
 
   it('leaves active tools unchanged when persistence fails', async () => {

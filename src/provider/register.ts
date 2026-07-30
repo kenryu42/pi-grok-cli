@@ -7,7 +7,6 @@ import { resolveModels } from '../models/catalog.js';
 import { sanitizePayload } from '../payload/sanitize.js';
 import { registerGrokTools } from '../tools/register.js';
 import { bindLivePiWebAccess, ensureWebSearchDelegate } from '../tools/webSearchDelegate.js';
-import { registerVisionFeature } from '../vision/register.js';
 import { isGrokCliProvider, registerAccountManagement } from './accounts.js';
 import { removeQuotaUsage } from './quotaCache.js';
 import { registerExhaustionRotation } from './rotation.js';
@@ -138,6 +137,4 @@ export default function registerGrokCli(pi: ExtensionAPI) {
   });
 
   registerUsageCommand(pi);
-
-  registerVisionFeature(pi);
 }

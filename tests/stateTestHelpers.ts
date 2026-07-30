@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach } from 'vitest';
-import { DEFAULT_CONFIG, saveConfig } from '../../src/config.js';
+import { DEFAULT_CONFIG, saveConfig } from '../src/config.js';
 
 export const TEST_ACCOUNTS = [
   { provider: 'grok-cli', label: 'Personal' },
@@ -36,7 +36,7 @@ export function useTempHome(): () => string {
     for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
   });
   return () => {
-    const dir = mkdtempSync(join(tmpdir(), 'grok-cli-vision-'));
+    const dir = mkdtempSync(join(tmpdir(), 'grok-cli-test-'));
     process.env.HOME = dir;
     return dir;
   };

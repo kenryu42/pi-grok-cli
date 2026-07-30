@@ -10,7 +10,7 @@ import {
   saveQuotaUsage,
 } from '../../src/provider/quotaCache.js';
 import { getQuotaCachePath } from '../../src/storage.js';
-import { useTempHome } from '../vision/helpers.js';
+import { useTempHome } from '../stateTestHelpers.js';
 
 const setupHome = useTempHome();
 const usage = (used: number, weekly = 60): BillingUsage => ({

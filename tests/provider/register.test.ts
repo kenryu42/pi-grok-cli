@@ -9,8 +9,8 @@ import { loadQuotaCache, saveQuotaUsage } from '../../src/provider/quotaCache.js
 import { getQuotaCachePath } from '../../src/storage.js';
 import { GROK_SHIM_TOOL_NAMES } from '../../src/tools/register.js';
 import * as webSearchDelegate from '../../src/tools/webSearchDelegate.js';
+import { saveTestAccounts } from '../stateTestHelpers.js';
 import { plainTheme as theme } from '../tools/toolTestHelpers.js';
-import { saveTestAccounts } from '../vision/helpers.js';
 
 const { mockOauthLogin, mockPiWebAccessInstalled } = vi.hoisted(() => ({
   mockOauthLogin: vi.fn(),
