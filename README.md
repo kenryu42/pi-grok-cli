@@ -17,7 +17,6 @@ Use your X Premium or SuperGrok subscription in [pi](https://pi.dev/) with a cle
 - **Usage tracking:** Check account limits, remaining credits, and reset times.
 - **Image generation:** Generate images directly or let Grok use the `image_gen` tool.
 - **Native image input:** Send images directly to supported Grok models, including Composer 2.5.
-- **Model-specific tools:** Use Cursor-compatible tool names only where Grok Build and Composer 2.5 need them.
 
 > Requires pi 0.80.9 or newer and an xAI/Grok account with access to the selected model. Availability varies by account, plan, region, and xAI rollout. The Grok Build executable is not required.
 >
@@ -90,39 +89,17 @@ pi remove npm:pi-grok-cli
 
 Models are bundled rather than discovered live. Registered context limits may differ from the limits xAI enforces.
 
-| Model ID | Registered context | Reasoning | Input | Coding tools |
-| --- | ---: | --- | --- | --- |
-| `grok-composer-2.5-fast` | 200K | no | text + image | Cursor-compatible names |
-| `grok-build` | 500K | yes | text + image | Cursor-compatible names |
-| `grok-4.3` | 1M | yes | text + image | native pi names |
-| `grok-4.5` | 500K | yes | text + image | native pi names |
-| `grok-4.20-0309-reasoning` | 2M | yes | text + image | native pi names |
-| `grok-4.20-0309-non-reasoning` | 2M | no | text + image | native pi names |
-| `grok-4.20-multi-agent-0309` | 2M | yes | text + image | native pi names |
+| Model ID | Registered context | Reasoning | Input |
+| --- | ---: | --- | --- |
+| `grok-composer-2.5-fast` | 200K | no | text + image |
+| `grok-build` | 500K | yes | text + image |
+| `grok-4.3` | 1M | yes | text + image |
+| `grok-4.5` | 500K | yes | text + image |
+| `grok-4.20-0309-reasoning` | 2M | yes | text + image |
+| `grok-4.20-0309-non-reasoning` | 2M | no | text + image |
+| `grok-4.20-multi-agent-0309` | 2M | yes | text + image |
 
-## Coding tools and media
-
-### Coding tool compatibility
-
-Grok Build and Composer 2.5 use Cursor-compatible tool names. All other models and providers use pi's native tools.
-
-| Compatibility tools | Implementation |
-| --- | --- |
-| `Read`, `Write`, `Edit`, `Grep`, `LS`, `Shell` | Delegate execution and rendering to pi's native tools. |
-| `StrReplace` | Preserves Cursor's literal replace-all behavior. |
-| `Glob` | Preserves Cursor's newest-first path ordering. |
-| `Delete` | Provides the file-deletion operation expected by these models. |
-| `WebSearch` | Optionally replaces an active `web_search` tool when pi-web-access is installed. |
-
-pi applies `--tools` and `--exclude-tools` by exact name. For compatible models, use names such as `--tools Read,Grep` or `--exclude-tools Grep`. `--no-tools` disables all tools.
-
-Install pi-web-access 0.13.0 or newer to add optional `WebSearch` support:
-
-```bash
-pi install npm:pi-web-access@^0.13.0
-```
-
-Restart pi or run `/reload` after installing it in an existing session. Other models and providers retain the native `web_search` tool.
+## Media
 
 ### Grok Imagine image generation
 

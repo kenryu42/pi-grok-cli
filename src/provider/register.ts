@@ -2,16 +2,13 @@ import type { ExtensionAPI, ProviderConfig } from '@earendil-works/pi-coding-age
 import * as oauth from '../auth/oauth.js';
 import { getBaseUrl, type XaiOAuthCredentials } from '../auth/oauth.js';
 import { type GrokCliAccount, loadConfig, migrateLegacyConfig } from '../config.js';
-import { registerImagineFeature } from '../imagine/register.js';
+import { registerImagineFeature, syncImageToolPreference } from '../imagine/register.js';
 import { resolveModels } from '../models/catalog.js';
 import { sanitizePayload } from '../payload/sanitize.js';
-import { registerGrokTools } from '../tools/register.js';
-import { bindLivePiWebAccess, ensureWebSearchDelegate } from '../tools/webSearchDelegate.js';
 import { isGrokCliProvider, registerAccountManagement } from './accounts.js';
 import { removeQuotaUsage } from './quotaCache.js';
 import { registerExhaustionRotation } from './rotation.js';
 import { grokCliModelHeaders } from './stream.js';
-import { handoffGrokTools, restoreGrokTools, syncGrokTools } from './toolScope.js';
 import { registerUsageCommand } from './usage.js';
 
 export default function registerGrokCli(pi: ExtensionAPI) {
@@ -77,50 +74,33 @@ export default function registerGrokCli(pi: ExtensionAPI) {
   loadConfig().config.accounts.items.forEach(registerAccount);
   const accountManagement = registerAccountManagement(pi, registerAccount);
 
-  const { webSearchRegistered } = registerGrokTools(pi);
   registerImagineFeature(pi);
-
-  const syncTools = (model: { provider: string; id: string } | undefined, captureDelete = false) =>
-    syncGrokTools(pi, model, { captureDelete, webSearchRegistered });
 
   pi.on('model_select', (event) => {
     accountManagement.handleModelSelect(event);
-    syncTools(event.model);
+    syncImageToolPreference(pi);
   });
 
-  pi.on('before_agent_start', (_event, ctx) => {
-    syncTools(ctx.model);
+  pi.on('before_agent_start', () => {
+    syncImageToolPreference(pi);
   });
 
-  pi.on('session_start', async (event, ctx) => {
+  pi.on('session_start', (_event, ctx) => {
     if (migration.warning) {
       ctx.ui.notify(`[pi-grok-cli] ${migration.warning}`, 'warning');
       delete migration.warning;
     }
-    if (event.reason === 'new' || event.reason === 'resume' || event.reason === 'fork') {
-      restoreGrokTools(pi, ctx.sessionManager.getSessionFile());
-    }
-    syncTools(ctx.model, true);
+    syncImageToolPreference(pi);
     if (process.env.GROK_CLI_OAUTH_TOKEN) {
       ctx.ui.notify(
         '[pi-grok-cli] Using GROK_CLI_OAUTH_TOKEN bypass — no auto-refresh, no model discovery',
         'warning',
       );
     }
-
-    if (!webSearchRegistered) return;
-
-    bindLivePiWebAccess(pi);
-    await ensureWebSearchDelegate(pi);
-    syncTools(ctx.model);
   });
 
-  pi.on('session_shutdown', async (event) => {
+  pi.on('session_shutdown', async () => {
     await accountManagement.closeDashboard();
-    syncTools(undefined);
-    if (event.reason === 'new' || event.reason === 'resume' || event.reason === 'fork') {
-      handoffGrokTools(pi, event.targetSessionFile);
-    }
   });
 
   pi.on('before_provider_headers', (event, ctx) => {

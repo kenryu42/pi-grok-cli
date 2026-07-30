@@ -33,15 +33,13 @@ describe('npm package manifest', () => {
     expect(existsSync(new URL('../../vitest.config.ts', import.meta.url))).toBe(true);
   });
 
-  it('declares the Pi runtime version required by dashboard auth and web search', () => {
+  it('declares the Pi runtime version required by dashboard auth', () => {
     expect(packageJson.peerDependencies?.['@earendil-works/pi-ai']).toBe('>=0.80.9');
     expect(packageJson.peerDependencies?.['@earendil-works/pi-coding-agent']).toBe('>=0.80.9');
     expect(packageJson.peerDependencies?.['@earendil-works/pi-tui']).toBe('>=0.80.9');
-    expect(packageJson.peerDependencies?.['pi-web-access']).toBe('>=0.13.0');
     expect(packageJson.dependencies?.jiti).toBeUndefined();
     expect(packageJson.dependencies?.typebox).toBeUndefined();
-    expect(packageJson.dependencies?.ignore).toBe('7.0.5');
-    expect(packageJson.dependencies?.minimatch).toBe('10.2.5');
+    expect(packageJson.dependencies).toBeUndefined();
   });
 });
 
@@ -74,19 +72,9 @@ describe('repository layout', () => {
       'src/provider/register.ts',
       'src/provider/rotation.ts',
       'src/provider/stream.ts',
-      'src/provider/toolScope.ts',
       'src/provider/usage.ts',
       'src/shared/errors.ts',
       'src/storage.ts',
-      'src/tools/files.ts',
-      'src/tools/glob.ts',
-      'src/tools/read.ts',
-      'src/tools/register.ts',
-      'src/tools/rendering.ts',
-      'src/tools/search.ts',
-      'src/tools/shell.ts',
-      'src/tools/webSearch.ts',
-      'src/tools/webSearchDelegate.ts',
     ]);
   });
 

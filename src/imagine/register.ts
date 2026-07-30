@@ -29,6 +29,10 @@ function applyImageToolPreference(pi: ExtensionAPI, enabled: boolean) {
   pi.setActiveTools(nextTools);
 }
 
+export function syncImageToolPreference(pi: ExtensionAPI) {
+  applyImageToolPreference(pi, loadConfig().config.imagine.enabled);
+}
+
 type ImagineEntry = {
   path: string;
   relativePath: string;
@@ -128,7 +132,7 @@ export function registerImagineFeature(
         );
         return;
       }
-      applyImageToolPreference(pi, enabled);
+      syncImageToolPreference(pi);
       ctx.ui.notify(`image_gen: ${enabled ? 'on' : 'off'}`, 'info');
     },
   });

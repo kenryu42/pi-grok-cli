@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { resetCapabilitiesCache, setCapabilities } from '@earendil-works/pi-tui';
 import { afterEach, describe, expect, it } from 'vitest';
 import { imagePreview } from '../../src/imagine/preview.js';
-import { tempDir } from '../tools/toolTestHelpers.js';
+import { tempDir } from './helpers.js';
 
 const JPEG = '/9j/2Q==';
 const PNG =
