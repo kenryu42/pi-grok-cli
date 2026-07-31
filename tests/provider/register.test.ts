@@ -1,22 +1,36 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { Api, Model, OAuthCredentials, OAuthLoginCallbacks } from '@earendil-works/pi-ai';
+import type { OAuthLoginCallbacks } from '@earendil-works/pi-ai';
 import type { ExtensionAPI, ProviderConfig } from '@earendil-works/pi-coding-agent';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DEFAULT_CONFIG, loadConfig, saveConfig } from '../../src/config.js';
+import {
+  ACCOUNT_VAULT_MARKER,
+  getAccountVault,
+  mutateAccountVault,
+} from '../../src/provider/accountVault.js';
 import { loadQuotaCache, saveQuotaUsage } from '../../src/provider/quotaCache.js';
 import { getQuotaCachePath } from '../../src/storage.js';
-import { saveTestAccounts } from '../stateTestHelpers.js';
+import {
+  deferred,
+  oauthCredential,
+  saveTestAccounts,
+  setAccount1Credential,
+} from '../stateTestHelpers.js';
 
-const { mockOauthLogin } = vi.hoisted(() => ({
+const { mockOauthLogin, mockProviderStream } = vi.hoisted(() => ({
   mockOauthLogin: vi.fn(),
+  mockProviderStream: vi.fn(),
 }));
 
 vi.mock('../../src/auth/oauth.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/auth/oauth.js')>();
   return { ...actual, login: mockOauthLogin };
 });
+
+vi.mock('@earendil-works/pi-ai/compat', () => ({
+  streamSimpleOpenAIResponses: mockProviderStream,
+}));
 
 interface CommandConfig {
   handler: (args: string[], ctx: TestContext) => Promise<void>;
@@ -35,6 +49,7 @@ interface TestContext {
   model?: { provider: string; id: string };
   sessionManager?: {
     getSessionId: () => string;
+    getBranch?: () => unknown[];
   };
   ui: {
     notify: (message: string, level: string) => void;
@@ -56,6 +71,27 @@ beforeEach(() => {
     refresh: 'new-refresh',
     expires: Date.now() + 60_000,
   });
+  mockProviderStream.mockReset();
+  mockProviderStream.mockImplementation(() => ({
+    async *[Symbol.asyncIterator]() {},
+    result: vi.fn(async () => ({
+      role: 'assistant',
+      content: [],
+      api: 'openai-responses',
+      provider: 'grok-cli',
+      model: 'grok-build',
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      stopReason: 'stop',
+      timestamp: Date.now(),
+    })),
+  }));
   process.env.TZ = 'America/New_York';
   const dir = mkdtempSync(join(tmpdir(), 'pi-grok-cli-home-'));
   mkdirSync(join(dir, '.pi'));
@@ -96,6 +132,7 @@ async function setupExtension(initialActiveTools = ['read', 'bash']) {
   });
   const setModel = vi.fn(async (_model: { provider: string; id: string }) => true);
   const sendUserMessage = vi.fn();
+  const entries: { customType: string; data: unknown }[] = [];
   const registerGrokCli = (await import('../../src/index.js')).default;
   registerGrokCli({
     registerProvider(name: string, config: ProviderConfig) {
@@ -109,7 +146,9 @@ async function setupExtension(initialActiveTools = ['read', 'bash']) {
       commands.set(name, config as CommandConfig);
     },
     registerEntryRenderer() {},
-    appendEntry() {},
+    appendEntry(customType: string, data: unknown) {
+      entries.push({ customType, data });
+    },
     registerTool(tool: RegisteredTool) {
       tools.set(tool.name, tool);
     },
@@ -132,6 +171,7 @@ async function setupExtension(initialActiveTools = ['read', 'bash']) {
     setActiveTools,
     setModel,
     sendUserMessage,
+    entries,
   } as unknown as ExtensionAPI);
   return {
     commands,
@@ -141,11 +181,42 @@ async function setupExtension(initialActiveTools = ['read', 'bash']) {
     setActiveTools,
     setModel,
     sendUserMessage,
+    entries,
     async emit(event: string, data: unknown, ctx: TestContext) {
       for (const handler of allHandlers.get(event) ?? []) await handler(data, ctx);
     },
     getActiveTools: () => activeTools,
   };
+}
+
+function sessionContext(sessionId: string, accountId?: string): TestContext {
+  return {
+    modelRegistry: { getAll: () => [] },
+    sessionManager: {
+      getSessionId: () => sessionId,
+      getBranch: () =>
+        accountId
+          ? [
+              {
+                type: 'custom',
+                id: 'account-entry',
+                parentId: null,
+                timestamp: new Date().toISOString(),
+                customType: 'grok-cli-active-account-v1',
+                data: { accountId },
+              },
+            ]
+          : [],
+    },
+    ui: { notify: vi.fn() },
+  };
+}
+
+async function drain(stream: AsyncIterable<unknown> | undefined) {
+  if (!stream) throw new Error('Grok CLI test stream is missing.');
+  for await (const _event of stream) {
+    // The route setup completes before this empty test stream ends.
+  }
 }
 
 function statusContext(notify: TestContext['ui']['notify']): TestContext {
@@ -156,6 +227,10 @@ function statusContext(notify: TestContext['ui']['notify']): TestContext {
         { provider: 'grok-cli', id: 'grok-composer-2.5-fast' },
       ],
     },
+    sessionManager: {
+      getSessionId: () => 'session-a',
+      getBranch: () => [],
+    },
     ui: { notify },
   };
 }
@@ -163,6 +238,10 @@ function statusContext(notify: TestContext['ui']['notify']): TestContext {
 function emptyStatusContext(notify: TestContext['ui']['notify']): TestContext {
   return {
     modelRegistry: { getAll: () => [] },
+    sessionManager: {
+      getSessionId: () => 'session-a',
+      getBranch: () => [],
+    },
     ui: { notify },
   };
 }
@@ -171,6 +250,10 @@ function contextForModel(provider: string, id = `${provider}-model`): TestContex
   return {
     model: { provider, id },
     modelRegistry: { getAll: () => [] },
+    sessionManager: {
+      getSessionId: () => 'session-a',
+      getBranch: () => [],
+    },
     ui: { notify: vi.fn() },
   };
 }
@@ -181,6 +264,23 @@ function setupHome() {
   tempDirs.push(dir);
   process.env.HOME = dir;
   return dir;
+}
+
+function writeAuth(credentials: Record<string, unknown>) {
+  const path = join(process.env.HOME as string, '.pi', 'agent', 'auth.json');
+  mkdirSync(join(path, '..'), { recursive: true });
+  writeFileSync(path, JSON.stringify(credentials));
+}
+
+function writeMarker() {
+  writeAuth({
+    'grok-cli': {
+      type: 'oauth',
+      access: ACCOUNT_VAULT_MARKER,
+      refresh: ACCOUNT_VAULT_MARKER,
+      expires: Number.MAX_SAFE_INTEGER,
+    },
+  });
 }
 
 function billingResponse(monthlyLimit: unknown, used: unknown, billingPeriodEnd: unknown) {
@@ -321,20 +421,20 @@ describe('Grok CLI status command', () => {
     );
   });
 
-  it('uses the registered provider token when no env token is set', async () => {
+  it('uses the active vault account when no environment token is set', async () => {
     delete process.env.GROK_CLI_OAUTH_TOKEN;
     setupHome();
-    saveConfig({
-      ...DEFAULT_CONFIG,
-      accounts: {
-        nextAccountNumber: 3,
-        selectedProvider: 'grok-cli-2',
-        items: [
-          { provider: 'grok-cli', label: 'Personal' },
-          { provider: 'grok-cli-2', label: 'Work' },
-        ],
-      },
+    await mutateAccountVault((vault) => {
+      vault.migration.legacyCredentialCopyComplete = true;
+      vault.accounts[0].credential = {
+        access: 'provider-token',
+        refresh: 'provider-refresh',
+        expires: Date.now() + 300_000,
+      };
+      vault.accounts[0].revision = 1;
+      vault.activeAccountId = 'account-1';
     });
+    writeMarker();
     const fetchMock = vi.fn<typeof fetch>(async () =>
       billingResponse(4000, 100, '2026-07-01T00:00:00+00:00'),
     );
@@ -347,18 +447,52 @@ describe('Grok CLI status command', () => {
       ...statusContext(notify),
       modelRegistry: {
         ...statusContext(notify).modelRegistry,
-        getAll: () => [{ provider: 'grok-cli-2', id: 'grok-build' }],
+        getAll: () => [{ provider: 'grok-cli', id: 'grok-build' }],
         getApiKeyForProvider,
       },
     });
 
-    expect(getApiKeyForProvider).toHaveBeenCalledWith('grok-cli-2');
+    expect(getApiKeyForProvider).not.toHaveBeenCalled();
     expect(fetchMock.mock.calls[0]?.[1]?.headers).toMatchObject({
       authorization: 'Bearer provider-token',
     });
     expect(notify.mock.calls.at(-1)?.[0]).toContain('100 / 4,000 used  3%');
-    expect(loadQuotaCache().accounts['grok-cli-2']?.monthly.used).toBe(100);
-    expect(loadQuotaCache().accounts['grok-cli']).toBeUndefined();
+    expect(loadQuotaCache().accounts['account-1']?.monthly.used).toBe(100);
+  });
+
+  it('does not cache usage after the account changes during the request', async () => {
+    await mutateAccountVault((vault) => {
+      vault.migration.legacyCredentialCopyComplete = true;
+      vault.accounts[0].credential = {
+        ...oauthCredential('one'),
+        expires: Date.now() + 300_000,
+      };
+      vault.accounts[0].revision = 1;
+      vault.activeAccountId = 'account-1';
+    });
+    writeMarker();
+    const monthly = deferred<Response>();
+    globalThis.fetch = vi.fn<typeof fetch>(async (input) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.includes('format=credits')) {
+        return creditsResponse(10, '2026-07-14T00:19:56+00:00');
+      }
+      return monthly.promise;
+    });
+    const extension = await setupExtension();
+    const notify = vi.fn();
+
+    const pending = extension.commands.get('grok-cli-usage')?.handler([], statusContext(notify));
+    await vi.waitFor(() => expect(globalThis.fetch).toHaveBeenCalledOnce());
+    await mutateAccountVault((vault) => {
+      delete vault.accounts[0].credential;
+      vault.accounts[0].revision += 1;
+      delete vault.activeAccountId;
+    });
+    monthly.resolve(billingResponse(4000, 100, '2026-07-01T00:00:00+00:00'));
+    await pending;
+
+    expect(loadQuotaCache().accounts['account-1']).toBeUndefined();
   });
 
   it('does not fetch billing when no token is available', async () => {
@@ -388,7 +522,7 @@ describe('Grok CLI status command', () => {
     const extension = await setupExtension();
     await runStatus(extension);
 
-    expect(loadQuotaCache().accounts['grok-cli']).toMatchObject({
+    expect(loadQuotaCache().accounts['account-1']).toMatchObject({
       monthly: { monthlyLimit: 4000, used: 1421 },
     });
     expect(timeout).toHaveBeenCalledWith(30_000);
@@ -437,7 +571,7 @@ describe('Grok CLI status command', () => {
     process.env.GROK_CLI_OAUTH_TOKEN = 'env-token';
     setupHome();
     await saveQuotaUsage(
-      'grok-cli',
+      'account-1',
       {
         monthly: {
           monthlyLimit: 4000,
@@ -532,8 +666,333 @@ describe('Grok CLI status command', () => {
 });
 
 describe('Grok CLI provider registration', () => {
+  it('registers one Grok CLI provider for all configured accounts', async () => {
+    saveTestAccounts();
+
+    const extension = await setupExtension();
+
+    expect([...extension.providers.keys()]).toEqual(['grok-cli']);
+    expect(extension.providers.get('grok-cli')?.name).toBe('Grok CLI');
+  });
+
+  it('routes two live Pi sessions through their own selected accounts', async () => {
+    await mutateAccountVault((vault) => {
+      vault.migration.legacyCredentialCopyComplete = true;
+      vault.accounts[0].credential = {
+        access: 'one',
+        refresh: 'one-refresh',
+        expires: Date.now() + 300_000,
+      };
+      vault.accounts[0].revision = 1;
+      vault.accounts.push({
+        id: 'work-id',
+        slot: 2,
+        label: 'Work',
+        credential: {
+          access: 'two',
+          refresh: 'two-refresh',
+          expires: Date.now() + 300_000,
+        },
+        revision: 1,
+      });
+      vault.nextSlot = 3;
+      vault.activeAccountId = 'account-1';
+    });
+    writeMarker();
+    const first = await setupExtension();
+    const second = await setupExtension();
+    await first.emit(
+      'session_start',
+      { type: 'session_start', reason: 'startup' },
+      sessionContext('session-a', 'account-1'),
+    );
+    await second.emit(
+      'session_start',
+      { type: 'session_start', reason: 'startup' },
+      sessionContext('session-b', 'work-id'),
+    );
+    const firstProvider = first.providers.get('grok-cli');
+    const secondProvider = second.providers.get('grok-cli');
+    const firstModel = firstProvider?.models?.[0];
+    const secondModel = secondProvider?.models?.[0];
+    if (!firstModel || !secondModel) throw new Error('Grok CLI test model is missing.');
+
+    await Promise.all([
+      drain(
+        firstProvider.streamSimple?.(
+          {
+            ...firstModel,
+            provider: 'grok-cli',
+            api: 'openai-responses',
+            baseUrl: 'https://cli-chat-proxy.grok.com',
+          },
+          { messages: [] },
+          { sessionId: 'session-a' },
+        ),
+      ),
+      drain(
+        secondProvider.streamSimple?.(
+          {
+            ...secondModel,
+            provider: 'grok-cli',
+            api: 'openai-responses',
+            baseUrl: 'https://cli-chat-proxy.grok.com',
+          },
+          { messages: [] },
+          { sessionId: 'session-b' },
+        ),
+      ),
+    ]);
+
+    expect(mockProviderStream.mock.calls.map((call) => call[2]?.apiKey)).toEqual(['one', 'two']);
+    expect((await getAccountVault()).activeAccountId).toBe('account-1');
+  });
+
+  it('observes a failed provider result without creating an unhandled rejection', async () => {
+    await setAccount1Credential('one');
+    writeMarker();
+    mockProviderStream.mockImplementationOnce(() => ({
+      async *[Symbol.asyncIterator]() {},
+      result: () => Promise.reject(new Error('provider failed')),
+    }));
+    const extension = await setupExtension();
+    const provider = extension.providers.get('grok-cli');
+    const model = provider?.models?.[0];
+    if (!model) throw new Error('Grok CLI test model is missing.');
+
+    await drain(
+      provider.streamSimple?.(
+        {
+          ...model,
+          provider: 'grok-cli',
+          api: 'openai-responses',
+          baseUrl: 'https://cli-chat-proxy.grok.com',
+        },
+        { messages: [] },
+        { sessionId: 'session-a' },
+      ),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+
+  it('stores the default account in a new Pi session', async () => {
+    await setAccount1Credential('one');
+    const extension = await setupExtension();
+
+    await extension.emit(
+      'session_start',
+      { type: 'session_start', reason: 'startup' },
+      sessionContext('session-a'),
+    );
+
+    expect(extension.entries).toContainEqual({
+      customType: 'grok-cli-active-account-v1',
+      data: { accountId: 'account-1' },
+    });
+  });
+
+  it('uses the session account for the usage command', async () => {
+    await mutateAccountVault((vault) => {
+      vault.migration.legacyCredentialCopyComplete = true;
+      vault.accounts[0].credential = {
+        ...oauthCredential('one'),
+        expires: Date.now() + 300_000,
+      };
+      vault.accounts[0].revision = 1;
+      vault.accounts.push({
+        id: 'work-id',
+        slot: 2,
+        label: 'Work',
+        credential: {
+          ...oauthCredential('two'),
+          expires: Date.now() + 300_000,
+        },
+        revision: 1,
+      });
+      vault.nextSlot = 3;
+      vault.activeAccountId = 'account-1';
+    });
+    writeMarker();
+    globalThis.fetch = vi.fn<typeof fetch>(async () =>
+      billingResponse(4000, 100, '2026-07-01T00:00:00+00:00'),
+    );
+    const extension = await setupExtension();
+    const context = sessionContext('session-b', 'work-id');
+    context.modelRegistry.getAll = () => [{ provider: 'grok-cli', id: 'grok-build' }];
+    await extension.emit('session_start', { type: 'session_start', reason: 'startup' }, context);
+
+    await extension.commands.get('grok-cli-usage')?.handler([], context);
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      'https://cli-chat-proxy.grok.com/v1/billing',
+      expect.objectContaining({
+        headers: expect.objectContaining({ authorization: 'Bearer two' }),
+      }),
+    );
+  });
+
+  it('uses OAuth and a custom stream in stored-account mode', async () => {
+    delete process.env.GROK_CLI_OAUTH_TOKEN;
+
+    const extension = await setupExtension();
+    const provider = extension.providers.get('grok-cli');
+
+    expect(provider?.oauth).toBeDefined();
+    expect(provider?.apiKey).toBeUndefined();
+    expect(provider?.streamSimple).toBeTypeOf('function');
+  });
+
+  it('uses only the environment API-key method when Pi has no stored OAuth credential', async () => {
+    process.env.GROK_CLI_OAUTH_TOKEN = 'environment-token';
+    writeAuth({});
+
+    const provider = (await setupExtension()).providers.get('grok-cli');
+
+    expect(provider?.apiKey).toBe('$GROK_CLI_OAUTH_TOKEN');
+    expect(provider?.oauth).toBeUndefined();
+    expect(provider?.streamSimple).toBeTypeOf('function');
+  });
+
+  it('keeps only OAuth registration when an environment token and stored OAuth coexist', async () => {
+    process.env.GROK_CLI_OAUTH_TOKEN = 'environment-token';
+    writeAuth({
+      'grok-cli': {
+        type: 'oauth',
+        access: ACCOUNT_VAULT_MARKER,
+        refresh: ACCOUNT_VAULT_MARKER,
+        expires: Number.MAX_SAFE_INTEGER,
+      },
+    });
+
+    const provider = (await setupExtension()).providers.get('grok-cli');
+
+    expect(provider?.apiKey).toBeUndefined();
+    expect(provider?.oauth).toBeDefined();
+  });
+
+  it('stores a normal Grok login in Account 1 and returns only the Pi marker', async () => {
+    const extension = await setupExtension();
+
+    const result = await extension.providers
+      .get('grok-cli')
+      ?.oauth?.login({} as OAuthLoginCallbacks);
+
+    expect(result).toEqual({
+      access: ACCOUNT_VAULT_MARKER,
+      refresh: ACCOUNT_VAULT_MARKER,
+      expires: Number.MAX_SAFE_INTEGER,
+    });
+    await expect(getAccountVault()).resolves.toMatchObject({
+      activeAccountId: 'account-1',
+      accounts: [
+        {
+          id: 'account-1',
+          credential: {
+            access: 'new-access',
+            refresh: 'new-refresh',
+          },
+          revision: 1,
+        },
+      ],
+    });
+  });
+
+  it('does not restore Account 1 after it changes during OAuth login', async () => {
+    const authorization = deferred<ReturnType<typeof oauthCredential>>();
+    mockOauthLogin.mockReturnValueOnce(authorization.promise);
+    const extension = await setupExtension();
+
+    const pending = extension.providers.get('grok-cli')?.oauth?.login({} as OAuthLoginCallbacks);
+    await mutateAccountVault((vault) => {
+      vault.accounts[0].revision += 1;
+    });
+    authorization.resolve(oauthCredential('late-login'));
+
+    await expect(pending).rejects.toThrow('account changed while login was in progress');
+    expect((await getAccountVault()).accounts[0]).toMatchObject({ revision: 1 });
+    expect((await getAccountVault()).accounts[0].credential).toBeUndefined();
+  });
+
+  it('reconnects an existing vault with no Pi credential or an existing marker', async () => {
+    await mutateAccountVault((vault) => {
+      vault.migration.legacyCredentialCopyComplete = true;
+      vault.accounts[0].credential = {
+        access: 'saved-access',
+        refresh: 'saved-refresh',
+        expires: Date.now() + 300_000,
+      };
+      vault.accounts[0].revision = 1;
+      vault.activeAccountId = 'account-1';
+    });
+    const extension = await setupExtension();
+    const provider = extension.providers.get('grok-cli');
+
+    const disconnectedResult = await provider?.oauth?.login({} as OAuthLoginCallbacks);
+
+    writeAuth({
+      'grok-cli': {
+        type: 'oauth',
+        access: ACCOUNT_VAULT_MARKER,
+        refresh: ACCOUNT_VAULT_MARKER,
+        expires: Number.MAX_SAFE_INTEGER,
+      },
+    });
+    const connectedResult = await provider?.oauth?.login({} as OAuthLoginCallbacks);
+
+    expect(disconnectedResult?.access).toBe(ACCOUNT_VAULT_MARKER);
+    expect(connectedResult?.access).toBe(ACCOUNT_VAULT_MARKER);
+    expect(mockOauthLogin).not.toHaveBeenCalled();
+  });
+
+  it('installs the marker after copying the released Account 1 credential', async () => {
+    saveTestAccounts('grok-cli');
+    writeAuth({ 'grok-cli': oauthCredential('released-account') });
+    const extension = await setupExtension();
+
+    expect(
+      (await extension.providers.get('grok-cli')?.oauth?.login({} as OAuthLoginCallbacks))?.access,
+    ).toBe(ACCOUNT_VAULT_MARKER);
+    expect(mockOauthLogin).not.toHaveBeenCalled();
+    const vault = await getAccountVault();
+    expect(vault).toMatchObject({
+      activeAccountId: 'account-1',
+      migration: { markerInstallPending: true },
+    });
+    expect(vault.accounts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'account-1',
+          credential: expect.objectContaining({ access: 'released-account' }),
+        }),
+      ]),
+    );
+  });
+
+  it('does not replace a newer Account 1 login while installing the marker', async () => {
+    saveTestAccounts('grok-cli');
+    writeAuth({ 'grok-cli': oauthCredential('released-account') });
+    const extension = await setupExtension();
+    await extension.emit(
+      'session_start',
+      { type: 'session_start', reason: 'startup' },
+      sessionContext('session-a'),
+    );
+    await mutateAccountVault((vault) => {
+      vault.accounts[0].credential = {
+        access: 'new-dashboard-login',
+        refresh: 'new-dashboard-refresh',
+        expires: Date.now() + 300_000,
+      };
+      vault.accounts[0].revision += 1;
+    });
+
+    await extension.providers.get('grok-cli')?.oauth?.login({} as OAuthLoginCallbacks);
+
+    expect((await getAccountVault()).accounts[0].credential?.access).toBe('new-dashboard-login');
+  });
+
   it('clears cached quota after a successful OAuth login', async () => {
-    await saveQuotaUsage('grok-cli', {
+    await saveQuotaUsage('account-1', {
       monthly: {
         monthlyLimit: 2000,
         used: 300,
@@ -548,133 +1007,28 @@ describe('Grok CLI provider registration', () => {
     expect(loadQuotaCache().accounts['grok-cli']).toBeUndefined();
   });
 
-  it('makes a recently exhausted account eligible after successful OAuth login', async () => {
-    saveTestAccounts('grok-cli');
-    const extension = await setupExtension();
-    const context = {
-      model: { provider: 'grok-cli', id: 'grok-build' },
-      modelRegistry: {
-        getProviderAuthStatus: (provider: string) => ({
-          configured: provider.startsWith('grok-cli'),
-        }),
-        find: (provider: string, id: string) => ({ provider, id }),
-        getAll: () => [],
-      },
-      ui: { notify: vi.fn() },
-    };
-    const exhausted = (provider: string) => ({
-      type: 'message_end',
-      message: {
-        role: 'assistant',
-        provider,
-        model: 'grok-build',
-        stopReason: 'error',
-        errorMessage: 'OpenAI API error (402): 402 "Grok Build usage balance exhausted"',
-      },
-    });
-
-    await extension.emit('message_end', exhausted('grok-cli'), context as TestContext);
-    await extension.emit('agent_settled', { type: 'agent_settled' }, context as TestContext);
-    context.model = { provider: 'grok-cli-2', id: 'grok-build' };
-    await extension.emit(
-      'input',
-      { type: 'input', source: 'extension', text: 'continue after rotation' },
-      context as TestContext,
-    );
-    await extension.emit(
-      'message_end',
-      {
-        type: 'message_end',
-        message: {
-          role: 'assistant',
-          provider: 'grok-cli-2',
-          model: 'grok-build',
-          stopReason: 'stop',
-        },
-      },
-      context as TestContext,
-    );
-    await extension.emit('agent_settled', { type: 'agent_settled' }, context as TestContext);
-
-    await extension.providers.get('grok-cli')?.oauth?.login({} as OAuthLoginCallbacks);
-    await extension.emit('message_end', exhausted('grok-cli-2'), context as TestContext);
-    await extension.emit('agent_settled', { type: 'agent_settled' }, context as TestContext);
-
-    expect(extension.setModel.mock.calls.map(([model]) => model.provider)).toEqual([
-      'grok-cli-2',
-      'grok-cli',
-    ]);
-  });
-
   it('registers provider metadata and OAuth helpers', async () => {
     const extension = await setupExtension();
     const provider = extension.providers.get('grok-cli');
 
-    expect(provider?.name).toBe('Grok CLI — Account 1');
+    expect(provider?.name).toBe('Grok CLI');
     expect(provider?.api).toBe('openai-responses');
-    expect(provider?.apiKey).toBe('$GROK_CLI_OAUTH_TOKEN');
-    expect(provider?.streamSimple).toBeUndefined();
+    expect(provider?.apiKey).toBeUndefined();
+    expect(provider?.streamSimple).toBeTypeOf('function');
     expect(provider?.models?.map((model) => model.id)).toContain('grok-build');
     expect(provider?.oauth?.usesCallbackServer).toBe(true);
     expect(provider?.oauth?.getApiKey({ access: 'access-token', refresh: '', expires: 0 })).toBe(
       'access-token',
     );
-    expect(
-      provider?.oauth?.modifyModels?.(
-        [
-          { provider: 'grok-cli', id: 'grok-build', baseUrl: 'old' } as Model<Api>,
-          { provider: 'openai', id: 'gpt-4', baseUrl: 'keep' } as Model<Api>,
-        ],
-        {
-          access: 'access-token',
-          refresh: 'refresh-token',
-          expires: 123,
-          baseUrl: 'https://example.invalid/custom///',
-        } as OAuthCredentials,
-      ),
-    ).toEqual([
-      {
-        provider: 'grok-cli',
-        id: 'grok-build',
-        baseUrl: 'https://example.invalid/custom',
-      },
-      { provider: 'openai', id: 'gpt-4', baseUrl: 'keep' },
-    ]);
+    expect(provider?.oauth?.modifyModels).toBeUndefined();
   });
 
-  it('registers configured aliases with independent OAuth keys and labeled names', async () => {
+  it('does not register provider aliases from the released account config', async () => {
     saveTestAccounts();
 
     const extension = await setupExtension();
-    const base = extension.providers.get('grok-cli');
-    const alias = extension.providers.get('grok-cli-2');
 
-    expect(base?.name).toBe('Grok CLI — Personal');
-    expect(base?.apiKey).toBe('$GROK_CLI_OAUTH_TOKEN');
-    expect(alias?.name).toBe('Grok CLI — Work');
-    expect(alias?.apiKey).toBeUndefined();
-    expect(alias?.models?.map((model) => model.id)).toEqual(base?.models?.map((model) => model.id));
-    expect(
-      alias?.oauth?.modifyModels?.(
-        [
-          { provider: 'grok-cli', id: 'grok-build', baseUrl: 'base' } as Model<Api>,
-          { provider: 'grok-cli-2', id: 'grok-build', baseUrl: 'old' } as Model<Api>,
-        ],
-        {
-          access: 'access-token',
-          refresh: 'refresh-token',
-          expires: 123,
-          baseUrl: 'https://example.invalid/work///',
-        } as OAuthCredentials,
-      ),
-    ).toEqual([
-      { provider: 'grok-cli', id: 'grok-build', baseUrl: 'base' },
-      {
-        provider: 'grok-cli-2',
-        id: 'grok-build',
-        baseUrl: 'https://example.invalid/work',
-      },
-    ]);
+    expect([...extension.providers.keys()]).toEqual(['grok-cli']);
   });
 
   it('adds conversation affinity headers only for Grok requests', async () => {
@@ -705,7 +1059,7 @@ describe('Grok CLI provider registration', () => {
       sessionManager: { getSessionId: () => 'session-alias' },
     });
 
-    expect(aliasEvent.headers).toEqual({ 'x-grok-conv-id': 'session-alias' });
+    expect(aliasEvent.headers).toEqual({});
   });
 
   it('sanitizes Grok provider requests with the current session id', async () => {
@@ -742,11 +1096,7 @@ describe('Grok CLI provider registration', () => {
       },
     );
 
-    expect(aliasResult).toEqual({
-      input: [],
-      instructions: 'alias instruction',
-      prompt_cache_key: 'session-alias',
-    });
+    expect(aliasResult).toBeUndefined();
   });
 
   it('leaves non-Grok provider requests untouched', async () => {
@@ -775,6 +1125,10 @@ describe('Grok CLI provider registration', () => {
       {},
       {
         modelRegistry: { getAll: () => [] },
+        sessionManager: {
+          getSessionId: () => 'session-a',
+          getBranch: () => [],
+        },
         ui: { notify },
       },
     );
@@ -791,10 +1145,34 @@ describe('Grok CLI feature registration', () => {
     const piDir = join(process.env.HOME as string, '.pi');
     writeFileSync(join(piDir, 'grok-cli-imagine.json'), JSON.stringify({ enabled: false }));
 
-    await setupExtension();
+    const extension = await setupExtension();
+    await extension.emit(
+      'session_start',
+      { type: 'session_start', reason: 'startup' },
+      sessionContext('session-a'),
+    );
 
     expect(existsSync(join(piDir, 'grok-cli', 'config.json'))).toBe(true);
     expect(existsSync(join(piDir, 'grok-cli-imagine.json'))).toBe(false);
+  });
+
+  it('imports the saved OAuth login before migrating a standalone Imagine setting', async () => {
+    const piDir = join(process.env.HOME as string, '.pi');
+    writeFileSync(join(piDir, 'grok-cli-imagine.json'), JSON.stringify({ enabled: false }));
+    writeAuth({ 'grok-cli': oauthCredential('released-account') });
+    const extension = await setupExtension();
+
+    await extension.emit(
+      'session_start',
+      { type: 'session_start', reason: 'startup' },
+      sessionContext('session-a'),
+    );
+
+    expect((await getAccountVault()).accounts[0].credential?.access).toBe('released-account');
+    expect(JSON.parse(readFileSync(join(piDir, 'grok-cli', 'config.json'), 'utf8'))).toEqual({
+      version: 3,
+      imagine: { enabled: false },
+    });
   });
 
   it('reports a migration failure only once at session start', async () => {
@@ -819,25 +1197,43 @@ describe('Grok CLI feature registration', () => {
     );
   });
 
+  it('keeps a failed account migration blocking after its warning is shown', async () => {
+    mkdirSync(join(process.env.HOME as string, '.pi', 'grok-cli'));
+    writeFileSync(
+      join(process.env.HOME as string, '.pi', 'grok-cli', 'config.json'),
+      JSON.stringify({ version: 99 }),
+    );
+    const extension = await setupExtension();
+    const context = contextForModel('grok-cli', 'grok-build');
+
+    await extension.handlers.get('session_start')?.(
+      { type: 'session_start', reason: 'startup' },
+      context,
+    );
+
+    await expect(
+      extension.providers.get('grok-cli')?.oauth?.login({} as OAuthLoginCallbacks),
+    ).rejects.toThrow('Could not migrate Grok CLI accounts');
+    expect(mockOauthLogin).not.toHaveBeenCalled();
+  });
+
   it('registers only the image generation tool', async () => {
     const extension = await setupExtension();
 
     expect([...extension.tools.keys()]).toEqual(['image_gen']);
   });
 
-  it('queues model selection persistence without blocking the event handler', async () => {
-    saveTestAccounts('grok-cli');
+  it('does not change the active account when a Grok model is selected', async () => {
+    await setAccount1Credential('one');
     const extension = await setupExtension();
 
     const result = extension.handlers.get('model_select')?.(
-      { model: { provider: 'grok-cli-2', id: 'grok-build' } },
-      contextForModel('grok-cli-2', 'grok-build'),
+      { model: { provider: 'grok-cli', id: 'grok-build' } },
+      contextForModel('grok-cli', 'grok-build'),
     );
 
     expect(result).toBeUndefined();
-    await vi.waitFor(() => {
-      expect(loadConfig().config.accounts.selectedProvider).toBe('grok-cli-2');
-    });
+    expect((await getAccountVault()).activeAccountId).toBe('account-1');
   });
 
   it('keeps native coding tools unchanged for Grok models', async () => {

@@ -72,11 +72,17 @@ Open the browser dashboard to view accounts and quotas in one place:
 
 Select **Add account** to optionally label the account and start browser login.
 
-Prefer the terminal? Run `/grok-cli-accounts`, choose **＋ Add account**, and press Enter when the login command appears. Device-code login remains available there for headless environments.
+Prefer the terminal? Run `/grok-cli-accounts`, choose **＋ Add account**, and complete the browser or device-code login.
 
 With at least two logged-in accounts, pi-grok-cli can continue an interrupted request with another account when the current account runs out of quota. Recently exhausted accounts are temporarily skipped, and rotation stops when no eligible account remains.
 
 Only add accounts you own or are authorized to access.
+
+Pi shows one **Grok CLI** entry in `/login` and one `grok-cli` provider in `/model`. It does not add provider names such as `grok-cli-2`.
+
+Account selection is per session. The dashboard or `/grok-cli-accounts` sets the account for the current session, and the choice is stored in the session log so it is restored when the session is resumed or reopened. New sessions start with the most recently selected account and keep their own selection once changed. Requests always use the token captured at request start.
+
+Pi and pi-grok-cli keep separate login state. Native `/logout` removes Pi's non-secret connection marker. It does not delete accounts from the dashboard. Run `/login` and choose **Grok CLI** to reconnect the saved accounts. To delete a saved account, use `/grok-cli-accounts`. Account 1 is permanent, but you can log it out.
 
 ## Manage installation
 
@@ -103,7 +109,7 @@ Models are bundled rather than discovered live. Registered context limits may di
 
 ### Grok Imagine image generation
 
-Run `/grok-cli-imagine <prompt>` to generate and preview a JPEG, or let any active model call the `image_gen` tool. Images use the current or most recently selected Grok account and are saved under the current session unless you request another path.
+Run `/grok-cli-imagine <prompt>` to generate and preview a JPEG, or let any active model call the `image_gen` tool. Images use the current session's selected Grok account and are saved under the current session unless you request another path.
 
 `image_gen` is enabled by default across providers. Use `/grok-cli-imagine:tool [on|off|status]` to manage model access without disabling the direct command.
 
@@ -122,11 +128,17 @@ Extension-owned data is grouped under `~/.pi/grok-cli/`:
 
 ```text
 ~/.pi/grok-cli/
+├── accounts.json
 ├── config.json
+├── config.v2.backup.json
 └── quota-cache.json
 ```
 
-`config.json` stores settings and account labels. `quota-cache.json` stores quota responses. Neither contains OAuth tokens; pi stores credentials separately. Legacy settings are migrated automatically.
+`accounts.json` stores account labels and OAuth credentials. It uses file mode `0600`. `config.json` stores non-account settings. `quota-cache.json` stores quota responses. `config.v2.backup.json` is an exact backup that is created only when the extension migrates an older multi-account configuration. Pi stores only a fixed, non-secret marker for the `grok-cli` provider.
+
+When you update from a release that used `grok-cli-N` providers, the extension copies known OAuth credentials to `accounts.json` and rewrites global and project model settings to `grok-cli`. Run `/login` once and choose **Grok CLI** to install Pi's marker. The old alias credentials can remain in Pi's `/logout` list. Remove those old alias entries after you confirm that the new accounts work. Do not remove the main `Grok CLI` entry unless you want to disconnect it.
+
+The extension does not replace saved session files because Pi can append to them from another process without a shared file lock. This prevents session data loss. When you resume an old session that selected `grok-cli-N`, Pi can show a model fallback warning. Select the required `grok-cli/<model>` once in that session.
 
 ### Common environment variables
 
@@ -148,6 +160,8 @@ See [Advanced configuration](./CONFIGURATION.md) for OAuth, callback, endpoint, 
 | Authentication returns HTTP 401 or 403 | Run `/login` again and confirm the account can access the selected model. Replace an expired `GROK_CLI_OAUTH_TOKEN` if using an external token. |
 | A listed model is unavailable | Availability can differ by account or region, and the catalog is bundled rather than discovered live. Try another model or update the extension. |
 | Account rotation does not start | Confirm at least two accounts are logged in. Rotation responds only to Grok Build's final balance-exhausted error, not authentication failures, rate limits, or similar messages. |
+| A migrated account cannot send requests | Run `/login` once, choose **Grok CLI**, and restart pi if the model list does not update. |
+| The dashboard says Pi is disconnected | Run `/login` and choose **Grok CLI**. Saved dashboard accounts remain available. |
 
 ## Security and data flow
 

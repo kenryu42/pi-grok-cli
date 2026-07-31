@@ -1,8 +1,17 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_CONFIG, loadConfig, migrateLegacyConfig } from '../src/config.js';
 import {
+  acquireFileLock,
   getConfigPath,
   getGrokCliDirectory,
   getLegacyConfigPath,
@@ -35,7 +44,7 @@ describe('Grok CLI storage', () => {
     expect(migrateLegacyConfig()).toEqual({});
 
     expect(loadConfig().config.imagine.enabled).toBe(false);
-    expect(JSON.parse(readFileSync(getConfigPath(), 'utf8')).version).toBe(2);
+    expect(JSON.parse(readFileSync(getConfigPath(), 'utf8')).version).toBe(3);
     expect(existsSync(getLegacyConfigPath())).toBe(false);
   });
 
@@ -63,5 +72,93 @@ describe('Grok CLI storage', () => {
     expect(migration.warning).toMatch(/Could not migrate/);
     expect(loadConfig().config.imagine.enabled).toBe(false);
     expect(existsSync(getLegacyConfigPath())).toBe(true);
+  });
+
+  it('recovers an incomplete lock left by a stopped process', async () => {
+    setupHome();
+    mkdirSync(getGrokCliDirectory(), { recursive: true });
+    const lockPath = `${getQuotaCachePath()}.lock`;
+    writeFileSync(lockPath, '{');
+    utimesSync(lockPath, new Date(0), new Date(0));
+    vi.useFakeTimers();
+
+    try {
+      const pending = acquireFileLock(getQuotaCachePath());
+      await vi.advanceTimersByTimeAsync(30_025);
+      const release = await pending;
+      await release();
+      expect(existsSync(lockPath)).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('recovers a stale lock after its process ID is reused', async () => {
+    setupHome();
+    mkdirSync(getGrokCliDirectory(), { recursive: true });
+    const lockPath = `${getQuotaCachePath()}.lock`;
+    writeJson(lockPath, { pid: process.pid, token: 'stale-owner' });
+    utimesSync(lockPath, new Date(0), new Date(0));
+    vi.useFakeTimers();
+
+    try {
+      const outcome = acquireFileLock(getQuotaCachePath()).then(
+        (release) => ({ release }),
+        (error: unknown) => ({ error }),
+      );
+      await vi.advanceTimersByTimeAsync(30_025);
+      const result = await outcome;
+      expect(result).not.toHaveProperty('error');
+      if ('error' in result) throw result.error;
+      await result.release();
+      expect(existsSync(lockPath)).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('recovers a stale recovery barrier after its process ID is reused', async () => {
+    setupHome();
+    mkdirSync(getGrokCliDirectory(), { recursive: true });
+    const lockPath = `${getQuotaCachePath()}.lock`;
+    const recoveryPath = `${lockPath}.recovery.${process.pid}.stale`;
+    writeFileSync(recoveryPath, '');
+    utimesSync(recoveryPath, new Date(0), new Date(0));
+    vi.useFakeTimers();
+
+    try {
+      const pending = acquireFileLock(getQuotaCachePath());
+      const result = await Promise.race([
+        pending.then((release) => ({ acquired: true as const, release })),
+        new Promise<{ acquired: false }>((resolve) => {
+          queueMicrotask(() => resolve({ acquired: false }));
+        }),
+      ]);
+      if (!result.acquired) {
+        rmSync(recoveryPath, { force: true });
+        await vi.advanceTimersByTimeAsync(25);
+        await (await pending)();
+      } else {
+        await result.release();
+      }
+      expect(existsSync(recoveryPath)).toBe(false);
+      expect(result.acquired).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('continues when a recovery barrier disappears during polling', async () => {
+    setupHome();
+    mkdirSync(getGrokCliDirectory(), { recursive: true });
+    const lockPath = `${getQuotaCachePath()}.lock`;
+    const recoveryPath = `${lockPath}.recovery.${process.pid}.gone`;
+    symlinkSync(`${recoveryPath}.missing`, recoveryPath);
+
+    const release = await acquireFileLock(getQuotaCachePath());
+    await release();
+
+    expect(existsSync(recoveryPath)).toBe(false);
+    expect(existsSync(lockPath)).toBe(false);
   });
 });

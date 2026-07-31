@@ -1,9 +1,15 @@
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { describe, expect, it, vi } from 'vitest';
 import { registerImageGenTool } from '../../src/imagine/tool.js';
+import { useEnvironmentToken, useTempHome } from '../stateTestHelpers.js';
 import { imagineDependencies } from './helpers.js';
 
-function setup(token?: string) {
+const setupHome = useTempHome();
+const setToken = useEnvironmentToken();
+
+function setup(token?: string, resolveToken?: () => Promise<string | undefined>) {
+  setupHome();
+  setToken(token);
   let tool: Record<string, unknown> | undefined;
   const dependencies = imagineDependencies();
   registerImageGenTool(
@@ -13,6 +19,7 @@ function setup(token?: string) {
       },
     } as ExtensionAPI,
     dependencies,
+    resolveToken,
   );
   const context = {
     modelRegistry: { getApiKeyForProvider: vi.fn(async () => token) },
@@ -77,6 +84,16 @@ describe('image_gen tool', () => {
       },
     });
     expect(result.content.every((part: { type: string }) => part.type === 'text')).toBe(true);
+  });
+
+  it('uses the supplied session token resolver', async () => {
+    const resolveToken = vi.fn(async () => 'session-token');
+    const test = setup(undefined, resolveToken);
+
+    await test.tool.execute('call', { prompt: 'cat' }, undefined, undefined, test.context);
+
+    expect(resolveToken).toHaveBeenCalledWith(test.context);
+    expect(test.generate).toHaveBeenCalledWith(expect.objectContaining({ token: 'session-token' }));
   });
 
   it('requires exactly one call for singular requests while allowing explicit multiples', () => {

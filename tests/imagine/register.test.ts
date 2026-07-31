@@ -4,13 +4,19 @@ import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_CONFIG, loadConfig, saveConfig } from '../../src/config.js';
 import { registerImagineFeature } from '../../src/imagine/register.js';
-import { saveTestAccounts, useTempHome } from '../stateTestHelpers.js';
+import { useEnvironmentToken, useTempHome } from '../stateTestHelpers.js';
 import { imagineDependencies } from './helpers.js';
 
 const setupHome = useTempHome();
+const setToken = useEnvironmentToken();
 
-function setup(token?: string, initialActiveTools: readonly string[] = ['read']) {
+function setup(
+  token?: string,
+  initialActiveTools: readonly string[] = ['read'],
+  resolveToken?: () => Promise<string | undefined>,
+) {
   const home = setupHome();
+  setToken(token);
   const commands = new Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>();
   const renderers = new Map<string, unknown>();
   const entries: { type: string; data: unknown }[] = [];
@@ -41,6 +47,7 @@ function setup(token?: string, initialActiveTools: readonly string[] = ['read'])
       setActiveTools,
     } as unknown as ExtensionAPI,
     dependencies,
+    resolveToken,
   );
   const notify = vi.fn();
   const context = {
@@ -119,15 +126,26 @@ describe('registerImagineFeature command', () => {
     );
   });
 
-  it('uses the last selected Grok alias while a non-Grok model is active', async () => {
+  it('uses the environment override while a non-Grok model is active', async () => {
     const extension = setup('work-token');
-    saveTestAccounts();
 
     await extension.commands.get('grok-cli-imagine')?.handler('cat', extension.context);
 
-    expect(extension.getApiKeyForProvider).toHaveBeenCalledWith('grok-cli-2');
+    expect(extension.getApiKeyForProvider).not.toHaveBeenCalled();
     expect(extension.generate).toHaveBeenCalledWith(
       expect.objectContaining({ token: 'work-token' }),
+    );
+  });
+
+  it('uses the supplied session token resolver', async () => {
+    const resolveToken = vi.fn(async () => 'session-token');
+    const extension = setup(undefined, ['read'], resolveToken);
+
+    await extension.commands.get('grok-cli-imagine')?.handler('cat', extension.context);
+
+    expect(resolveToken).toHaveBeenCalledWith(extension.context);
+    expect(extension.generate).toHaveBeenCalledWith(
+      expect.objectContaining({ token: 'session-token' }),
     );
   });
 

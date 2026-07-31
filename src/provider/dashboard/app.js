@@ -448,7 +448,7 @@ const animateGauge = (gauge, from, to) => {
   }
 };
 
-const quotaRow = (provider, label, usedLabel, metaText, remaining) => {
+const quotaRow = (accountId, label, usedLabel, metaText, remaining) => {
   const row = element('div', 'quota');
   const gauge = element(
     'div',
@@ -461,7 +461,7 @@ const quotaRow = (provider, label, usedLabel, metaText, remaining) => {
   gauge.setAttribute('aria-valuemax', '100');
   gauge.setAttribute('aria-valuenow', String(Math.round(remaining)));
   gauge.append(element('span', 'gauge-value', `${Math.round(remaining)}%`));
-  const key = `${provider}:${label}`;
+  const key = `${accountId}:${label}`;
   const previous = gaugeMemory.get(key);
   gaugeMemory.set(key, remaining);
   if (!entranceDone) animateGauge(gauge, 0, remaining);
@@ -520,12 +520,12 @@ const actionButton = (label, action, kind = 'ghost') => {
   return button;
 };
 
-const startLogin = async (provider) => {
+const startLogin = async (accountId) => {
   // Open the popup with the final URL instead of scripting a blank one: embedded
   // browsers (e.g. WKWebView) hand window.open('') an unusable about:blank view.
   try {
-    const ticket = await mutation(`/api/accounts/${provider}/login-ticket`, 'POST');
-    if (!window.open(ticket.path, `grok-login-${provider}`)) {
+    const ticket = await mutation(`/api/accounts/${accountId}/login-ticket`, 'POST');
+    if (!window.open(ticket.path, `grok-login-${accountId}`)) {
       showToast('Pop-up blocked. Allow pop-ups, then use Log in on the account card.', true);
       return;
     }
@@ -553,7 +553,7 @@ const loginPanel = (account, isNew) => {
   cancel.dataset.action = 'Cancel login';
   cancel.addEventListener('click', async () => {
     try {
-      await mutation(`/api/accounts/${account.provider}/login-cancel`, 'POST');
+      await mutation(`/api/accounts/${account.id}/login-cancel`, 'POST');
       await refreshState(true, true);
     } catch (error) {
       showToast(error.message, true);
@@ -564,7 +564,7 @@ const loginPanel = (account, isNew) => {
     event.preventDefault();
     if (!input.value.trim()) return;
     try {
-      await mutation(`/api/accounts/${account.provider}/login-code`, 'POST', {
+      await mutation(`/api/accounts/${account.id}/login-code`, 'POST', {
         code: input.value,
       });
       input.value = '';
@@ -585,11 +585,11 @@ const loginPanel = (account, isNew) => {
   return panel;
 };
 
-const cardActions = (account) => {
+const cardActions = (account, environmentMode) => {
   const actions = element('footer', 'card-actions');
   const activate = async () => {
     try {
-      await mutation(`/api/accounts/${account.provider}/activate`, 'POST');
+      await mutation(`/api/accounts/${account.id}/activate`, 'POST');
       await refreshState(true, true);
       showToast(`Switched to ${account.label}.`);
     } catch (error) {
@@ -605,7 +605,7 @@ const cardActions = (account) => {
     });
     if (label === undefined) return;
     try {
-      const updated = await mutation(`/api/accounts/${account.provider}`, 'PATCH', { label });
+      const updated = await mutation(`/api/accounts/${account.id}`, 'PATCH', { label });
       await refreshState(true);
       showToast(`Renamed to ${updated.label}.`);
     } catch (error) {
@@ -623,29 +623,23 @@ const cardActions = (account) => {
   };
   const destructive = async () => {
     const confirmed = await modal({
-      title:
-        account.provider === 'grok-cli' ? `Log out ${account.label}?` : `Remove ${account.label}?`,
-      message:
-        account.provider === 'grok-cli'
-          ? 'Removes the saved login. The account stays in the list — log in again to use it.'
-          : 'Removes this account and its saved login. You can add it again with Add account.',
-      confirm: account.provider === 'grok-cli' ? 'Log out' : 'Remove account',
+      title: account.permanent ? `Log out ${account.label}?` : `Remove ${account.label}?`,
+      message: account.permanent
+        ? 'Removes this account login from the vault. The account stays in the list. If no logged-in account remains, also run /logout in Pi.'
+        : 'Removes this account and its saved login. You can add it again with Add account.',
+      confirm: account.permanent ? 'Log out' : 'Remove account',
       danger: true,
     });
     if (!confirmed) return;
     try {
       const result = await mutation(
-        account.provider === 'grok-cli'
-          ? '/api/accounts/grok-cli/logout'
-          : `/api/accounts/${account.provider}`,
-        account.provider === 'grok-cli' ? 'POST' : 'DELETE',
+        account.permanent ? `/api/accounts/${account.id}/logout` : `/api/accounts/${account.id}`,
+        account.permanent ? 'POST' : 'DELETE',
       );
       await refreshState(true, true);
       showToast(
         `${
-          account.provider === 'grok-cli'
-            ? `Logged out ${account.label}.`
-            : `Removed ${account.label}.`
+          account.permanent ? `Logged out ${account.label}.` : `Removed ${account.label}.`
         }${result.warning ? ` ${result.warning}` : ''}`,
       );
     } catch (error) {
@@ -653,21 +647,21 @@ const cardActions = (account) => {
     }
   };
 
-  if (!account.authenticated && !account.environment) {
-    actions.append(actionButton('Log in', () => startLogin(account.provider), 'primary'));
-  } else if (!account.active && account.authenticated) {
+  if (!account.authenticated && !account.environment && !environmentMode) {
+    actions.append(actionButton('Log in', () => startLogin(account.id), 'primary'));
+  } else if (!account.active && account.authenticated && !environmentMode) {
     actions.append(actionButton('Switch', activate, 'primary'));
   }
-  if (!account.environment && account.authenticated) {
-    actions.append(actionButton('Log in again', () => startLogin(account.provider)));
+  if (!account.environment && account.authenticated && !environmentMode) {
+    actions.append(actionButton('Log in again', () => startLogin(account.id)));
   }
   if (account.environment) {
     actions.append(actionButton('How to remove', tokenInstructions));
   }
   actions.append(actionButton('Rename', rename));
-  if (!account.environment && (account.provider !== 'grok-cli' || account.authenticated)) {
+  if (!account.environment && (!account.permanent || account.authenticated)) {
     const button = actionButton(
-      account.provider === 'grok-cli' ? 'Log out' : 'Remove',
+      account.permanent ? 'Log out' : 'Remove',
       destructive,
       'danger push-right',
     );
@@ -676,10 +670,10 @@ const cardActions = (account) => {
   return actions;
 };
 
-const accountCard = (account, index, isNewPending, refreshing) => {
+const accountCard = (account, index, isNewPending, refreshing, environmentMode) => {
   const card = element('article', `account-card${account.active ? ' active' : ''}`);
-  card.dataset.provider = account.provider;
-  card.style.viewTransitionName = `card-${account.provider}`;
+  card.dataset.provider = account.id;
+  card.style.viewTransitionName = `card-${account.id}`;
   if (!entranceDone) {
     card.style.setProperty('--enter-delay', `${Math.min(index * 45, 220)}ms`);
   }
@@ -689,7 +683,10 @@ const accountCard = (account, index, isNewPending, refreshing) => {
   titleRow.append(element('h2', '', account.label));
   if (account.active) titleRow.append(element('span', 'active-badge', 'Active'));
   const metaRow = element('div', 'card-meta-row');
-  metaRow.append(element('span', 'card-provider', account.provider), statusPill(account));
+  metaRow.append(
+    element('span', 'card-provider', `grok-cli · Account ${account.slot}`),
+    statusPill(account),
+  );
   if (account.plan) metaRow.append(element('span', 'plan-pill', PLAN_LABELS[account.plan]));
   head.append(titleRow, metaRow);
 
@@ -705,7 +702,7 @@ const accountCard = (account, index, isNewPending, refreshing) => {
     const monthly = account.quota.monthly;
     body.append(
       quotaRow(
-        account.provider,
+        account.id,
         'Monthly credits',
         isFree ? '' : `${Math.max(0, monthly.monthlyLimit - monthly.used).toLocaleString()} left`,
         isFree ? 'Not available' : `Resets ${dateLabel(monthly.billingPeriodEnd)}`,
@@ -715,7 +712,7 @@ const accountCard = (account, index, isNewPending, refreshing) => {
     body.append(
       account.quota.weekly || isFree
         ? quotaRow(
-            account.provider,
+            account.id,
             'Weekly credits',
             '',
             !isFree && account.quota.weekly
@@ -752,14 +749,15 @@ const accountCard = (account, index, isNewPending, refreshing) => {
     body.append(element('p', 'card-error', errorText));
   }
 
-  card.append(head, body, cardActions(account));
+  card.append(head, body, cardActions(account, environmentMode));
   return card;
 };
 
 const render = (state) => {
+  const environmentMode = state.accounts.some((account) => account.environment);
   statsSummary.textContent = `${state.accounts.length} account${state.accounts.length === 1 ? '' : 's'}`;
-  linkState.className = 'link-pill ok';
-  linkText.textContent = 'Synced';
+  linkState.className = `link-pill ${state.connected ? 'ok' : 'error'}`;
+  linkText.textContent = state.connected ? 'Pi connected' : 'Pi disconnected';
   refreshButton.disabled = state.refreshing;
   accountsRoot.setAttribute('aria-busy', String(state.refreshing));
   accountsRoot.classList.toggle('refreshing', state.refreshing || quotaRefreshInFlight);
@@ -781,12 +779,12 @@ const render = (state) => {
   const nextPending = new Set(
     state.accounts
       .filter((account) => account.login.state === 'pending')
-      .map((account) => account.provider),
+      .map((account) => account.id),
   );
   // A login that left pending since the last render resolves audibly, not only visually.
   for (const provider of pendingProviders) {
     if (nextPending.has(provider)) continue;
-    const account = state.accounts.find((candidate) => candidate.provider === provider);
+    const account = state.accounts.find((candidate) => candidate.id === provider);
     if (account?.login.state === 'success') showToast(`Logged in ${account.label}.`);
     if (account?.login.state === 'failed') showToast(account.login.error || 'Login failed.', true);
     if (account?.login.quotaError) showToast(account.login.quotaError, true);
@@ -806,8 +804,9 @@ const render = (state) => {
         accountCard(
           account,
           index,
-          nextPending.has(account.provider) && !pendingProviders.has(account.provider),
+          nextPending.has(account.id) && !pendingProviders.has(account.id),
           state.refreshing || quotaRefreshInFlight,
+          environmentMode,
         ),
       )
     : [element('p', 'grid-message', 'No accounts configured. Use Add account to connect one.')];
@@ -901,7 +900,7 @@ addAccount.addEventListener('click', async () => {
   try {
     const account = await mutation('/api/accounts', 'POST', { label });
     await refreshState(true, true);
-    await startLogin(account.provider);
+    await startLogin(account.id);
   } catch (error) {
     showToast(error.message, true);
   }

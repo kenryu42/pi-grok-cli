@@ -9,6 +9,7 @@ import {
   DEFAULT_IMAGINE_DEPENDENCIES,
   generateAndSaveImage,
   type ImagineDependencies,
+  type ImagineTokenResolver,
 } from './workflow.js';
 
 const ENTRY_TYPE = 'grok-cli-imagine';
@@ -43,6 +44,7 @@ type ImagineEntry = {
 export function registerImagineFeature(
   pi: ExtensionAPI,
   dependencies: ImagineDependencies = DEFAULT_IMAGINE_DEPENDENCIES,
+  resolveToken?: ImagineTokenResolver,
 ) {
   pi.registerEntryRenderer<ImagineEntry>(ENTRY_TYPE, (entry, { expanded }, theme) => {
     if (!entry.data) return;
@@ -80,6 +82,7 @@ export function registerImagineFeature(
               : undefined,
           },
           dependencies,
+          resolveToken,
         );
         pi.appendEntry<ImagineEntry>(ENTRY_TYPE, {
           path: saved.absolutePath,
@@ -137,5 +140,5 @@ export function registerImagineFeature(
     },
   });
 
-  registerImageGenTool(pi, dependencies);
+  registerImageGenTool(pi, dependencies, resolveToken);
 }

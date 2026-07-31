@@ -1,8 +1,12 @@
 import type { AssistantMessage } from '@earendil-works/pi-ai';
-import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
-import { loadConfig, saveConfig } from '../config.js';
-import { DEFAULT_GROK_MODEL, GROK_CLI_PROVIDER, isGrokCliProvider } from './accounts.js';
+import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
+import { getAccountVault } from './accountVault.js';
 import { type CachedQuota, isCachedQuotaFresh, loadQuotaCache } from './quotaCache.js';
+import { requestAccount } from './requestOwnership.js';
+import {
+  createSessionAccountSelection,
+  type SessionAccountSelection,
+} from './sessionAccountSelection.js';
 
 export const EXHAUSTED_BALANCE_ERROR =
   'OpenAI API error (402): 402 "Grok Build usage balance exhausted"';
@@ -11,8 +15,8 @@ export const ROTATION_CONTINUATION =
 const RECENT_EXHAUSTION_COOLDOWN_MS = 5 * 60_000;
 
 type FailedResponse = {
+  accountId: string;
   model: string;
-  provider: string;
 };
 
 function isExhaustionMessage(message: unknown): message is AssistantMessage {
@@ -20,23 +24,16 @@ function isExhaustionMessage(message: unknown): message is AssistantMessage {
   const candidate = message as Partial<AssistantMessage>;
   return (
     candidate.role === 'assistant' &&
-    isGrokCliProvider(candidate.provider) &&
+    candidate.provider === 'grok-cli' &&
     candidate.stopReason === 'error' &&
     candidate.errorMessage?.trim() === EXHAUSTED_BALANCE_ERROR
   );
 }
 
-function hasAccountAuth(ctx: ExtensionContext, provider: string) {
-  return (
-    ctx.modelRegistry.getProviderAuthStatus(provider).configured ||
-    (provider === GROK_CLI_PROVIDER && Boolean(process.env.GROK_CLI_OAUTH_TOKEN))
-  );
-}
-
-function circularProviders(providers: string[], current: string) {
-  const index = providers.indexOf(current);
-  if (index < 0) return providers;
-  return [...providers.slice(index + 1), ...providers.slice(0, index)];
+function circularAccountIds(accountIds: string[], current: string) {
+  const index = accountIds.indexOf(current);
+  if (index < 0) return accountIds;
+  return [...accountIds.slice(index + 1), ...accountIds.slice(0, index)];
 }
 
 function quotaScore(entry: CachedQuota | undefined, now: number) {
@@ -51,43 +48,44 @@ function quotaScore(entry: CachedQuota | undefined, now: number) {
   return Math.min(monthly, Math.min(1, Math.max(0, 1 - entry.weekly.creditUsagePercent / 100)));
 }
 
-function orderProvidersByQuota(
-  providers: string[],
+function orderAccountsByQuota(
+  accountIds: string[],
   accounts: Record<string, CachedQuota>,
   now: number,
 ) {
-  const scored = providers.flatMap((provider, index) => {
-    const score = quotaScore(accounts[provider], now);
-    return score === undefined ? [] : [{ provider, index, score }];
+  const scored = accountIds.flatMap((accountId, index) => {
+    const score = quotaScore(accounts[accountId], now);
+    return score === undefined ? [] : [{ accountId, index, score }];
   });
   const ranked = [...scored].sort(
     (left, right) => right.score - left.score || left.index - right.index,
   );
-  return providers.map((provider, index) => {
+  return accountIds.map((accountId, index) => {
     const scoredIndex = scored.findIndex((candidate) => candidate.index === index);
-    return scoredIndex < 0 ? provider : ranked[scoredIndex].provider;
+    return scoredIndex < 0 ? accountId : ranked[scoredIndex].accountId;
   });
 }
 
-export function registerExhaustionRotation(pi: ExtensionAPI) {
+export function registerExhaustionRotation(
+  pi: ExtensionAPI,
+  sessionSelection: SessionAccountSelection = createSessionAccountSelection(pi),
+) {
   const exhausted = new Set<string>();
-  const unavailable = new Set<string>();
   const recentlyExhausted = new Map<string, number>();
   let pending: FailedResponse | undefined;
   let awaitingContinuation = false;
 
   const clearChain = () => {
     exhausted.clear();
-    unavailable.clear();
     pending = undefined;
     awaitingContinuation = false;
   };
 
-  const isRecentlyExhausted = (provider: string, now: number) => {
-    const exhaustedAt = recentlyExhausted.get(provider);
+  const isRecentlyExhausted = (accountId: string, now: number) => {
+    const exhaustedAt = recentlyExhausted.get(accountId);
     if (exhaustedAt === undefined) return false;
     if (now - exhaustedAt < RECENT_EXHAUSTION_COOLDOWN_MS) return true;
-    recentlyExhausted.delete(provider);
+    recentlyExhausted.delete(accountId);
     return false;
   };
 
@@ -104,16 +102,16 @@ export function registerExhaustionRotation(pi: ExtensionAPI) {
     if (pending) clearChain();
   });
 
-  pi.on('message_end', (event) => {
+  pi.on('message_end', (event, ctx) => {
+    if (process.env.GROK_CLI_OAUTH_TOKEN) return;
     if (!isExhaustionMessage(event.message)) return;
-    const message = event.message;
-    const config = loadConfig().config;
-    if (!config.accounts.items.some((account) => account.provider === message.provider)) {
-      return;
-    }
-    pending = { provider: message.provider, model: message.model };
-    exhausted.add(message.provider);
-    recentlyExhausted.set(message.provider, Date.now());
+    const accountId =
+      requestAccount(event.message) ??
+      sessionSelection.accountId(ctx.sessionManager.getSessionId());
+    if (!accountId) return;
+    pending = { accountId, model: event.message.model };
+    exhausted.add(accountId);
+    recentlyExhausted.set(accountId, Date.now());
     awaitingContinuation = false;
   });
 
@@ -122,59 +120,53 @@ export function registerExhaustionRotation(pi: ExtensionAPI) {
       if (awaitingContinuation) clearChain();
       return;
     }
-
     const failed = pending;
     pending = undefined;
-    if (ctx.model?.provider !== failed.provider || ctx.model.id !== failed.model) {
-      clearChain();
-      return;
-    }
-
-    const config = loadConfig().config;
-    const authenticated = config.accounts.items.filter((account) =>
-      hasAccountAuth(ctx, account.provider),
-    );
-    if (authenticated.length < 2) {
+    if (ctx.model?.provider !== 'grok-cli' || ctx.model.id !== failed.model) {
       clearChain();
       return;
     }
 
     const now = Date.now();
-    const authenticatedProviders = new Set(authenticated.map((account) => account.provider));
-    const eligible = circularProviders(
-      config.accounts.items.map((account) => account.provider),
-      failed.provider,
+    const quotas = loadQuotaCache().accounts;
+    const vault = await getAccountVault();
+    const loggedIn = vault.accounts.filter((account) => account.credential);
+    const eligible = circularAccountIds(
+      vault.accounts.map((account) => account.id),
+      failed.accountId,
     ).filter(
-      (provider) =>
-        provider !== failed.provider &&
-        !exhausted.has(provider) &&
-        !isRecentlyExhausted(provider, now) &&
-        !unavailable.has(provider) &&
-        authenticatedProviders.has(provider),
+      (accountId) =>
+        accountId !== failed.accountId &&
+        !exhausted.has(accountId) &&
+        !isRecentlyExhausted(accountId, now) &&
+        loggedIn.some((account) => account.id === accountId),
     );
-
-    for (const provider of orderProvidersByQuota(eligible, loadQuotaCache().accounts, now)) {
-      const model =
-        ctx.modelRegistry.find(provider, failed.model) ??
-        ctx.modelRegistry.find(provider, DEFAULT_GROK_MODEL);
-      if (!model || !(await pi.setModel(model))) {
-        unavailable.add(provider);
-        continue;
-      }
-
-      const refreshed = loadConfig().config;
-      const failedLabel = refreshed.accounts.items.find(
-        (account) => account.provider === failed.provider,
-      )?.label;
-      const selected = refreshed.accounts.items.find((account) => account.provider === provider);
-      if (!failedLabel || !selected) {
-        unavailable.add(provider);
-        continue;
-      }
-      refreshed.accounts.selectedProvider = provider;
-      saveConfig(refreshed);
+    const selectedId = orderAccountsByQuota(eligible, quotas, now)[0];
+    const selected = vault.accounts.find(
+      (account) => account.id === selectedId && account.credential,
+    );
+    const outcome = {
+      loggedInIds: loggedIn.map((account) => account.id),
+      ...(selected
+        ? {
+            selected: {
+              id: selected.id,
+              failedLabel:
+                vault.accounts.find((account) => account.id === failed.accountId)?.label ??
+                failed.accountId,
+              label: selected.label,
+            },
+          }
+        : {}),
+    };
+    if (outcome.loggedInIds.length < 2) {
+      clearChain();
+      return;
+    }
+    if (outcome.selected) {
+      sessionSelection.select(ctx, outcome.selected.id);
       ctx.ui.notify(
-        `Grok CLI: “${failedLabel}” exhausted; switched to “${selected.label}” and continuing.`,
+        `Grok CLI: “${outcome.selected.failedLabel}” exhausted; switched to “${outcome.selected.label}” and continuing.`,
         'info',
       );
       awaitingContinuation = true;
@@ -183,8 +175,8 @@ export function registerExhaustionRotation(pi: ExtensionAPI) {
     }
 
     if (
-      authenticated.every(
-        (account) => exhausted.has(account.provider) || isRecentlyExhausted(account.provider, now),
+      outcome.loggedInIds.every(
+        (accountId) => exhausted.has(accountId) || isRecentlyExhausted(accountId, now),
       )
     ) {
       ctx.ui.notify('Grok CLI: all logged-in accounts are exhausted.', 'warning');
@@ -199,8 +191,8 @@ export function registerExhaustionRotation(pi: ExtensionAPI) {
   });
 
   return {
-    clearRecentExhaustion(provider: string) {
-      recentlyExhausted.delete(provider);
+    clearRecentExhaustion(accountId: string) {
+      recentlyExhausted.delete(accountId);
     },
   };
 }

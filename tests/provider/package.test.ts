@@ -40,6 +40,7 @@ describe('npm package manifest', () => {
     expect(packageJson.dependencies?.jiti).toBeUndefined();
     expect(packageJson.dependencies?.typebox).toBeUndefined();
     expect(packageJson.dependencies).toBeUndefined();
+    expect(packageJson.devDependencies?.['@types/proper-lockfile']).toBeUndefined();
   });
 });
 
@@ -65,12 +66,18 @@ describe('repository layout', () => {
       'src/index.ts',
       'src/models/catalog.ts',
       'src/payload/sanitize.ts',
+      'src/provider/accountMigration.ts',
+      'src/provider/accountRouting.ts',
+      'src/provider/accountVault.ts',
       'src/provider/accounts.ts',
       'src/provider/billing.ts',
       'src/provider/dashboard/server.ts',
+      'src/provider/modelMigration.ts',
       'src/provider/quotaCache.ts',
       'src/provider/register.ts',
+      'src/provider/requestOwnership.ts',
       'src/provider/rotation.ts',
+      'src/provider/sessionAccountSelection.ts',
       'src/provider/stream.ts',
       'src/provider/usage.ts',
       'src/shared/errors.ts',
@@ -82,5 +89,14 @@ describe('repository layout', () => {
     for (const file of ['errors.ts', 'models.ts', 'oauth.ts', 'sanitize.ts']) {
       expect(existsSync(new URL(`../../src/${file}`, import.meta.url))).toBe(false);
     }
+  });
+
+  it('uses the exact Pi loader alias for OpenAI Responses streaming', () => {
+    const source = readFileSync(new URL('../../src/provider/register.ts', import.meta.url), 'utf8');
+
+    expect(source).toContain(
+      "import { streamSimpleOpenAIResponses } from '@earendil-works/pi-ai/compat';",
+    );
+    expect(source).not.toContain('@earendil-works/pi-ai/api/openai-responses');
   });
 });
