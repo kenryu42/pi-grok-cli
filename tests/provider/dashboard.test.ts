@@ -1,16 +1,6 @@
 import { once } from 'node:events';
 import { createConnection } from 'node:net';
-import {
-  InMemoryCredentialStore,
-  type OAuthCredentials,
-  type OAuthLoginCallbacks,
-} from '@earendil-works/pi-ai';
-import {
-  type ExtensionAPI,
-  type ExtensionContext,
-  ModelRegistry,
-  ModelRuntime,
-} from '@earendil-works/pi-coding-agent';
+import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
 import {
   type HTMLDialogElement as BrowserDialog,
   type HTMLElement as BrowserElement,
@@ -18,14 +8,21 @@ import {
   Window,
 } from 'happy-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { DEFAULT_CONFIG, loadConfig, saveConfig } from '../../src/config.js';
 import { registerAccountManagement } from '../../src/provider/accounts.js';
+import { getAccountVault, mutateAccountVault } from '../../src/provider/accountVault.js';
 import {
   type AccountDashboardHandle,
   createAccountDashboard,
   startAccountDashboard,
 } from '../../src/provider/dashboard/server.js';
-import { oauthCredential, useTempHome } from '../vision/helpers.js';
+import { deferred, oauthCredential, useTempHome } from '../stateTestHelpers.js';
+
+const { oauthLogin } = vi.hoisted(() => ({ oauthLogin: vi.fn() }));
+
+vi.mock('../../src/auth/oauth.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/auth/oauth.js')>()),
+  login: oauthLogin,
+}));
 
 const setupHome = useTempHome();
 const dashboards: AccountDashboardHandle[] = [];
@@ -37,69 +34,29 @@ afterEach(async () => {
 
 async function setup() {
   setupHome();
-  saveConfig(DEFAULT_CONFIG);
-  const credentials = new InMemoryCredentialStore();
-  await credentials.modify('grok-cli', async () => oauthCredential('personal'));
-  const runtime = await ModelRuntime.create({
-    credentials,
-    modelsPath: null,
-    allowModelNetwork: false,
+  oauthLogin.mockReset();
+  oauthLogin.mockResolvedValue(oauthCredential('personal'));
+  await mutateAccountVault((vault) => {
+    vault.accounts[0].credential = oauthCredential('personal');
+    vault.activeAccountId = 'account-1';
   });
-  const loginFlows = new Map<
-    string,
-    (callbacks: OAuthLoginCallbacks) => Promise<OAuthCredentials>
-  >();
-  const registerAccount = (account: { provider: string; label: string }) => {
-    runtime.registerProvider(account.provider, {
-      name: account.label,
-      baseUrl: 'https://example.test',
-      api: 'openai-responses',
-      models: [
-        {
-          id: 'grok-build',
-          name: 'Grok Build',
-          reasoning: true,
-          input: ['text'],
-          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-          contextWindow: 128_000,
-          maxTokens: 16_384,
-        },
-      ],
-      oauth: {
-        name: account.label,
-        usesCallbackServer: true,
-        login: (callbacks) =>
-          loginFlows.get(account.provider)?.(callbacks) ??
-          Promise.reject(new Error('No test login flow registered.')),
-        refreshToken: async (credential) => credential,
-        getApiKey: (credential) => credential.access,
-      },
-    });
-  };
-  registerAccount({ provider: 'grok-cli', label: 'Account 1' });
-  const modelRegistry = new ModelRegistry(runtime);
   const pi = {
+    appendEntry: vi.fn(),
     registerCommand: vi.fn(),
-    setModel: vi.fn(async () => true),
-    unregisterProvider: vi.fn((provider: string) => runtime.unregisterProvider(provider)),
   } as unknown as ExtensionAPI;
-  const accountManagement = registerAccountManagement(pi, registerAccount);
+  const accountManagement = registerAccountManagement(pi);
   const ctx = {
     model: { provider: 'grok-cli', id: 'grok-build' },
-    modelRegistry,
+    sessionManager: {
+      getSessionId: () => 'session-a',
+      getBranch: () => [],
+    },
     ui: { notify: vi.fn() },
   } as unknown as ExtensionContext;
   return {
     accountManagement,
-    credentials,
     ctx,
-    loginFlows,
     pi,
-    runtime,
-    async setCredential(provider: string, credential: ReturnType<typeof oauthCredential>) {
-      await credentials.modify(provider, async () => credential);
-      await runtime.refresh({ allowNetwork: false });
-    },
   };
 }
 
@@ -126,7 +83,9 @@ const accountState = (
   overrides: Record<string, unknown> = {},
   login: Record<string, unknown> = { state: 'idle' },
 ) => ({
-  provider: 'grok-cli',
+  id: 'account-1',
+  slot: 1,
+  permanent: true,
   label: 'Account 1',
   status: 'Logged in',
   authenticated: true,
@@ -314,6 +273,39 @@ async function openDashboard(options?: Parameters<typeof startAccountDashboard>[
   };
 }
 
+async function addDashboardAccount(
+  session: Awaited<ReturnType<typeof openDashboard>>,
+  label: string,
+) {
+  const response = await fetch(`${session.dashboard.origin}/api/accounts`, {
+    method: 'POST',
+    headers: session.headers,
+    body: JSON.stringify({ label }),
+  });
+  return {
+    response,
+    account: (await response.json()) as { id: string; label: string; slot: number },
+  };
+}
+
+async function requestLoginTicket(
+  session: Awaited<ReturnType<typeof openDashboard>>,
+  accountId: string,
+) {
+  const response = await fetch(
+    `${session.dashboard.origin}/api/accounts/${accountId}/login-ticket`,
+    {
+      method: 'POST',
+      headers: session.headers,
+      body: '{}',
+    },
+  );
+  return {
+    response,
+    path: ((await response.json()) as { path: string }).path,
+  };
+}
+
 async function openIncompleteMutation(session: Awaited<ReturnType<typeof openDashboard>>) {
   const url = new URL(session.dashboard.origin);
   const socket = createConnection({ host: url.hostname, port: Number(url.port) });
@@ -337,16 +329,14 @@ async function openIncompleteMutation(session: Awaited<ReturnType<typeof openDas
 async function waitForAccount(
   dashboard: AccountDashboardHandle,
   cookie: string,
-  provider: string,
+  accountId: string,
   predicate: (account: Record<string, unknown>) => boolean,
 ) {
   await vi.waitFor(async () => {
     const state = (await (
       await fetch(`${dashboard.origin}/api/state`, { headers: { Cookie: cookie } })
     ).json()) as { accounts: Record<string, unknown>[] };
-    expect(predicate(state.accounts.find((account) => account.provider === provider) ?? {})).toBe(
-      true,
-    );
+    expect(predicate(state.accounts.find((account) => account.id === accountId) ?? {})).toBe(true);
   });
 }
 
@@ -390,7 +380,7 @@ describe('account dashboard loopback server', () => {
     expect(await state.json()).toMatchObject({
       accounts: [
         {
-          provider: 'grok-cli',
+          id: 'account-1',
           label: 'Account 1',
           authenticated: true,
           active: true,
@@ -437,61 +427,66 @@ describe('account dashboard loopback server', () => {
     });
 
     expect(added.status).toBe(201);
-    expect(await added.json()).toMatchObject({ provider: 'grok-cli-2', label: 'Work' });
-    expect(loadConfig().config.accounts.items.at(-1)).toEqual({
-      provider: 'grok-cli-2',
+    const account = (await added.json()) as { id: string; label: string; slot: number };
+    expect(account).toMatchObject({ label: 'Work', slot: 2 });
+    expect((await getAccountVault()).accounts.at(-1)).toMatchObject({
+      id: account.id,
       label: 'Work',
+      slot: 2,
     });
   });
 
-  it('accepts account routes for two-digit provider aliases', async () => {
+  it('accepts account routes for opaque IDs after ten display slots', async () => {
     const session = await openDashboard();
+    let lastId = '';
     for (let account = 2; account <= 10; account += 1) {
-      await fetch(`${session.dashboard.origin}/api/accounts`, {
+      const response = await fetch(`${session.dashboard.origin}/api/accounts`, {
         method: 'POST',
         headers: session.headers,
         body: JSON.stringify({ label: `Account ${account}` }),
       });
+      lastId = ((await response.json()) as { id: string }).id;
     }
 
-    const renamed = await fetch(`${session.dashboard.origin}/api/accounts/grok-cli-10`, {
+    const renamed = await fetch(`${session.dashboard.origin}/api/accounts/${lastId}`, {
       method: 'PATCH',
       headers: session.headers,
       body: JSON.stringify({ label: 'Account ten' }),
     });
 
     expect(renamed.status).toBe(200);
-    expect(loadConfig().config.accounts.items.at(-1)).toEqual({
-      provider: 'grok-cli-10',
+    expect((await getAccountVault()).accounts.at(-1)).toMatchObject({
+      id: lastId,
       label: 'Account ten',
     });
   });
 
   it('renames, activates, logs out, and removes accounts through the shared manager', async () => {
     const session = await openDashboard();
-    await fetch(`${session.dashboard.origin}/api/accounts`, {
-      method: 'POST',
-      headers: session.headers,
-      body: JSON.stringify({ label: 'Work' }),
+    const workId = (await addDashboardAccount(session, 'Work')).account.id;
+    await mutateAccountVault((vault) => {
+      const account = vault.accounts.find((candidate) => candidate.id === workId);
+      if (!account) throw new Error('Work account was not added.');
+      account.credential = oauthCredential('work');
+      account.revision = 1;
     });
-    await session.extension.setCredential('grok-cli-2', oauthCredential('work'));
 
-    const renamed = await fetch(`${session.dashboard.origin}/api/accounts/grok-cli-2`, {
+    const renamed = await fetch(`${session.dashboard.origin}/api/accounts/${workId}`, {
       method: 'PATCH',
       headers: session.headers,
       body: JSON.stringify({ label: 'Client' }),
     });
-    const activated = await fetch(`${session.dashboard.origin}/api/accounts/grok-cli-2/activate`, {
+    const activated = await fetch(`${session.dashboard.origin}/api/accounts/${workId}/activate`, {
       method: 'POST',
       headers: session.headers,
       body: '{}',
     });
-    const removed = await fetch(`${session.dashboard.origin}/api/accounts/grok-cli-2`, {
+    const removed = await fetch(`${session.dashboard.origin}/api/accounts/${workId}`, {
       method: 'DELETE',
       headers: session.headers,
       body: '{}',
     });
-    const loggedOut = await fetch(`${session.dashboard.origin}/api/accounts/grok-cli/logout`, {
+    const loggedOut = await fetch(`${session.dashboard.origin}/api/accounts/account-1/logout`, {
       method: 'POST',
       headers: session.headers,
       body: '{}',
@@ -499,48 +494,36 @@ describe('account dashboard loopback server', () => {
 
     expect(renamed.status).toBe(200);
     expect(activated.status).toBe(200);
-    expect(session.extension.pi.setModel).toHaveBeenCalledWith(
-      expect.objectContaining({ provider: 'grok-cli-2', id: 'grok-build' }),
-    );
     expect(removed.status).toBe(200);
     expect(loggedOut.status).toBe(200);
-    expect(loadConfig().config.accounts.items).toEqual([
-      { provider: 'grok-cli', label: 'Account 1' },
+    expect((await getAccountVault()).accounts).toMatchObject([
+      { id: 'account-1', label: 'Account 1' },
     ]);
-    expect(await session.extension.credentials.read('grok-cli')).toBeUndefined();
+    expect((await getAccountVault()).accounts[0].credential).toBeUndefined();
   });
 
   it('redirects browser login without exposing credentials and accepts manual codes', async () => {
     const session = await openDashboard({ refreshAfterLogin: false });
-    await fetch(`${session.dashboard.origin}/api/accounts`, {
-      method: 'POST',
-      headers: session.headers,
-      body: JSON.stringify({ label: 'Work' }),
-    });
-    session.extension.loginFlows.set('grok-cli-2', async (callbacks) => {
+    const workId = (await addDashboardAccount(session, 'Work')).account.id;
+    oauthLogin.mockImplementationOnce(async (callbacks) => {
       callbacks.onAuth({ url: 'https://accounts.x.ai/authorize?state=browser-state' });
       const code = await callbacks.onManualCodeInput?.();
       if (code !== 'manual-code') throw new Error('manual code rejected');
       return oauthCredential('dashboard-access');
     });
 
-    const ticket = await fetch(`${session.dashboard.origin}/api/accounts/grok-cli-2/login-ticket`, {
-      method: 'POST',
-      headers: session.headers,
-      body: '{}',
-    });
-    const path = ((await ticket.json()) as { path: string }).path;
-    const redirect = await fetch(`${session.dashboard.origin}${path}`, {
+    const ticket = await requestLoginTicket(session, workId);
+    const redirect = await fetch(`${session.dashboard.origin}${ticket.path}`, {
       headers: { Cookie: session.cookie },
       redirect: 'manual',
     });
 
-    expect(ticket.status).toBe(201);
+    expect(ticket.response.status).toBe(201);
     expect(redirect.status).toBe(302);
     expect(redirect.headers.get('location')).toBe(
       'https://accounts.x.ai/authorize?state=browser-state',
     );
-    await fetch(`${session.dashboard.origin}/api/accounts/grok-cli-2/login-code`, {
+    await fetch(`${session.dashboard.origin}/api/accounts/${workId}/login-code`, {
       method: 'POST',
       headers: session.headers,
       body: JSON.stringify({ code: 'manual-code' }),
@@ -548,7 +531,7 @@ describe('account dashboard loopback server', () => {
     await waitForAccount(
       session.dashboard,
       session.cookie,
-      'grok-cli-2',
+      workId,
       (account) => account.authenticated === true,
     );
     const state = await (
@@ -560,6 +543,92 @@ describe('account dashboard loopback server', () => {
     expect(state).not.toContain('dashboard-access');
     expect(state).not.toContain('manual-code');
     expect(state).not.toContain('browser-state');
+  });
+
+  it('removes a new account when its first browser login fails', async () => {
+    const session = await openDashboard({ refreshAfterLogin: false });
+    const workId = (await addDashboardAccount(session, 'Work')).account.id;
+    oauthLogin.mockRejectedValueOnce(new Error('login failed'));
+    const ticket = await requestLoginTicket(session, workId);
+
+    expect(
+      (
+        await fetch(`${session.dashboard.origin}${ticket.path}`, {
+          headers: { Cookie: session.cookie },
+        })
+      ).status,
+    ).toBe(502);
+    await vi.waitFor(async () => {
+      expect((await getAccountVault()).accounts.some((account) => account.id === workId)).toBe(
+        false,
+      );
+    });
+  });
+
+  it('keeps a new account authenticated by another process during its first login', async () => {
+    const session = await openDashboard({ refreshAfterLogin: false });
+    const workId = (await addDashboardAccount(session, 'Work')).account.id;
+    const authorization = deferred<ReturnType<typeof oauthCredential>>();
+    oauthLogin.mockReturnValueOnce(authorization.promise);
+    const ticket = await requestLoginTicket(session, workId);
+    const login = fetch(`${session.dashboard.origin}${ticket.path}`, {
+      headers: { Cookie: session.cookie },
+    });
+    await vi.waitFor(() => expect(oauthLogin).toHaveBeenCalledOnce());
+    await mutateAccountVault((vault) => {
+      const account = vault.accounts.find((candidate) => candidate.id === workId);
+      if (!account) throw new Error('Work account was not added.');
+      account.credential = oauthCredential('other-process');
+      account.revision += 1;
+    });
+    authorization.resolve(oauthCredential('stale-login'));
+
+    expect((await login).status).toBe(502);
+    await vi.waitFor(async () => {
+      expect(
+        (await getAccountVault()).accounts.find((account) => account.id === workId),
+      ).toMatchObject({
+        revision: 1,
+        credential: { access: 'other-process' },
+      });
+    });
+  });
+
+  it('keeps a new account when its first browser login is cancelled', async () => {
+    const session = await openDashboard({ refreshAfterLogin: false });
+    const workId = (await addDashboardAccount(session, 'Work')).account.id;
+    const started = deferred<void>();
+    oauthLogin.mockImplementationOnce(
+      (callbacks) =>
+        new Promise((_resolve, reject) => {
+          callbacks.signal?.addEventListener('abort', () => reject(new Error('Login cancelled')), {
+            once: true,
+          });
+          started.resolve();
+        }),
+    );
+    const ticket = await requestLoginTicket(session, workId);
+    const login = fetch(`${session.dashboard.origin}${ticket.path}`, {
+      headers: { Cookie: session.cookie },
+    });
+    await started.promise;
+
+    const cancelled = await fetch(
+      `${session.dashboard.origin}/api/accounts/${workId}/login-cancel`,
+      {
+        method: 'POST',
+        headers: session.headers,
+        body: '{}',
+      },
+    );
+
+    expect(cancelled.status).toBe(202);
+    expect((await login).status).toBe(502);
+    await vi.waitFor(async () => {
+      expect((await getAccountVault()).accounts.some((account) => account.id === workId)).toBe(
+        true,
+      );
+    });
   });
 
   it('rejects malformed or oversized mutations', async () => {
@@ -713,23 +782,41 @@ describe('account dashboard loopback server', () => {
     const cases = [
       {
         button: 'Switch',
-        initial: accountState({ active: false, label: 'Work', provider: 'grok-cli-2' }),
-        next: accountState({ label: 'Work', provider: 'grok-cli-2' }),
+        initial: accountState({
+          id: 'work-id',
+          slot: 2,
+          permanent: false,
+          active: false,
+          label: 'Work',
+        }),
+        next: accountState({ id: 'work-id', slot: 2, permanent: false, label: 'Work' }),
         toast: 'Switched to Work.',
       },
       {
         button: 'Rename',
-        initial: accountState({ label: 'Work', provider: 'grok-cli-2' }),
-        next: accountState({ label: 'Renamed', provider: 'grok-cli-2' }),
+        initial: accountState({ id: 'work-id', slot: 2, permanent: false, label: 'Work' }),
+        next: accountState({
+          id: 'work-id',
+          slot: 2,
+          permanent: false,
+          label: 'Renamed',
+        }),
         response: { label: 'Renamed' },
         value: 'Renamed',
         toast: 'Renamed to Renamed.',
       },
       {
         button: 'Remove',
-        initial: accountState({ active: false, label: 'Work', provider: 'grok-cli-2' }),
+        initial: accountState({
+          id: 'work-id',
+          slot: 2,
+          permanent: false,
+          active: false,
+          label: 'Work',
+        }),
         next: undefined,
-        toast: 'Removed Work.',
+        response: { warning: 'Credential cleanup continues in the background.' },
+        toast: 'Removed Work. Credential cleanup continues in the background.',
       },
       {
         button: 'Log out',
@@ -775,6 +862,56 @@ describe('account dashboard loopback server', () => {
       );
       await browser.close();
     }
+  });
+
+  it('hides log out when the permanent account is already logged out', async () => {
+    const session = await openDashboard();
+    const browser = await browserDashboard(session, [
+      {
+        refreshing: false,
+        accounts: [
+          accountState({
+            authenticated: false,
+            active: false,
+            status: 'Login required',
+          }),
+        ],
+      },
+    ]);
+    const actions = [...browser.window.document.querySelectorAll('.card-actions button')].map(
+      (button) => button.textContent,
+    );
+
+    expect(actions).toContain('Log in');
+    expect(actions).toContain('Rename');
+    expect(actions).not.toContain('Log out');
+    await browser.close();
+  });
+
+  it('does not offer saved-account switching while an environment token is active', async () => {
+    const session = await openDashboard();
+    const browser = await browserDashboard(session, [
+      {
+        refreshing: false,
+        accounts: [
+          accountState({ environment: true }),
+          accountState({
+            id: 'work-id',
+            slot: 2,
+            permanent: false,
+            active: false,
+            label: 'Work',
+          }),
+        ],
+      },
+    ]);
+
+    expect(
+      [...browser.window.document.querySelectorAll('button')].map((button) =>
+        button.textContent?.trim(),
+      ),
+    ).not.toContain('Switch');
+    await browser.close();
   });
 
   it('throttles state-field drawing and resizes through ResizeObserver', async () => {

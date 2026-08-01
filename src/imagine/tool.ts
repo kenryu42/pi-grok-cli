@@ -7,6 +7,7 @@ import {
   DEFAULT_IMAGINE_DEPENDENCIES,
   generateAndSaveImage,
   type ImagineDependencies,
+  type ImagineTokenResolver,
 } from './workflow.js';
 
 const ImageGenParams = Type.Object({
@@ -40,6 +41,7 @@ function errorResult(error: unknown) {
 export function registerImageGenTool(
   pi: ExtensionAPI,
   dependencies: ImagineDependencies = DEFAULT_IMAGINE_DEPENDENCIES,
+  resolveToken?: ImagineTokenResolver,
 ) {
   pi.registerTool<typeof ImageGenParams, ImageGenDetails>({
     name: 'image_gen',
@@ -59,6 +61,7 @@ export function registerImageGenTool(
         const saved = await generateAndSaveImage(
           { ctx, prompt, aspectRatio, signal },
           dependencies,
+          resolveToken,
         );
         return {
           content: [

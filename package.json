@@ -10,7 +10,6 @@
     "grok-cli",
     "oauth",
     "xai-oauth",
-    "vision",
     "multimodal"
   ],
   "type": "module",
@@ -56,13 +55,7 @@
   "peerDependencies": {
     "@earendil-works/pi-ai": ">=0.80.9",
     "@earendil-works/pi-coding-agent": ">=0.80.9",
-    "@earendil-works/pi-tui": ">=0.80.9",
-    "pi-web-access": ">=0.13.0"
-  },
-  "peerDependenciesMeta": {
-    "pi-web-access": {
-      "optional": true
-    }
+    "@earendil-works/pi-tui": ">=0.80.9"
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.16",
@@ -84,9 +77,5 @@
     "*": [
       "biome check --write --no-errors-on-unmatched"
     ]
-  },
-  "dependencies": {
-    "ignore": "7.0.5",
-    "minimatch": "10.2.5"
   }
 }

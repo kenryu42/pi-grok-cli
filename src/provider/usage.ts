@@ -1,16 +1,20 @@
 import type { Api, Model } from '@earendil-works/pi-ai';
-import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
+import type { ExtensionAPI, ExtensionCommandContext } from '@earendil-works/pi-coding-agent';
 import { XaiOAuthError } from '../shared/errors.js';
-import { isGrokCliProvider, resolveGrokProvider, resolveGrokToken } from './accounts.js';
+import { resolveAccountRoute } from './accountRouting.js';
+import { accountRouteIsCurrent, isGrokCliProvider } from './accounts.js';
 import { fetchBillingUsage, formatQuota } from './billing.js';
-import { loadQuotaCache, saveQuotaUsage } from './quotaCache.js';
+import { loadQuotaCache, saveQuotaUsageWhen } from './quotaCache.js';
 
-export function registerUsageCommand(pi: Pick<ExtensionAPI, 'registerCommand'>) {
+export function registerUsageCommand(
+  pi: Pick<ExtensionAPI, 'registerCommand'>,
+  resolveRoute: (ctx: ExtensionCommandContext) => ReturnType<typeof resolveAccountRoute> = () =>
+    resolveAccountRoute(),
+) {
   pi.registerCommand('grok-cli-usage', {
     description: 'Show Grok CLI provider status, quota, and token health',
     handler: async (_args, ctx) => {
-      const provider = resolveGrokProvider(ctx);
-      if (provider === 'grok-cli' && process.env.GROK_CLI_OAUTH_TOKEN) {
+      if (process.env.GROK_CLI_OAUTH_TOKEN) {
         ctx.ui.notify(
           '⚠️  Grok CLI: using GROK_CLI_OAUTH_TOKEN env bypass — no auto-refresh available',
           'warning',
@@ -27,17 +31,37 @@ export function registerUsageCommand(pi: Pick<ExtensionAPI, 'registerCommand'>) 
           return;
         }
 
-        const apiKey = await resolveGrokToken(ctx);
-        if (!apiKey) {
-          ctx.ui.notify(formatQuota(undefined).join('\n'), 'info');
+        let routeError: unknown;
+        const route = await resolveRoute(ctx).catch((error: unknown) => {
+          routeError = error;
+          return undefined;
+        });
+        if (!route) {
+          ctx.ui.notify(
+            [
+              ...formatQuota(undefined),
+              ...(routeError === undefined
+                ? []
+                : [
+                    `    Reason     ${routeError instanceof Error ? routeError.message : String(routeError)}`,
+                  ]),
+            ].join('\n'),
+            'info',
+          );
           return;
         }
 
         try {
           ctx.ui.notify('Fetching grok cli usage…', 'info');
-          const usage = await fetchBillingUsage(apiKey, AbortSignal.timeout(30_000));
+          const usage = await fetchBillingUsage(route.token, AbortSignal.timeout(30_000));
           try {
-            await saveQuotaUsage(provider, usage);
+            if (
+              !(await saveQuotaUsageWhen(route.accountId, usage, () =>
+                accountRouteIsCurrent(route),
+              ))
+            ) {
+              throw new Error('The account changed while its usage was refreshing.');
+            }
           } catch (error) {
             ctx.ui.notify(
               `Grok CLI quota cache update failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -50,7 +74,7 @@ export function registerUsageCommand(pi: Pick<ExtensionAPI, 'registerCommand'>) 
             `Grok CLI billing refresh failed: ${err instanceof Error ? err.message : String(err)}`,
             'warning',
           );
-          const cached = loadQuotaCache().accounts[provider];
+          const cached = loadQuotaCache().accounts[route.accountId];
           ctx.ui.notify(
             cached
               ? `Grok CLI cached usage from ${cached.updatedAt}:\n${formatQuota(cached).join('\n')}`

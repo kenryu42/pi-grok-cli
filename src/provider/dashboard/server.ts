@@ -150,10 +150,8 @@ function escapeHtml(value: string) {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-function accountProvider(pathname: string, suffix = '') {
-  const match = new RegExp(`^/api/accounts/(grok-cli(?:-(?:[2-9]|[1-9][0-9]+))?)${suffix}$`).exec(
-    pathname,
-  );
+function accountId(pathname: string, suffix = '') {
+  const match = new RegExp(`^/api/accounts/([A-Za-z0-9-]+)${suffix}$`).exec(pathname);
   return match?.[1];
 }
 
@@ -240,8 +238,9 @@ export async function startAccountDashboard(
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
   let closing: Promise<void> | undefined;
   let refreshController: AbortController | undefined;
-  const loginTickets = new Map<string, { provider: string; expiresAt: number }>();
+  const loginTickets = new Map<string, { accountId: string; expiresAt: number }>();
   const loginJobs = new Map<string, LoginJob>();
+  const newAccountRevisions = new Map<string, number>();
 
   const server = createServer((req, res) => {
     void handle(req, res).catch((error: unknown) => {
@@ -302,8 +301,9 @@ export async function startAccountDashboard(
     const snapshot = manager.snapshot(ctx);
     return {
       refreshing: Boolean(refreshController),
+      connected: snapshot.connected,
       accounts: snapshot.accounts.map((account) => {
-        const job = loginJobs.get(account.provider);
+        const job = loginJobs.get(account.id);
         return {
           ...account,
           login: job
@@ -319,10 +319,8 @@ export async function startAccountDashboard(
     };
   };
 
-  const startLogin = async (provider: string, res: ServerResponse) => {
-    const account = manager
-      .snapshot(ctx)
-      .accounts.find((candidate) => candidate.provider === provider);
+  const startLogin = async (id: string, res: ServerResponse) => {
+    const account = manager.snapshot(ctx).accounts.find((candidate) => candidate.id === id);
     if (!account) throw new HttpError(404, 'Account not found — it may have been removed.');
     if (account.environment) {
       throw new HttpError(
@@ -330,9 +328,10 @@ export async function startAccountDashboard(
         'This account logs in with the GROK_CLI_OAUTH_TOKEN environment variable.',
       );
     }
-    if (loginJobs.get(provider)?.state === 'pending') {
+    if (loginJobs.get(id)?.state === 'pending') {
       throw new HttpError(409, 'A login is already in progress for this account.');
     }
+    const removeOnFailureRevision = newAccountRevisions.get(id);
     const controller = new AbortController();
     let resolveManualCode = (_code: string) => {};
     const manualCode = new Promise<string>((resolve) => {
@@ -344,7 +343,7 @@ export async function startAccountDashboard(
       progress: 'Waiting for xAI authorization',
       resolveManualCode,
     };
-    loginJobs.set(provider, job);
+    loginJobs.set(id, job);
     let settledRedirect = false;
     let finishRedirect = () => {};
     const redirected = new Promise<void>((resolve) => {
@@ -372,23 +371,28 @@ export async function startAccountDashboard(
         throw new Error('Interactive OAuth prompts are not supported in the dashboard.');
       },
     };
-    void manager.login(ctx, provider, interaction).then(
+    void manager.login(ctx, id, interaction).then(
       async () => {
+        newAccountRevisions.delete(id);
         job.state = 'success';
         job.progress = 'Login complete';
         job.resolveManualCode('');
         if (options.refreshAfterLogin === false) return;
         try {
-          const result = await manager.refreshOne(ctx, provider, controller.signal);
+          const result = await manager.refreshOne(ctx, id, controller.signal);
           if (result.failed.length) job.quotaError = 'Login succeeded, but quota refresh failed.';
         } catch {
           job.quotaError = 'Login succeeded, but quota refresh failed.';
         }
       },
-      (error: unknown) => {
+      async (error: unknown) => {
         job.state = controller.signal.aborted ? 'cancelled' : 'failed';
         job.error = controller.signal.aborted ? 'Login cancelled.' : publicError(error);
         job.resolveManualCode('');
+        if (removeOnFailureRevision !== undefined && !controller.signal.aborted) {
+          newAccountRevisions.delete(id);
+          await manager.remove(ctx, id, removeOnFailureRevision).catch(() => undefined);
+        }
         if (!settledRedirect) {
           send(
             res,
@@ -446,11 +450,13 @@ export async function startAccountDashboard(
       if (body.label !== undefined && typeof body.label !== 'string') {
         throw new HttpError(400, 'Account label must be text.');
       }
-      json(res, 201, await manager.add(ctx, body.label ?? ''));
+      const account = await manager.add(ctx, body.label ?? '');
+      newAccountRevisions.set(account.id, account.revision);
+      json(res, 201, account);
       return;
     }
-    const renameProvider = accountProvider(url.pathname);
-    if (req.method === 'PATCH' && renameProvider) {
+    const renameId = accountId(url.pathname);
+    if (req.method === 'PATCH' && renameId) {
       requireMutation(req);
       const body = objectBody(
         await readJson(req, options.bodyTimeoutMs ?? DEFAULT_BODY_TIMEOUT_MS),
@@ -458,24 +464,25 @@ export async function startAccountDashboard(
       if (typeof body.label !== 'string') {
         throw new HttpError(400, 'Account label must be text.');
       }
-      json(res, 200, await manager.rename(ctx, renameProvider, body.label));
+      json(res, 200, await manager.rename(ctx, renameId, body.label));
       return;
     }
-    const activateProvider = accountProvider(url.pathname, '/activate');
-    if (req.method === 'POST' && activateProvider) {
+    const activateId = accountId(url.pathname, '/activate');
+    if (req.method === 'POST' && activateId) {
       requireMutation(req);
-      json(res, 200, await manager.activate(ctx, activateProvider));
+      json(res, 200, await manager.activate(ctx, activateId));
       return;
     }
-    const logoutProvider = accountProvider(url.pathname, '/logout');
-    if (req.method === 'POST' && logoutProvider) {
+    const logoutId = accountId(url.pathname, '/logout');
+    if (req.method === 'POST' && logoutId) {
       requireMutation(req);
-      json(res, 200, await manager.logout(ctx, logoutProvider));
+      json(res, 200, await manager.logout(ctx, logoutId));
       return;
     }
-    if (req.method === 'DELETE' && renameProvider) {
+    if (req.method === 'DELETE' && renameId) {
       requireMutation(req);
-      json(res, 200, await manager.remove(ctx, renameProvider));
+      newAccountRevisions.delete(renameId);
+      json(res, 200, await manager.remove(ctx, renameId));
       return;
     }
     if (req.method === 'POST' && url.pathname === '/api/quotas/refresh') {
@@ -489,12 +496,10 @@ export async function startAccountDashboard(
       }
       return;
     }
-    const ticketProvider = accountProvider(url.pathname, '/login-ticket');
-    if (req.method === 'POST' && ticketProvider) {
+    const ticketId = accountId(url.pathname, '/login-ticket');
+    if (req.method === 'POST' && ticketId) {
       requireMutation(req);
-      const account = manager
-        .snapshot(ctx)
-        .accounts.find((candidate) => candidate.provider === ticketProvider);
+      const account = manager.snapshot(ctx).accounts.find((candidate) => candidate.id === ticketId);
       if (!account) throw new HttpError(404, 'Account not found — it may have been removed.');
       if (account.environment) {
         throw new HttpError(
@@ -503,7 +508,7 @@ export async function startAccountDashboard(
         );
       }
       const ticket = randomBytes(24).toString('base64url');
-      loginTickets.set(ticket, { provider: ticketProvider, expiresAt: Date.now() + 60_000 });
+      loginTickets.set(ticket, { accountId: ticketId, expiresAt: Date.now() + 60_000 });
       json(res, 201, { path: `/oauth/${ticket}` });
       return;
     }
@@ -514,11 +519,11 @@ export async function startAccountDashboard(
       if (!loginTicket || loginTicket.expiresAt < Date.now()) {
         throw new HttpError(404, 'Login link expired — start again from the dashboard.');
       }
-      await startLogin(loginTicket.provider, res);
+      await startLogin(loginTicket.accountId, res);
       return;
     }
-    const codeProvider = accountProvider(url.pathname, '/login-code');
-    if (req.method === 'POST' && codeProvider) {
+    const codeId = accountId(url.pathname, '/login-code');
+    if (req.method === 'POST' && codeId) {
       requireMutation(req);
       const body = objectBody(
         await readJson(req, options.bodyTimeoutMs ?? DEFAULT_BODY_TIMEOUT_MS),
@@ -526,16 +531,16 @@ export async function startAccountDashboard(
       if (typeof body.code !== 'string' || !body.code.trim()) {
         throw new HttpError(400, 'Authorization code is required.');
       }
-      const job = loginJobs.get(codeProvider);
+      const job = loginJobs.get(codeId);
       if (job?.state !== 'pending') throw new HttpError(409, 'No login is waiting for a code.');
       job.resolveManualCode(body.code.trim());
       json(res, 202, { accepted: true });
       return;
     }
-    const cancelProvider = accountProvider(url.pathname, '/login-cancel');
-    if (req.method === 'POST' && cancelProvider) {
+    const cancelId = accountId(url.pathname, '/login-cancel');
+    if (req.method === 'POST' && cancelId) {
       requireMutation(req);
-      const job = loginJobs.get(cancelProvider);
+      const job = loginJobs.get(cancelId);
       if (job?.state !== 'pending') throw new HttpError(409, 'No login is running.');
       job.controller.abort();
       job.resolveManualCode('');

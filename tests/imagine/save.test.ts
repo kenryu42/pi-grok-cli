@@ -2,7 +2,7 @@ import { promises as fs } from 'node:fs';
 import { basename, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { saveImage, savePreviewImage } from '../../src/imagine/save.js';
-import { tempDir } from '../tools/toolTestHelpers.js';
+import { tempDir } from './helpers.js';
 
 const JPEG = '/9j/2Q==';
 

@@ -33,15 +33,12 @@ describe('npm package manifest', () => {
     expect(existsSync(new URL('../../vitest.config.ts', import.meta.url))).toBe(true);
   });
 
-  it('declares the Pi runtime version required by dashboard auth and web search', () => {
+  it('declares the Pi runtime version required by dashboard auth', () => {
     expect(packageJson.peerDependencies?.['@earendil-works/pi-ai']).toBe('>=0.80.9');
     expect(packageJson.peerDependencies?.['@earendil-works/pi-coding-agent']).toBe('>=0.80.9');
     expect(packageJson.peerDependencies?.['@earendil-works/pi-tui']).toBe('>=0.80.9');
-    expect(packageJson.peerDependencies?.['pi-web-access']).toBe('>=0.13.0');
-    expect(packageJson.dependencies?.jiti).toBeUndefined();
-    expect(packageJson.dependencies?.typebox).toBeUndefined();
-    expect(packageJson.dependencies?.ignore).toBe('7.0.5');
-    expect(packageJson.dependencies?.minimatch).toBe('10.2.5');
+    expect(packageJson.dependencies).toBeUndefined();
+    expect(packageJson.devDependencies?.['@types/proper-lockfile']).toBeUndefined();
   });
 });
 
@@ -67,29 +64,22 @@ describe('repository layout', () => {
       'src/index.ts',
       'src/models/catalog.ts',
       'src/payload/sanitize.ts',
+      'src/provider/accountMigration.ts',
+      'src/provider/accountRouting.ts',
+      'src/provider/accountVault.ts',
       'src/provider/accounts.ts',
       'src/provider/billing.ts',
       'src/provider/dashboard/server.ts',
+      'src/provider/modelMigration.ts',
       'src/provider/quotaCache.ts',
       'src/provider/register.ts',
+      'src/provider/requestOwnership.ts',
       'src/provider/rotation.ts',
+      'src/provider/sessionAccountSelection.ts',
       'src/provider/stream.ts',
-      'src/provider/toolScope.ts',
       'src/provider/usage.ts',
       'src/shared/errors.ts',
       'src/storage.ts',
-      'src/tools/files.ts',
-      'src/tools/glob.ts',
-      'src/tools/read.ts',
-      'src/tools/register.ts',
-      'src/tools/rendering.ts',
-      'src/tools/search.ts',
-      'src/tools/shell.ts',
-      'src/tools/webSearch.ts',
-      'src/tools/webSearchDelegate.ts',
-      'src/vision/cache.ts',
-      'src/vision/describe.ts',
-      'src/vision/register.ts',
     ]);
   });
 
@@ -97,5 +87,14 @@ describe('repository layout', () => {
     for (const file of ['errors.ts', 'models.ts', 'oauth.ts', 'sanitize.ts']) {
       expect(existsSync(new URL(`../../src/${file}`, import.meta.url))).toBe(false);
     }
+  });
+
+  it('uses the exact Pi loader alias for OpenAI Responses streaming', () => {
+    const source = readFileSync(new URL('../../src/provider/register.ts', import.meta.url), 'utf8');
+
+    expect(source).toContain(
+      "import { streamSimpleOpenAIResponses } from '@earendil-works/pi-ai/compat';",
+    );
+    expect(source).not.toContain('@earendil-works/pi-ai/api/openai-responses');
   });
 });

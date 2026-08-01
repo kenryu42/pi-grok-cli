@@ -1,6 +1,21 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { convertToPng } from '@earendil-works/pi-coding-agent';
-import { vi } from 'vitest';
+import { afterEach, vi } from 'vitest';
 import type { savePreviewImage } from '../../src/imagine/save.js';
+
+const tempDirs: string[] = [];
+
+afterEach(() => {
+  for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
+
+export function tempDir(prefix: string) {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
+}
 
 export function imagineDependencies() {
   return {

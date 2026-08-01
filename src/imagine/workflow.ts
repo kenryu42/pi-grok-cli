@@ -23,6 +23,8 @@ export type SavedImagineImage = Awaited<ReturnType<typeof saveImage>> & {
   previewError?: string;
 };
 
+export type ImagineTokenResolver = (ctx: ExtensionContext) => Promise<string | undefined>;
+
 export async function generateAndSaveImage(
   options: {
     ctx: ExtensionContext;
@@ -33,8 +35,9 @@ export async function generateAndSaveImage(
     outPath?: string;
   },
   dependencies: ImagineDependencies,
+  resolveToken: ImagineTokenResolver = resolveImagineToken,
 ): Promise<SavedImagineImage> {
-  const token = await resolveImagineToken(options.ctx);
+  const token = await resolveToken(options.ctx);
   if (!token) throw new Error(IMAGINE_AUTH_ERROR);
   const generated = await dependencies.generateImage({
     token,

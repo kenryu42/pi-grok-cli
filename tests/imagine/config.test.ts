@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_CONFIG, getConfigPath, loadConfig, saveConfig } from '../../src/config.js';
-import { useTempHome } from '../vision/helpers.js';
+import { useTempHome } from '../stateTestHelpers.js';
 
 const setupHome = useTempHome();
 

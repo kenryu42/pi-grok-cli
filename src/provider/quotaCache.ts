@@ -1,5 +1,6 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { getQuotaCachePath, writeFileAtomic } from '../storage.js';
+import { chmodSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { acquireFileLock, getQuotaCachePath, writeFileAtomic } from '../storage.js';
 import type { BillingUsage, MonthlyUsage, WeeklyUsage } from './billing.js';
 
 export interface CachedQuota extends BillingUsage {
@@ -80,49 +81,63 @@ export function loadQuotaCache(path = getQuotaCachePath()): QuotaCache {
   }
 }
 
-const cacheUpdates = new Map<string, Promise<void>>();
-
 async function updateQuotaCache(
   update: (cache: QuotaCache) => boolean,
   path = getQuotaCachePath(),
 ) {
-  const previous = cacheUpdates.get(path) ?? Promise.resolve();
-  const operation = () => {
-    const cache = loadQuotaCache(path);
-    if (!update(cache)) return;
-    writeFileAtomic(path, `${JSON.stringify(cache, null, 2)}\n`, 0o600);
-  };
-  const next = previous.then(operation, operation);
-  cacheUpdates.set(path, next);
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  chmodSync(dirname(path), 0o700);
+  const release = await acquireFileLock(path);
   try {
-    await next;
+    const cache = loadQuotaCache(path);
+    if (!update(cache)) return false;
+    writeFileAtomic(path, `${JSON.stringify(cache, null, 2)}\n`, 0o600);
+    chmodSync(path, 0o600);
+    return true;
   } finally {
-    if (cacheUpdates.get(path) === next) cacheUpdates.delete(path);
+    await release();
   }
 }
 
+function storeQuota(cache: QuotaCache, accountId: string, usage: BillingUsage, updatedAt: string) {
+  cache.accounts[accountId] = {
+    updatedAt,
+    monthly: { ...usage.monthly },
+    ...(usage.weekly ? { weekly: { ...usage.weekly } } : {}),
+  };
+}
+
 export function saveQuotaUsage(
-  provider: string,
+  accountId: string,
   usage: BillingUsage,
   updatedAt = new Date().toISOString(),
   path = getQuotaCachePath(),
 ) {
   return updateQuotaCache((cache) => {
-    cache.accounts[provider] = {
-      updatedAt,
-      monthly: { ...usage.monthly },
-      ...(usage.weekly ? { weekly: { ...usage.weekly } } : {}),
-    };
+    storeQuota(cache, accountId, usage, updatedAt);
+    return true;
+  }, path).then(() => undefined);
+}
+
+export function saveQuotaUsageWhen(
+  accountId: string,
+  usage: BillingUsage,
+  shouldSave: () => boolean,
+  path = getQuotaCachePath(),
+) {
+  return updateQuotaCache((cache) => {
+    if (!shouldSave()) return false;
+    storeQuota(cache, accountId, usage, new Date().toISOString());
     return true;
   }, path);
 }
 
-export function removeQuotaUsage(provider: string, path = getQuotaCachePath()) {
+export function removeQuotaUsage(accountId: string, path = getQuotaCachePath()) {
   return updateQuotaCache((cache) => {
-    if (!existsSync(path) || !cache.accounts[provider]) return false;
-    delete cache.accounts[provider];
+    if (!existsSync(path) || !cache.accounts[accountId]) return false;
+    delete cache.accounts[accountId];
     return true;
-  }, path);
+  }, path).then(() => undefined);
 }
 
 function formatAge(updatedAt: string, now: number) {
