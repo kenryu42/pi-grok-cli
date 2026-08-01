@@ -135,6 +135,22 @@ describe('account request routing', () => {
     });
   });
 
+  it('uses the stored OAuth expiry without applying the refresh skew again', async () => {
+    await mutateAccountVault((vault) => {
+      vault.accounts[0].credential = {
+        access: 'still-valid-token',
+        refresh: 'account-refresh',
+        expires: Date.now() + 60_000,
+      };
+      vault.accounts[0].revision = 1;
+      vault.activeAccountId = 'account-1';
+    });
+    const { resolveAccountRoute } = await import('../../src/provider/accountRouting.js');
+
+    await expect(resolveAccountRoute()).resolves.toMatchObject({ token: 'still-valid-token' });
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
   it('shares one refresh and stores it only for the captured account revision', async () => {
     await mutateAccountVault((vault) => {
       vault.accounts[0].credential = {

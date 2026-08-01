@@ -565,6 +565,35 @@ describe('account dashboard loopback server', () => {
     });
   });
 
+  it('keeps a new account authenticated by another process during its first login', async () => {
+    const session = await openDashboard({ refreshAfterLogin: false });
+    const workId = (await addDashboardAccount(session, 'Work')).account.id;
+    const authorization = deferred<ReturnType<typeof oauthCredential>>();
+    oauthLogin.mockReturnValueOnce(authorization.promise);
+    const ticket = await requestLoginTicket(session, workId);
+    const login = fetch(`${session.dashboard.origin}${ticket.path}`, {
+      headers: { Cookie: session.cookie },
+    });
+    await vi.waitFor(() => expect(oauthLogin).toHaveBeenCalledOnce());
+    await mutateAccountVault((vault) => {
+      const account = vault.accounts.find((candidate) => candidate.id === workId);
+      if (!account) throw new Error('Work account was not added.');
+      account.credential = oauthCredential('other-process');
+      account.revision += 1;
+    });
+    authorization.resolve(oauthCredential('stale-login'));
+
+    expect((await login).status).toBe(502);
+    await vi.waitFor(async () => {
+      expect(
+        (await getAccountVault()).accounts.find((account) => account.id === workId),
+      ).toMatchObject({
+        revision: 1,
+        credential: { access: 'other-process' },
+      });
+    });
+  });
+
   it('keeps a new account when its first browser login is cancelled', async () => {
     const session = await openDashboard({ refreshAfterLogin: false });
     const workId = (await addDashboardAccount(session, 'Work')).account.id;

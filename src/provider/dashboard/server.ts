@@ -240,7 +240,7 @@ export async function startAccountDashboard(
   let refreshController: AbortController | undefined;
   const loginTickets = new Map<string, { accountId: string; expiresAt: number }>();
   const loginJobs = new Map<string, LoginJob>();
-  const newAccountIds = new Set<string>();
+  const newAccountRevisions = new Map<string, number>();
 
   const server = createServer((req, res) => {
     void handle(req, res).catch((error: unknown) => {
@@ -331,7 +331,7 @@ export async function startAccountDashboard(
     if (loginJobs.get(id)?.state === 'pending') {
       throw new HttpError(409, 'A login is already in progress for this account.');
     }
-    const removeOnFailure = newAccountIds.has(id);
+    const removeOnFailureRevision = newAccountRevisions.get(id);
     const controller = new AbortController();
     let resolveManualCode = (_code: string) => {};
     const manualCode = new Promise<string>((resolve) => {
@@ -373,7 +373,7 @@ export async function startAccountDashboard(
     };
     void manager.login(ctx, id, interaction).then(
       async () => {
-        newAccountIds.delete(id);
+        newAccountRevisions.delete(id);
         job.state = 'success';
         job.progress = 'Login complete';
         job.resolveManualCode('');
@@ -389,9 +389,9 @@ export async function startAccountDashboard(
         job.state = controller.signal.aborted ? 'cancelled' : 'failed';
         job.error = controller.signal.aborted ? 'Login cancelled.' : publicError(error);
         job.resolveManualCode('');
-        if (removeOnFailure && !controller.signal.aborted) {
-          newAccountIds.delete(id);
-          await manager.remove(ctx, id).catch(() => undefined);
+        if (removeOnFailureRevision !== undefined && !controller.signal.aborted) {
+          newAccountRevisions.delete(id);
+          await manager.remove(ctx, id, removeOnFailureRevision).catch(() => undefined);
         }
         if (!settledRedirect) {
           send(
@@ -451,7 +451,7 @@ export async function startAccountDashboard(
         throw new HttpError(400, 'Account label must be text.');
       }
       const account = await manager.add(ctx, body.label ?? '');
-      newAccountIds.add(account.id);
+      newAccountRevisions.set(account.id, account.revision);
       json(res, 201, account);
       return;
     }
@@ -481,7 +481,7 @@ export async function startAccountDashboard(
     }
     if (req.method === 'DELETE' && renameId) {
       requireMutation(req);
-      newAccountIds.delete(renameId);
+      newAccountRevisions.delete(renameId);
       json(res, 200, await manager.remove(ctx, renameId));
       return;
     }

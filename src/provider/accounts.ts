@@ -332,17 +332,23 @@ function createAccountManager(
       await clearQuota(ctx, id);
       return result;
     },
-    async remove(ctx: ExtensionContext, id: string) {
+    async remove(ctx: ExtensionContext, id: string, expectedRevision?: number) {
       if (id === ACCOUNT_1_ID) throw new Error('The permanent Account 1 cannot be removed.');
       const selectedAccountId = sessionSelection.accountId(ctx.sessionManager.getSessionId());
       const result = await mutateAccountVault((vault) => {
-        if (!vault.accounts.some((account) => account.id === id)) {
-          throw new Error(`Unknown Grok CLI account: ${id}`);
+        const account = vault.accounts.find((candidate) => candidate.id === id);
+        if (!account) throw new Error(`Unknown Grok CLI account: ${id}`);
+        if (
+          expectedRevision !== undefined &&
+          (account.revision !== expectedRevision || account.credential !== undefined)
+        ) {
+          return undefined;
         }
         replaceVaultDefault(vault, id);
         vault.accounts = vault.accounts.filter((account) => account.id !== id);
         return logoutWarning(vault);
       });
+      if (!result) return;
       persistSessionFallback(ctx, id, selectedAccountId);
       await clearQuota(ctx, id);
       return result;

@@ -93,7 +93,7 @@ export async function resolveAccountRoute(accountId?: string): Promise<AccountRo
       if (selected) latest.activeAccountId = selected.id;
     });
   }
-  if (Date.now() < account.credential.expires - 120_000) {
+  if (Date.now() < account.credential.expires) {
     return route(account.id, account.revision, account.credential);
   }
   return refreshRoute(account.id, account.revision, account.credential, accountId === undefined);
