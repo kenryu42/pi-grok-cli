@@ -8,7 +8,7 @@ import type { savePreviewImage } from '../../src/imagine/save.js';
 const tempDirs: string[] = [];
 
 afterEach(() => {
-  for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true });
+  for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
 export function tempDir(prefix: string) {

@@ -29,22 +29,18 @@ export const getLegacyImagineConfigPath = () => join(homePath(), '.pi', 'grok-cl
 
 function abandonedLock(path: string) {
   try {
-    if (Date.now() - statSync(path).mtimeMs > LOCK_STALE_MS) return true;
     const owner = JSON.parse(readFileSync(path, 'utf8')) as unknown;
-    if (!owner || typeof owner !== 'object' || Array.isArray(owner)) {
-      return false;
+    if (owner && typeof owner === 'object' && !Array.isArray(owner)) {
+      const pid = (owner as Record<string, unknown>).pid;
+      if (typeof pid === 'number' && Number.isInteger(pid) && pid > 0) {
+        return !processIsRunning(pid);
+      }
     }
-    const pid = (owner as Record<string, unknown>).pid;
-    if (typeof pid !== 'number' || !Number.isInteger(pid) || pid <= 0) {
-      return false;
-    }
-    return !processIsRunning(pid);
+  } catch {}
+  try {
+    return Date.now() - statSync(path).mtimeMs > LOCK_STALE_MS;
   } catch {
-    try {
-      return Date.now() - statSync(path).mtimeMs > LOCK_STALE_MS;
-    } catch {
-      return false;
-    }
+    return false;
   }
 }
 
@@ -111,6 +107,9 @@ export async function acquireFileLock(path: string) {
   const startedAt = Date.now();
   mkdirSync(dirname(path), { recursive: true });
   while (true) {
+    if (Date.now() - startedAt >= LOCK_STALE_MS) {
+      throw new Error(`Timed out waiting for file lock: ${lockPath}`);
+    }
     if (recoveryInProgress(lockPath)) {
       await new Promise((resolve) => setTimeout(resolve, 25));
       continue;
@@ -132,9 +131,6 @@ export async function acquireFileLock(path: string) {
       if (abandonedLock(lockPath)) {
         recoverAbandonedLock(lockPath);
         continue;
-      }
-      if (Date.now() - startedAt >= 30_000) {
-        throw new Error(`Timed out waiting for file lock: ${lockPath}`);
       }
       await new Promise((resolve) => setTimeout(resolve, 25));
     }

@@ -114,7 +114,7 @@ function parseVault(value: unknown, path: string): AccountVault {
   const invalid = (reason: string): never => {
     throw new Error(`Invalid Grok CLI account vault at ${path}: ${reason}`);
   };
-  if (!isObject(value)) return invalid('unsupported version');
+  if (!isObject(value)) return invalid('root must be a JSON object');
   if (value.version !== 1) invalid('unsupported version');
   const raw = value;
   if (
@@ -229,11 +229,7 @@ async function withVaultLock<T>(action: (current: AccountVault) => T, write: boo
 }
 
 export function getAccountVault() {
-  let vault: AccountVault | undefined;
-  return withVaultLock((current) => {
-    vault = current;
-    return structuredClone(vault);
-  }, false);
+  return withVaultLock((current) => structuredClone(current), false);
 }
 
 export function getAccountVaultSync() {

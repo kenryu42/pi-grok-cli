@@ -5,9 +5,10 @@ import {
   createSessionAccountSelection,
   SESSION_ACCOUNT_ENTRY,
 } from '../../src/provider/sessionAccountSelection.js';
-import { useTempHome } from '../stateTestHelpers.js';
+import { useEnvironmentToken, useTempHome } from '../stateTestHelpers.js';
 
 const setupHome = useTempHome();
+const setEnvironmentToken = useEnvironmentToken();
 
 function context(sessionId: string, accountIds: string[] = []) {
   return {
@@ -28,6 +29,7 @@ function context(sessionId: string, accountIds: string[] = []) {
 
 beforeEach(async () => {
   setupHome();
+  setEnvironmentToken(undefined);
   await mutateAccountVault((vault) => {
     vault.accounts[0].credential = {
       access: 'one',
@@ -73,6 +75,15 @@ describe('Pi session account selection', () => {
 
     expect(selection.restore(context('session-a', ['account-1', 'work-id']))).toBe('work-id');
     expect(selection.accountId('session-a')).toBe('work-id');
+  });
+
+  it('restores an account when the callback is detached', () => {
+    const selection = createSessionAccountSelection({
+      appendEntry: vi.fn(),
+    } as unknown as ExtensionAPI);
+    const restore = selection.restore;
+
+    expect(restore(context('session-a', ['work-id']))).toBe('work-id');
   });
 
   it('returns another logged-in account when a stored selection is no longer valid', () => {

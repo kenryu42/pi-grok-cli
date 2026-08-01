@@ -21,7 +21,7 @@ let lastState = '';
 let wasOffline = false;
 let entranceDone = false;
 let timer;
-let pendingProviders = new Set();
+let pendingAccountIds = new Set();
 let lastProgress = '';
 let quotaRefreshInFlight = false;
 
@@ -672,7 +672,7 @@ const cardActions = (account, environmentMode) => {
 
 const accountCard = (account, index, isNewPending, refreshing, environmentMode) => {
   const card = element('article', `account-card${account.active ? ' active' : ''}`);
-  card.dataset.provider = account.id;
+  card.dataset.accountId = account.id;
   card.style.viewTransitionName = `card-${account.id}`;
   if (!entranceDone) {
     card.style.setProperty('--enter-delay', `${Math.min(index * 45, 220)}ms`);
@@ -766,13 +766,13 @@ const render = (state) => {
   const refocus =
     active instanceof HTMLElement && accountsRoot.contains(active) && active.dataset.action
       ? {
-          provider: active.closest('[data-provider]')?.dataset.provider,
+          accountId: active.closest('[data-account-id]')?.dataset.accountId,
           action: active.dataset.action,
         }
       : undefined;
   const codes = new Map(
-    [...accountsRoot.querySelectorAll('[data-provider] input[name="code"]')]
-      .map((input) => [input.closest('[data-provider]').dataset.provider, input.value])
+    [...accountsRoot.querySelectorAll('[data-account-id] input[name="code"]')]
+      .map((input) => [input.closest('[data-account-id]').dataset.accountId, input.value])
       .filter(([, value]) => value),
   );
   if (entranceDone) accountsRoot.classList.add('settled');
@@ -782,9 +782,9 @@ const render = (state) => {
       .map((account) => account.id),
   );
   // A login that left pending since the last render resolves audibly, not only visually.
-  for (const provider of pendingProviders) {
-    if (nextPending.has(provider)) continue;
-    const account = state.accounts.find((candidate) => candidate.id === provider);
+  for (const accountId of pendingAccountIds) {
+    if (nextPending.has(accountId)) continue;
+    const account = state.accounts.find((candidate) => candidate.id === accountId);
     if (account?.login.state === 'success') showToast(`Logged in ${account.label}.`);
     if (account?.login.state === 'failed') showToast(account.login.error || 'Login failed.', true);
     if (account?.login.quotaError) showToast(account.login.quotaError, true);
@@ -804,22 +804,22 @@ const render = (state) => {
         accountCard(
           account,
           index,
-          nextPending.has(account.id) && !pendingProviders.has(account.id),
+          nextPending.has(account.id) && !pendingAccountIds.has(account.id),
           state.refreshing || quotaRefreshInFlight,
           environmentMode,
         ),
       )
     : [element('p', 'grid-message', 'No accounts configured. Use Add account to connect one.')];
   accountsRoot.replaceChildren(...children);
-  pendingProviders = nextPending;
+  pendingAccountIds = nextPending;
   entranceDone = true;
-  for (const [provider, value] of codes) {
-    const input = accountsRoot.querySelector(`[data-provider="${provider}"] input[name="code"]`);
+  for (const [accountId, value] of codes) {
+    const input = accountsRoot.querySelector(`[data-account-id="${accountId}"] input[name="code"]`);
     if (input) input.value = value;
   }
-  if (refocus?.provider) {
+  if (refocus?.accountId) {
     accountsRoot
-      .querySelector(`[data-provider="${refocus.provider}"] [data-action="${refocus.action}"]`)
+      .querySelector(`[data-account-id="${refocus.accountId}"] [data-action="${refocus.action}"]`)
       ?.focus();
   }
 };

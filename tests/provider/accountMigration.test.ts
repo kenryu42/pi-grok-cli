@@ -6,6 +6,7 @@ import {
 } from '../../src/provider/accountMigration.js';
 import { ACCOUNT_VAULT_MARKER, getAccountVault } from '../../src/provider/accountVault.js';
 import {
+  acquireFileLock,
   getConfigBackupPath,
   getConfigPath,
   getLegacyConfigPath,
@@ -193,6 +194,41 @@ describe('released account migration', () => {
     ]);
 
     expect((await getAccountVault()).accounts[0].credential?.access).toBe('first');
+  });
+
+  it('holds the quota-cache lock while it rewrites migrated account IDs', async () => {
+    setupHome();
+    writeTestJson(getConfigPath(), releasedConfig);
+    writeTestJson(getQuotaCachePath(), {
+      version: 1,
+      accounts: {
+        'grok-cli': { updatedAt: '2026-07-01T00:00:00.000Z', monthly: {} },
+      },
+    });
+    const release = await acquireFileLock(getQuotaCachePath());
+    const settled = vi.fn();
+    const migration = migrateReleasedAccounts().finally(settled);
+
+    try {
+      await vi.waitFor(async () => {
+        expect((await getAccountVault()).accounts).toHaveLength(3);
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(settled).not.toHaveBeenCalled();
+    } finally {
+      await release();
+    }
+
+    await expect(migration).resolves.toEqual({ migrated: true });
+  });
+
+  it('rejects an unsupported released configuration version', async () => {
+    setupHome();
+    writeTestJson(getConfigPath(), { version: 4, imagine: { enabled: false } });
+
+    await expect(migrateReleasedAccounts()).rejects.toThrow('is not a supported version 1 or 2');
+    expect(JSON.parse(readFileSync(getConfigPath(), 'utf8')).version).toBe(4);
+    expect(existsSync(getConfigBackupPath())).toBe(false);
   });
 
   it('imports all accounts from the released legacy config path', async () => {

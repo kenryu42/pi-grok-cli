@@ -16,6 +16,8 @@ import {
   oauthCredential,
   saveTestAccounts,
   setAccount1Credential,
+  writePiCredentials,
+  writePiVaultMarker,
 } from '../stateTestHelpers.js';
 
 const { mockOauthLogin, mockProviderStream } = vi.hoisted(() => ({
@@ -266,23 +268,6 @@ function setupHome() {
   return dir;
 }
 
-function writeAuth(credentials: Record<string, unknown>) {
-  const path = join(process.env.HOME as string, '.pi', 'agent', 'auth.json');
-  mkdirSync(join(path, '..'), { recursive: true });
-  writeFileSync(path, JSON.stringify(credentials));
-}
-
-function writeMarker() {
-  writeAuth({
-    'grok-cli': {
-      type: 'oauth',
-      access: ACCOUNT_VAULT_MARKER,
-      refresh: ACCOUNT_VAULT_MARKER,
-      expires: Number.MAX_SAFE_INTEGER,
-    },
-  });
-}
-
 function billingResponse(monthlyLimit: unknown, used: unknown, billingPeriodEnd: unknown) {
   return Response.json({
     config: {
@@ -434,7 +419,7 @@ describe('Grok CLI status command', () => {
       vault.accounts[0].revision = 1;
       vault.activeAccountId = 'account-1';
     });
-    writeMarker();
+    writePiVaultMarker();
     const fetchMock = vi.fn<typeof fetch>(async () =>
       billingResponse(4000, 100, '2026-07-01T00:00:00+00:00'),
     );
@@ -470,7 +455,7 @@ describe('Grok CLI status command', () => {
       vault.accounts[0].revision = 1;
       vault.activeAccountId = 'account-1';
     });
-    writeMarker();
+    writePiVaultMarker();
     const monthly = deferred<Response>();
     globalThis.fetch = vi.fn<typeof fetch>(async (input) => {
       const url = typeof input === 'string' ? input : input.toString();
@@ -508,6 +493,7 @@ describe('Grok CLI status command', () => {
       [
         '  Usage:',
         '    no billing data available — run /login grok-cli or set GROK_CLI_OAUTH_TOKEN',
+        '    Reason     Grok CLI account migration is ready. Please run /login and select Grok CLI.',
       ].join('\n'),
     );
   });
@@ -698,7 +684,7 @@ describe('Grok CLI provider registration', () => {
       vault.nextSlot = 3;
       vault.activeAccountId = 'account-1';
     });
-    writeMarker();
+    writePiVaultMarker();
     const first = await setupExtension();
     const second = await setupExtension();
     await first.emit(
@@ -744,13 +730,17 @@ describe('Grok CLI provider registration', () => {
       ),
     ]);
 
-    expect(mockProviderStream.mock.calls.map((call) => call[2]?.apiKey)).toEqual(['one', 'two']);
+    expect(
+      Object.fromEntries(
+        mockProviderStream.mock.calls.map((call) => [call[2]?.sessionId, call[2]?.apiKey]),
+      ),
+    ).toEqual({ 'session-a': 'one', 'session-b': 'two' });
     expect((await getAccountVault()).activeAccountId).toBe('account-1');
   });
 
   it('observes a failed provider result without creating an unhandled rejection', async () => {
     await setAccount1Credential('one');
-    writeMarker();
+    writePiVaultMarker();
     mockProviderStream.mockImplementationOnce(() => ({
       async *[Symbol.asyncIterator]() {},
       result: () => Promise.reject(new Error('provider failed')),
@@ -812,7 +802,7 @@ describe('Grok CLI provider registration', () => {
       vault.nextSlot = 3;
       vault.activeAccountId = 'account-1';
     });
-    writeMarker();
+    writePiVaultMarker();
     globalThis.fetch = vi.fn<typeof fetch>(async () =>
       billingResponse(4000, 100, '2026-07-01T00:00:00+00:00'),
     );
@@ -844,7 +834,7 @@ describe('Grok CLI provider registration', () => {
 
   it('uses only the environment API-key method when Pi has no stored OAuth credential', async () => {
     process.env.GROK_CLI_OAUTH_TOKEN = 'environment-token';
-    writeAuth({});
+    writePiCredentials({});
 
     const provider = (await setupExtension()).providers.get('grok-cli');
 
@@ -855,7 +845,7 @@ describe('Grok CLI provider registration', () => {
 
   it('keeps only OAuth registration when an environment token and stored OAuth coexist', async () => {
     process.env.GROK_CLI_OAUTH_TOKEN = 'environment-token';
-    writeAuth({
+    writePiCredentials({
       'grok-cli': {
         type: 'oauth',
         access: ACCOUNT_VAULT_MARKER,
@@ -929,7 +919,7 @@ describe('Grok CLI provider registration', () => {
 
     const disconnectedResult = await provider?.oauth?.login({} as OAuthLoginCallbacks);
 
-    writeAuth({
+    writePiCredentials({
       'grok-cli': {
         type: 'oauth',
         access: ACCOUNT_VAULT_MARKER,
@@ -946,7 +936,7 @@ describe('Grok CLI provider registration', () => {
 
   it('installs the marker after copying the released Account 1 credential', async () => {
     saveTestAccounts('grok-cli');
-    writeAuth({ 'grok-cli': oauthCredential('released-account') });
+    writePiCredentials({ 'grok-cli': oauthCredential('released-account') });
     const extension = await setupExtension();
 
     expect(
@@ -970,7 +960,7 @@ describe('Grok CLI provider registration', () => {
 
   it('does not replace a newer Account 1 login while installing the marker', async () => {
     saveTestAccounts('grok-cli');
-    writeAuth({ 'grok-cli': oauthCredential('released-account') });
+    writePiCredentials({ 'grok-cli': oauthCredential('released-account') });
     const extension = await setupExtension();
     await extension.emit(
       'session_start',
@@ -1004,7 +994,7 @@ describe('Grok CLI provider registration', () => {
     await extension.providers.get('grok-cli')?.oauth?.login({} as OAuthLoginCallbacks);
 
     expect(mockOauthLogin).toHaveBeenCalledOnce();
-    expect(loadQuotaCache().accounts['grok-cli']).toBeUndefined();
+    expect(loadQuotaCache().accounts['account-1']).toBeUndefined();
   });
 
   it('registers provider metadata and OAuth helpers', async () => {
@@ -1159,7 +1149,7 @@ describe('Grok CLI feature registration', () => {
   it('imports the saved OAuth login before migrating a standalone Imagine setting', async () => {
     const piDir = join(process.env.HOME as string, '.pi');
     writeFileSync(join(piDir, 'grok-cli-imagine.json'), JSON.stringify({ enabled: false }));
-    writeAuth({ 'grok-cli': oauthCredential('released-account') });
+    writePiCredentials({ 'grok-cli': oauthCredential('released-account') });
     const extension = await setupExtension();
 
     await extension.emit(

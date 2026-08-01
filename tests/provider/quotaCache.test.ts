@@ -8,6 +8,7 @@ import {
   loadQuotaCache,
   removeQuotaUsage,
   saveQuotaUsage,
+  saveQuotaUsageWhen,
 } from '../../src/provider/quotaCache.js';
 import { getQuotaCachePath } from '../../src/storage.js';
 import { useTempHome } from '../stateTestHelpers.js';
@@ -85,6 +86,16 @@ describe('Grok CLI quota cache', () => {
     await removeQuotaUsage('grok-cli-2');
 
     expect(Object.keys(loadQuotaCache().accounts)).toEqual(['grok-cli']);
+  });
+
+  it('conditionally saves usage to a path override', async () => {
+    const home = setupHome();
+    const path = `${home}/quota-cache.json`;
+
+    await saveQuotaUsageWhen('account-1', usage(300), () => true, path);
+
+    expect(loadQuotaCache(path).accounts['account-1']?.monthly.used).toBe(300);
+    expect(existsSync(getQuotaCachePath())).toBe(false);
   });
 
   it('runs a queued update after the previous update fails', async () => {

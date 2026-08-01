@@ -37,8 +37,6 @@ describe('npm package manifest', () => {
     expect(packageJson.peerDependencies?.['@earendil-works/pi-ai']).toBe('>=0.80.9');
     expect(packageJson.peerDependencies?.['@earendil-works/pi-coding-agent']).toBe('>=0.80.9');
     expect(packageJson.peerDependencies?.['@earendil-works/pi-tui']).toBe('>=0.80.9');
-    expect(packageJson.dependencies?.jiti).toBeUndefined();
-    expect(packageJson.dependencies?.typebox).toBeUndefined();
     expect(packageJson.dependencies).toBeUndefined();
     expect(packageJson.devDependencies?.['@types/proper-lockfile']).toBeUndefined();
   });

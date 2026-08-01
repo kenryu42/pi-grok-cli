@@ -14,24 +14,25 @@ function storedAccountId(
 
 export function createSessionAccountSelection(pi: Pick<ExtensionAPI, 'appendEntry'>) {
   const selections = new Map<string, string>();
+  const accountId = (sessionId: string | undefined) => {
+    if (process.env.GROK_CLI_OAUTH_TOKEN) return ACCOUNT_1_ID;
+    const vault = getAccountVaultSync();
+    const selected = sessionId
+      ? vault.accounts.find(
+          (account) => account.id === selections.get(sessionId) && account.credential,
+        )
+      : undefined;
+    if (selected) return selected.id;
+    if (sessionId) selections.delete(sessionId);
+    return (
+      vault.accounts.find(
+        (account) => account.id === vault.activeAccountId && account.credential,
+      ) ?? vault.accounts.find((account) => account.credential)
+    )?.id;
+  };
 
   return {
-    accountId(sessionId: string | undefined) {
-      if (process.env.GROK_CLI_OAUTH_TOKEN) return ACCOUNT_1_ID;
-      const vault = getAccountVaultSync();
-      const selected = sessionId
-        ? vault.accounts.find(
-            (account) => account.id === selections.get(sessionId) && account.credential,
-          )
-        : undefined;
-      if (selected) return selected.id;
-      if (sessionId) selections.delete(sessionId);
-      return (
-        vault.accounts.find(
-          (account) => account.id === vault.activeAccountId && account.credential,
-        ) ?? vault.accounts.find((account) => account.credential)
-      )?.id;
-    },
+    accountId,
     restore(ctx: Pick<ExtensionContext, 'sessionManager'>) {
       const sessionId = ctx.sessionManager.getSessionId();
       const restored = ctx.sessionManager
@@ -42,7 +43,7 @@ export function createSessionAccountSelection(pi: Pick<ExtensionAPI, 'appendEntr
         );
       if (restored) selections.set(sessionId, restored);
       else selections.delete(sessionId);
-      return this.accountId(sessionId);
+      return accountId(sessionId);
     },
     select(ctx: Pick<ExtensionContext, 'sessionManager'>, accountId: string) {
       const sessionId = ctx.sessionManager.getSessionId();

@@ -138,28 +138,33 @@ function accountCredential(credential: Credential | undefined): AccountCredentia
   return structuredClone(oauth) as AccountCredential;
 }
 
-function migrateQuota(accountIds: Map<string, string>) {
-  if (!existsSync(getQuotaCachePath())) return;
-  let parsed: unknown;
+async function migrateQuota(accountIds: Map<string, string>) {
+  const release = await acquireFileLock(getQuotaCachePath());
   try {
-    parsed = JSON.parse(readFileSync(getQuotaCachePath(), 'utf8')) as unknown;
-  } catch {
-    return;
+    if (!existsSync(getQuotaCachePath())) return;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(readFileSync(getQuotaCachePath(), 'utf8')) as unknown;
+    } catch {
+      return;
+    }
+    if (!isObject(parsed) || parsed.version !== 1 || !isObject(parsed.accounts)) return;
+    const migratedIds = new Set(accountIds.values());
+    const accounts = Object.fromEntries(
+      Object.entries(parsed.accounts).flatMap(([provider, value]) => {
+        const accountId =
+          accountIds.get(provider) ?? (migratedIds.has(provider) ? provider : undefined);
+        return accountId ? [[accountId, value]] : [];
+      }),
+    );
+    writeFileAtomic(
+      getQuotaCachePath(),
+      `${JSON.stringify({ ...parsed, accounts }, null, 2)}\n`,
+      0o600,
+    );
+  } finally {
+    await release();
   }
-  if (!isObject(parsed) || parsed.version !== 1 || !isObject(parsed.accounts)) return;
-  const migratedIds = new Set(accountIds.values());
-  const accounts = Object.fromEntries(
-    Object.entries(parsed.accounts).flatMap(([provider, value]) => {
-      const accountId =
-        accountIds.get(provider) ?? (migratedIds.has(provider) ? provider : undefined);
-      return accountId ? [[accountId, value]] : [];
-    }),
-  );
-  writeFileAtomic(
-    getQuotaCachePath(),
-    `${JSON.stringify({ ...parsed, accounts }, null, 2)}\n`,
-    0o600,
-  );
 }
 
 function preserveReleasedConfig(contents: string) {
@@ -229,7 +234,7 @@ async function migrateReleasedAccountsUnlocked(
   if ('contents' in source && typeof source.contents === 'string') {
     preserveReleasedConfig(source.contents);
   }
-  migrateQuota(accountIds);
+  await migrateQuota(accountIds);
   if ('contents' in source) {
     writeFileAtomic(
       getConfigPath(),

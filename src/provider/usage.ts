@@ -31,9 +31,23 @@ export function registerUsageCommand(
           return;
         }
 
-        const route = await resolveRoute(ctx).catch(() => undefined);
+        let routeError: unknown;
+        const route = await resolveRoute(ctx).catch((error: unknown) => {
+          routeError = error;
+          return undefined;
+        });
         if (!route) {
-          ctx.ui.notify(formatQuota(undefined).join('\n'), 'info');
+          ctx.ui.notify(
+            [
+              ...formatQuota(undefined),
+              ...(routeError === undefined
+                ? []
+                : [
+                    `    Reason     ${routeError instanceof Error ? routeError.message : String(routeError)}`,
+                  ]),
+            ].join('\n'),
+            'info',
+          );
           return;
         }
 

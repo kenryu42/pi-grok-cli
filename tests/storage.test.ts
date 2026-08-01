@@ -25,6 +25,13 @@ function writeJson(path: string, value: unknown) {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
 }
 
+async function expectLockTimeout(lockPath: string) {
+  const pending = acquireFileLock(getQuotaCachePath());
+  const rejection = expect(pending).rejects.toThrow(`Timed out waiting for file lock: ${lockPath}`);
+  await vi.advanceTimersByTimeAsync(30_000);
+  await rejection;
+}
+
 describe('Grok CLI storage', () => {
   it('groups extension-owned files under one directory without creating it on read', () => {
     const home = setupHome();
@@ -93,27 +100,33 @@ describe('Grok CLI storage', () => {
     }
   });
 
-  it('recovers a stale lock after its process ID is reused', async () => {
+  it('recovers a stale lock owned by a stopped process', async () => {
     setupHome();
     mkdirSync(getGrokCliDirectory(), { recursive: true });
     const lockPath = `${getQuotaCachePath()}.lock`;
-    writeJson(lockPath, { pid: process.pid, token: 'stale-owner' });
+    writeJson(lockPath, { pid: 2_147_483_647, token: 'stale-owner' });
+    utimesSync(lockPath, new Date(0), new Date(0));
+
+    const release = await acquireFileLock(getQuotaCachePath());
+    await release();
+
+    expect(existsSync(lockPath)).toBe(false);
+  });
+
+  it('does not reclaim an old lock owned by a running process', async () => {
+    setupHome();
+    mkdirSync(getGrokCliDirectory(), { recursive: true });
+    const lockPath = `${getQuotaCachePath()}.lock`;
+    writeJson(lockPath, { pid: process.pid, token: 'live-owner' });
     utimesSync(lockPath, new Date(0), new Date(0));
     vi.useFakeTimers();
 
     try {
-      const outcome = acquireFileLock(getQuotaCachePath()).then(
-        (release) => ({ release }),
-        (error: unknown) => ({ error }),
-      );
-      await vi.advanceTimersByTimeAsync(30_025);
-      const result = await outcome;
-      expect(result).not.toHaveProperty('error');
-      if ('error' in result) throw result.error;
-      await result.release();
-      expect(existsSync(lockPath)).toBe(false);
+      await expectLockTimeout(lockPath);
+      expect(existsSync(lockPath)).toBe(true);
     } finally {
       vi.useRealTimers();
+      rmSync(lockPath, { force: true });
     }
   });
 
@@ -127,24 +140,27 @@ describe('Grok CLI storage', () => {
     vi.useFakeTimers();
 
     try {
-      const pending = acquireFileLock(getQuotaCachePath());
-      const result = await Promise.race([
-        pending.then((release) => ({ acquired: true as const, release })),
-        new Promise<{ acquired: false }>((resolve) => {
-          queueMicrotask(() => resolve({ acquired: false }));
-        }),
-      ]);
-      if (!result.acquired) {
-        rmSync(recoveryPath, { force: true });
-        await vi.advanceTimersByTimeAsync(25);
-        await (await pending)();
-      } else {
-        await result.release();
-      }
+      const release = await acquireFileLock(getQuotaCachePath());
+      await release();
       expect(existsSync(recoveryPath)).toBe(false);
-      expect(result.acquired).toBe(true);
     } finally {
       vi.useRealTimers();
+    }
+  });
+
+  it('times out while recovery remains in progress', async () => {
+    setupHome();
+    mkdirSync(getGrokCliDirectory(), { recursive: true });
+    const lockPath = `${getQuotaCachePath()}.lock`;
+    const recoveryPath = `${lockPath}.recovery.${process.pid}.active`;
+    writeFileSync(recoveryPath, '');
+    vi.useFakeTimers();
+
+    try {
+      await expectLockTimeout(lockPath);
+    } finally {
+      vi.useRealTimers();
+      rmSync(recoveryPath, { force: true });
     }
   });
 

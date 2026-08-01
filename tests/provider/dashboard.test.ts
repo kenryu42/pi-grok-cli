@@ -15,7 +15,7 @@ import {
   createAccountDashboard,
   startAccountDashboard,
 } from '../../src/provider/dashboard/server.js';
-import { oauthCredential, useTempHome } from '../stateTestHelpers.js';
+import { deferred, oauthCredential, useTempHome } from '../stateTestHelpers.js';
 
 const { oauthLogin } = vi.hoisted(() => ({ oauthLogin: vi.fn() }));
 
@@ -561,6 +561,43 @@ describe('account dashboard loopback server', () => {
     await vi.waitFor(async () => {
       expect((await getAccountVault()).accounts.some((account) => account.id === workId)).toBe(
         false,
+      );
+    });
+  });
+
+  it('keeps a new account when its first browser login is cancelled', async () => {
+    const session = await openDashboard({ refreshAfterLogin: false });
+    const workId = (await addDashboardAccount(session, 'Work')).account.id;
+    const started = deferred<void>();
+    oauthLogin.mockImplementationOnce(
+      (callbacks) =>
+        new Promise((_resolve, reject) => {
+          callbacks.signal?.addEventListener('abort', () => reject(new Error('Login cancelled')), {
+            once: true,
+          });
+          started.resolve();
+        }),
+    );
+    const ticket = await requestLoginTicket(session, workId);
+    const login = fetch(`${session.dashboard.origin}${ticket.path}`, {
+      headers: { Cookie: session.cookie },
+    });
+    await started.promise;
+
+    const cancelled = await fetch(
+      `${session.dashboard.origin}/api/accounts/${workId}/login-cancel`,
+      {
+        method: 'POST',
+        headers: session.headers,
+        body: '{}',
+      },
+    );
+
+    expect(cancelled.status).toBe(202);
+    expect((await login).status).toBe(502);
+    await vi.waitFor(async () => {
+      expect((await getAccountVault()).accounts.some((account) => account.id === workId)).toBe(
+        true,
       );
     });
   });

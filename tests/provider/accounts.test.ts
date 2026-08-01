@@ -1,32 +1,28 @@
 import { EventEmitter } from 'node:events';
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
 import type { AuthInteraction } from '@earendil-works/pi-ai';
 import type {
   ExtensionAPI,
   ExtensionCommandContext,
   ExtensionContext,
 } from '@earendil-works/pi-coding-agent';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   GROK_CLI_PROVIDER,
   isGrokCliProvider,
   planTier,
   registerAccountManagement,
-  resolveGrokProvider,
   resolveGrokToken,
 } from '../../src/provider/accounts.js';
-import {
-  ACCOUNT_VAULT_MARKER,
-  getAccountVault,
-  mutateAccountVault,
-} from '../../src/provider/accountVault.js';
+import { getAccountVault, mutateAccountVault } from '../../src/provider/accountVault.js';
 import { loadQuotaCache } from '../../src/provider/quotaCache.js';
 import {
   deferred,
   oauthCredential,
   setAccount1Credential,
+  useEnvironmentToken,
   useTempHome,
+  writePiCredential,
+  writePiVaultMarker,
 } from '../stateTestHelpers.js';
 
 const { fetchBillingUsage, login, removeQuotaUsage, spawnProcess } = vi.hoisted(() => ({
@@ -50,8 +46,8 @@ vi.mock('../../src/provider/quotaCache.js', async (importOriginal) => ({
   removeQuotaUsage,
 }));
 
-const originalToken = process.env.GROK_CLI_OAUTH_TOKEN;
 const setupHome = useTempHome();
+const setEnvironmentToken = useEnvironmentToken();
 
 const ctx = {
   sessionManager: {
@@ -100,31 +96,9 @@ async function selectedLoggedInAccount() {
   return { account, accounts, appendEntry };
 }
 
-function writePiCredential(credential: { access: string; refresh: string; expires: number }) {
-  const authPath = join(process.env.HOME as string, '.pi', 'agent', 'auth.json');
-  mkdirSync(join(authPath, '..'), { recursive: true });
-  writeFileSync(
-    authPath,
-    JSON.stringify({
-      'grok-cli': {
-        type: 'oauth',
-        ...credential,
-      },
-    }),
-  );
-}
-
-function connectPi() {
-  writePiCredential({
-    access: ACCOUNT_VAULT_MARKER,
-    refresh: ACCOUNT_VAULT_MARKER,
-    expires: Number.MAX_SAFE_INTEGER,
-  });
-}
-
 beforeEach(() => {
   setupHome();
-  delete process.env.GROK_CLI_OAUTH_TOKEN;
+  setEnvironmentToken(undefined);
   login.mockReset();
   removeQuotaUsage.mockReset();
   removeQuotaUsage.mockResolvedValue(undefined);
@@ -144,17 +118,11 @@ beforeEach(() => {
   });
 });
 
-afterEach(() => {
-  if (originalToken === undefined) delete process.env.GROK_CLI_OAUTH_TOKEN;
-  else process.env.GROK_CLI_OAUTH_TOKEN = originalToken;
-});
-
 describe('Grok provider identity', () => {
   it('accepts only the single Grok CLI provider', () => {
     expect(GROK_CLI_PROVIDER).toBe('grok-cli');
     expect(isGrokCliProvider('grok-cli')).toBe(true);
     expect(isGrokCliProvider('grok-cli-2')).toBe(false);
-    expect(resolveGrokProvider()).toBe('grok-cli');
   });
 
   it('classifies plan tiers from monthly limits', () => {
@@ -360,7 +328,7 @@ describe('vault account management', () => {
     });
     expect(manager().snapshot(ctx).connected).toBe(false);
 
-    connectPi();
+    writePiVaultMarker();
     expect(manager().snapshot(ctx).connected).toBe(true);
   });
 
@@ -421,7 +389,7 @@ describe('vault account management', () => {
   });
 
   it('does not save quota after the captured account logs out', async () => {
-    connectPi();
+    writePiVaultMarker();
     await mutateAccountVault((vault) => {
       vault.accounts[0].credential = {
         access: 'one',
@@ -456,7 +424,7 @@ describe('vault account management', () => {
   });
 
   it('refreshes at most three account quotas at one time', async () => {
-    connectPi();
+    writePiVaultMarker();
     await mutateAccountVault((vault) => {
       vault.accounts = Array.from({ length: 7 }, (_value, index) => ({
         id: index === 0 ? 'account-1' : `account-${index + 1}`,

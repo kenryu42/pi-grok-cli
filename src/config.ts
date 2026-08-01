@@ -60,13 +60,14 @@ function normalizeImagineConfig(raw: unknown, warnings: string[]): ImagineConfig
   return { ...DEFAULT_IMAGINE_CONFIG };
 }
 
-function parseConfig(path: string): LoadedConfig & { supported: boolean } {
+function parseConfig(path: string): LoadedConfig & { supported: boolean; imagineDefined: boolean } {
   try {
     const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
     if (!isObject(parsed)) {
       return {
         config: structuredClone(DEFAULT_CONFIG),
         supported: false,
+        imagineDefined: false,
         warning: `Config ${path} must be a JSON object. Using legacy settings or defaults.`,
       };
     }
@@ -74,6 +75,7 @@ function parseConfig(path: string): LoadedConfig & { supported: boolean } {
       return {
         config: structuredClone(DEFAULT_CONFIG),
         supported: false,
+        imagineDefined: false,
         warning: `Unsupported config version ${String(parsed.version)} in ${path}. Using legacy settings or defaults.`,
       };
     }
@@ -85,12 +87,14 @@ function parseConfig(path: string): LoadedConfig & { supported: boolean } {
     return {
       config,
       supported: true,
+      imagineDefined: Object.hasOwn(parsed, 'imagine'),
       ...(warnings.length ? { warning: `Invalid ${path}: ${warnings.join(' ')}` } : {}),
     };
   } catch (error) {
     return {
       config: structuredClone(DEFAULT_CONFIG),
       supported: false,
+      imagineDefined: false,
       warning: `Could not read ${path}: ${errorMessage(error)}. Using legacy settings or defaults.`,
     };
   }
@@ -182,7 +186,7 @@ export function migrateLegacyConfig(): { warning?: string } {
       const warning = combineWarnings([storageWarning, loaded.warning, legacy?.warning]);
       return warning ? { warning } : {};
     }
-    if (legacy?.recognized) {
+    if (legacy?.recognized && loaded.imagineDefined) {
       try {
         unlinkSync(legacyPath);
       } catch (error) {

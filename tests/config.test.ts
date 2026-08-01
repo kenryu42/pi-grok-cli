@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
@@ -112,6 +112,15 @@ describe('Grok CLI configuration', () => {
     expect(existsSync(paths(home).imagine)).toBe(false);
   });
 
+  it('preserves a legacy Imagine setting when the consolidated config omits Imagine', () => {
+    const home = setupHome();
+    writeConfig(home, { version: 2 });
+    writeJson(paths(home).imagine, { enabled: false });
+
+    expect(migrateLegacyConfig()).toEqual({});
+    expect(existsSync(paths(home).imagine)).toBe(true);
+  });
+
   it('preserves a malformed legacy file', () => {
     const home = setupHome();
     mkdirSync(paths(home).pi, { recursive: true });
@@ -126,9 +135,8 @@ describe('Grok CLI configuration', () => {
     const home = setupHome();
     mkdirSync(paths(home).pi, { recursive: true });
     writeJson(paths(home).imagine, { enabled: false });
-    chmodSync(paths(home).pi, 0o500);
+    writeFileSync(paths(home).data, 'not a directory');
     const result = migrateLegacyConfig();
-    chmodSync(paths(home).pi, 0o700);
 
     expect(result.warning).toContain('Could not migrate');
     expect(existsSync(paths(home).imagine)).toBe(true);

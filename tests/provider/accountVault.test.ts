@@ -85,6 +85,18 @@ describe('Grok CLI account vault', () => {
     }
   });
 
+  it('distinguishes an invalid root from an unsupported vault version', async () => {
+    const home = setupHome();
+    const path = getAccountVaultPath();
+    mkdirSync(join(home, '.pi', 'grok-cli'), { recursive: true });
+
+    writeFileSync(path, '[]', { mode: 0o600 });
+    await expect(getAccountVault()).rejects.toThrow('root must be a JSON object');
+
+    writeFileSync(path, '{"version":2}', { mode: 0o600 });
+    await expect(getAccountVault()).rejects.toThrow('unsupported version');
+  });
+
   it('repairs permissive vault permissions after a successful mutation', async () => {
     const home = setupHome();
     await mutateAccountVault(() => undefined);

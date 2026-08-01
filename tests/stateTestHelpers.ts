@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach } from 'vitest';
-import { mutateAccountVault } from '../src/provider/accountVault.js';
+import { ACCOUNT_VAULT_MARKER, mutateAccountVault } from '../src/provider/accountVault.js';
 import { getConfigPath, writeFileAtomic } from '../src/storage.js';
 
 export const TEST_ACCOUNTS = [
@@ -18,9 +18,11 @@ export const oauthCredential = (access: string) => ({
 });
 
 export function deferred<T>() {
-  const resolvers: ((value: T) => void)[] = [];
-  const promise = new Promise<T>((resolve) => resolvers.push(resolve));
-  return { promise, resolve: (value: T) => resolvers[0]?.(value) };
+  let resolvePromise!: (value: T) => void;
+  const promise = new Promise<T>((resolve) => {
+    resolvePromise = resolve;
+  });
+  return { promise, resolve: (value: T) => resolvePromise(value) };
 }
 
 export function saveTestAccounts(selectedProvider = 'grok-cli-2') {
@@ -48,6 +50,7 @@ export function useTempHome(): () => string {
   });
   return () => {
     const dir = mkdtempSync(join(tmpdir(), 'grok-cli-test-'));
+    dirs.push(dir);
     process.env.HOME = dir;
     return dir;
   };
@@ -77,4 +80,24 @@ export function setAccount1Credential(access: string) {
 export function writeTestJson(path: string, value: unknown) {
   mkdirSync(join(path, '..'), { recursive: true });
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+export function writePiCredentials(credentials: Record<string, unknown>) {
+  writeTestJson(join(process.env.HOME as string, '.pi', 'agent', 'auth.json'), credentials);
+}
+
+export function writePiCredential(credential: {
+  access: string;
+  refresh: string;
+  expires: number;
+}) {
+  writePiCredentials({ 'grok-cli': { type: 'oauth', ...credential } });
+}
+
+export function writePiVaultMarker() {
+  writePiCredential({
+    access: ACCOUNT_VAULT_MARKER,
+    refresh: ACCOUNT_VAULT_MARKER,
+    expires: Number.MAX_SAFE_INTEGER,
+  });
 }

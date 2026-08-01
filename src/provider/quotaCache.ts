@@ -123,12 +123,13 @@ export function saveQuotaUsageWhen(
   accountId: string,
   usage: BillingUsage,
   shouldSave: () => boolean,
+  path = getQuotaCachePath(),
 ) {
   return updateQuotaCache((cache) => {
     if (!shouldSave()) return false;
     storeQuota(cache, accountId, usage, new Date().toISOString());
     return true;
-  });
+  }, path);
 }
 
 export function removeQuotaUsage(accountId: string, path = getQuotaCachePath()) {

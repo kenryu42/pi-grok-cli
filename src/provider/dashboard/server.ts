@@ -389,7 +389,7 @@ export async function startAccountDashboard(
         job.state = controller.signal.aborted ? 'cancelled' : 'failed';
         job.error = controller.signal.aborted ? 'Login cancelled.' : publicError(error);
         job.resolveManualCode('');
-        if (removeOnFailure) {
+        if (removeOnFailure && !controller.signal.aborted) {
           newAccountIds.delete(id);
           await manager.remove(ctx, id).catch(() => undefined);
         }

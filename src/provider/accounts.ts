@@ -34,6 +34,7 @@ import {
 
 export const GROK_CLI_PROVIDER = 'grok-cli';
 export const DEFAULT_GROK_MODEL = 'grok-build';
+const noOp = () => {};
 
 export type PlanTier = 'free' | 'supergrok-lite' | 'supergrok' | 'supergrok-heavy';
 
@@ -231,10 +232,6 @@ function logoutWarning(vault: ReturnType<typeof getAccountVaultSync>) {
   };
 }
 
-export function resolveGrokProvider(_ctx?: Pick<ExtensionContext, 'model'>) {
-  return GROK_CLI_PROVIDER;
-}
-
 export async function resolveGrokToken(
   _ctx?: Pick<ExtensionContext, 'model' | 'modelRegistry'>,
 ): Promise<string | undefined> {
@@ -362,7 +359,7 @@ function createAccountManager(
     ) {
       const environment = Boolean(process.env.GROK_CLI_OAUTH_TOKEN);
       const accounts = environment
-        ? [getAccountVaultSync().accounts[0]].filter(Boolean)
+        ? getAccountVaultSync().accounts.filter((account) => account.id === ACCOUNT_1_ID)
         : getAccountVaultSync().accounts.filter((account) => account.credential);
       let completed = 0;
       let updated = 0;
@@ -449,7 +446,7 @@ function createAccountManager(
         }),
       };
     },
-    handleModelSelect() {},
+    handleModelSelect: noOp,
   };
 }
 
