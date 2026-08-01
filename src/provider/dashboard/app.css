@@ -418,6 +418,7 @@ body:has(.link-pill.error) main {
   position: absolute;
   inset: -1px;
   border-radius: inherit;
+  corner-shape: inherit;
   padding: 1px;
   background: radial-gradient(
     200px circle at var(--mx, 50%) var(--my, 50%),
