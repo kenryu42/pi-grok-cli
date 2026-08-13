@@ -101,6 +101,7 @@ Models are bundled rather than discovered live. Registered context limits may di
 | `grok-build` | 500K | yes | text + image |
 | `grok-4.3` | 1M | yes | text + image |
 | `grok-4.5` | 500K | yes | text + image |
+| `grok-4.6` | 500K | yes | text + image |
 | `grok-4.20-0309-reasoning` | 2M | yes | text + image |
 | `grok-4.20-0309-non-reasoning` | 2M | no | text + image |
 | `grok-4.20-multi-agent-0309` | 2M | yes | text + image |

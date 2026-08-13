@@ -8,6 +8,7 @@ const COST_BUILD = { input: 1, output: 2, cacheRead: 0.2, cacheWrite: 0.2 };
 const COST_COMPOSER_FAST = { input: 3, output: 15, cacheRead: 0.5, cacheWrite: 0 };
 const COST_43 = { input: 1.25, output: 2.5, cacheRead: 0.2, cacheWrite: 0 };
 const COST_45 = { input: 2, output: 6, cacheRead: 0.5, cacheWrite: 0 };
+const COST_46 = { input: 2, output: 6, cacheRead: 0.5, cacheWrite: 0 };
 const COST_420 = { input: 1.25, output: 2.5, cacheRead: 0.2, cacheWrite: 0 };
 
 // ─── Model type ───────────────────────────────────────────────────────────────
@@ -80,6 +81,15 @@ const FALLBACK_MODELS: GrokCliModelConfig[] = [
     maxTokens: 30_000,
   },
   {
+    id: 'grok-4.6',
+    name: 'Grok 4.6',
+    reasoning: true,
+    input: ['text', 'image'],
+    cost: COST_46,
+    contextWindow: 500_000,
+    maxTokens: 30_000,
+  },
+  {
     id: 'grok-4.20-0309-reasoning',
     name: 'Grok 4.20 Reasoning',
     reasoning: true,
@@ -116,7 +126,13 @@ const FALLBACK_MODELS: GrokCliModelConfig[] = [
   },
 ];
 
-const EFFORT_CAPABLE_PREFIXES = ['grok-3-mini', 'grok-4.20-multi-agent', 'grok-4.3', 'grok-4.5'];
+const EFFORT_CAPABLE_PREFIXES = [
+  'grok-3-mini',
+  'grok-4.20-multi-agent',
+  'grok-4.3',
+  'grok-4.5',
+  'grok-4.6',
+];
 
 const normalizedModelName = (modelId: string) =>
   (modelId.split('/').at(-1) ?? modelId).toLowerCase();
