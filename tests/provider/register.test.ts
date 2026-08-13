@@ -278,7 +278,7 @@ function billingResponse(monthlyLimit: unknown, used: unknown, billingPeriodEnd:
   });
 }
 
-function creditsResponse(creditUsagePercent: unknown, billingPeriodEnd: string) {
+function creditsResponse(onDemandCap: unknown, onDemandUsed: unknown, billingPeriodEnd: string) {
   return Response.json({
     config: {
       currentPeriod: {
@@ -286,16 +286,26 @@ function creditsResponse(creditUsagePercent: unknown, billingPeriodEnd: string) 
         start: '2026-07-07T00:19:56+00:00',
         end: billingPeriodEnd,
       },
-      creditUsagePercent,
+      onDemandCap: { val: onDemandCap },
+      onDemandUsed: { val: onDemandUsed },
       billingPeriodStart: '2026-07-07T00:19:56+00:00',
       billingPeriodEnd,
     },
   });
 }
 
-const billingFetchMock = (monthly: Response, credits: Response) =>
+function settingsResponse(tier: unknown) {
+  return Response.json({ subscription_tier_display: tier });
+}
+
+const billingFetchMock = (
+  monthly: Response,
+  credits: Response,
+  settings: Response = settingsResponse('X Premium'),
+) =>
   vi.fn<typeof fetch>(async (input) => {
     const url = typeof input === 'string' ? input : input.toString();
+    if (url.endsWith('/settings')) return settings;
     return url.includes('format=credits') ? credits : monthly;
   });
 
@@ -306,22 +316,23 @@ async function runStatus(extension: Awaited<ReturnType<typeof setupExtension>>) 
 }
 
 describe('Grok CLI status command', () => {
-  it('fetches monthly and weekly billing usage with the env token and no user id header', async () => {
+  it('fetches billing usage, weekly credits, and subscription tier with the env token and no user id header', async () => {
     process.env.GROK_CLI_OAUTH_TOKEN = 'env-token';
     setupHome();
     const fetchMock = billingFetchMock(
       billingResponse(4000, 1421, '2026-07-01T00:00:00+00:00'),
-      creditsResponse(1.0, '2026-07-14T00:19:56+00:00'),
+      creditsResponse(100, 1, '2026-07-14T00:19:56+00:00'),
     );
     globalThis.fetch = fetchMock;
     const extension = await setupExtension();
     const notify = await runStatus(extension);
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(fetchMock.mock.calls[0]?.[0]).toBe('https://cli-chat-proxy.grok.com/v1/billing');
     expect(fetchMock.mock.calls[1]?.[0]).toBe(
       'https://cli-chat-proxy.grok.com/v1/billing?format=credits',
     );
+    expect(fetchMock.mock.calls[2]?.[0]).toBe('https://cli-chat-proxy.grok.com/v1/settings');
     expect(fetchMock.mock.calls[0]?.[1]?.headers).toMatchObject({
       authorization: 'Bearer env-token',
       'x-xai-token-auth': 'xai-grok-cli',
@@ -330,15 +341,9 @@ describe('Grok CLI status command', () => {
     expect(fetchMock.mock.calls[0]?.[1]?.headers).not.toHaveProperty('x-userid');
     expect(notify.mock.calls.at(-1)?.[0]).toBe(
       [
-        '  Usage:',
-        '    Monthly',
-        '      Credits    1,421 / 4,000 used  36%',
-        '      Remaining  2,579 credits',
-        '      Reset      Jun 30, 20:00 EDT America/New_York',
-        '',
-        '    Weekly',
-        '      Limit      1% used',
-        '      Reset      Jul 13, 20:19 EDT America/New_York',
+        'Weekly Limit (X Premium)',
+        '   Used       1%',
+        '   Reset      Jul 13, 20:19 EDT America/New_York',
       ].join('\n'),
     );
   });
@@ -358,50 +363,38 @@ describe('Grok CLI status command', () => {
       'https://cli-chat-proxy.grok.com/v1/billing?format=credits',
     );
     expect(notify.mock.calls.at(-1)?.[0]).toBe(
-      [
-        '  Usage:',
-        '    Monthly',
-        '      Credits    172 / 4,000 used  4%',
-        '      Remaining  3,828 credits',
-        '      Reset      Dec 31, 19:00 EST America/New_York',
-      ].join('\n'),
+      ['Weekly Limit (X Premium)', '    weekly usage unavailable'].join('\n'),
     );
   });
 
-  it('omits the weekly block when the reset timestamp is malformed', async () => {
+  it('shows weekly usage unavailable when the reset timestamp is malformed', async () => {
     process.env.GROK_CLI_OAUTH_TOKEN = 'env-token';
     setupHome();
     globalThis.fetch = billingFetchMock(
       billingResponse(4000, 172, '2026-01-01T00:00:00+00:00'),
-      creditsResponse(1.0, 'not-a-date'),
+      creditsResponse(100, 1, 'not-a-date'),
     );
     const notify = await runStatus(await setupExtension());
     const message = notify.mock.calls.at(-1)?.[0] as string;
 
-    expect(message).toContain('172 / 4,000 used  4%');
-    expect(message).not.toContain('Weekly');
+    expect(message).toContain('Weekly Limit (X Premium)');
+    expect(message).toContain('weekly usage unavailable');
   });
 
-  it('shows 0% weekly usage when creditUsagePercent is omitted at fresh-period start', async () => {
+  it('shows 0% weekly usage when the on-demand cap is omitted at fresh-period start', async () => {
     process.env.GROK_CLI_OAUTH_TOKEN = 'env-token';
     setupHome();
     globalThis.fetch = billingFetchMock(
       billingResponse(4000, 172, '2026-01-01T00:00:00+00:00'),
-      creditsResponse(undefined, '2026-07-14T00:19:56+00:00'),
+      creditsResponse(undefined, undefined, '2026-07-14T00:19:56+00:00'),
     );
     const notify = await runStatus(await setupExtension());
 
     expect(notify.mock.calls.at(-1)?.[0]).toBe(
       [
-        '  Usage:',
-        '    Monthly',
-        '      Credits    172 / 4,000 used  4%',
-        '      Remaining  3,828 credits',
-        '      Reset      Dec 31, 19:00 EST America/New_York',
-        '',
-        '    Weekly',
-        '      Limit      0% used',
-        '      Reset      Jul 13, 20:19 EDT America/New_York',
+        'Weekly Limit (X Premium)',
+        '   Used       0%',
+        '   Reset      Jul 13, 20:19 EDT America/New_York',
       ].join('\n'),
     );
   });
@@ -441,7 +434,7 @@ describe('Grok CLI status command', () => {
     expect(fetchMock.mock.calls[0]?.[1]?.headers).toMatchObject({
       authorization: 'Bearer provider-token',
     });
-    expect(notify.mock.calls.at(-1)?.[0]).toContain('100 / 4,000 used  3%');
+    expect(notify.mock.calls.at(-1)?.[0]).toContain('Weekly Limit');
     expect(loadQuotaCache().accounts['account-1']?.monthly.used).toBe(100);
   });
 
@@ -460,7 +453,7 @@ describe('Grok CLI status command', () => {
     globalThis.fetch = vi.fn<typeof fetch>(async (input) => {
       const url = typeof input === 'string' ? input : input.toString();
       if (url.includes('format=credits')) {
-        return creditsResponse(10, '2026-07-14T00:19:56+00:00');
+        return creditsResponse(100, 10, '2026-07-14T00:19:56+00:00');
       }
       return monthly.promise;
     });
@@ -576,7 +569,7 @@ describe('Grok CLI status command', () => {
       'warning',
     );
     expect(notify.mock.calls.at(-1)?.[0]).toContain('cached usage from');
-    expect(notify.mock.calls.at(-1)?.[0]).toContain('1,421 / 4,000 used');
+    expect(notify.mock.calls.at(-1)?.[0]).toContain('Weekly Limit');
   });
 
   it('warns when no Grok models are registered', async () => {

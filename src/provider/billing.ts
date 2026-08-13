@@ -12,6 +12,7 @@ export interface WeeklyUsage {
 }
 
 export interface BillingUsage {
+  tier?: string;
   monthly: MonthlyUsage;
   weekly?: WeeklyUsage;
 }
@@ -69,10 +70,31 @@ function parseWeeklyUsage(payload: unknown): WeeklyUsage | undefined {
   ) {
     return undefined;
   }
-  // Endpoint omits creditUsagePercent at fresh-period start (0% usage); default to 0.
-  const raw = (config as Record<string, unknown>).creditUsagePercent;
-  const creditUsagePercent = typeof raw === 'number' && Number.isFinite(raw) ? raw : 0;
+  // The credits endpoint reports the on-demand allowance instead of a raw percent;
+  // treat a missing or zero cap as 0% usage.
+  const cap = (
+    (config as Record<string, unknown>).onDemandCap as Record<string, unknown> | undefined
+  )?.val;
+  const used = (
+    (config as Record<string, unknown>).onDemandUsed as Record<string, unknown> | undefined
+  )?.val;
+  const creditUsagePercent =
+    typeof cap === 'number' && cap > 0 && typeof used === 'number'
+      ? Math.min(100, Math.max(0, (used / cap) * 100))
+      : 0;
   return { creditUsagePercent, billingPeriodEnd };
+}
+
+async function fetchSettingsTier(
+  headers: Record<string, string>,
+  signal?: AbortSignal,
+): Promise<string | undefined> {
+  const response = await fetch(`${getBaseUrl()}/settings`, { headers, signal });
+  if (!response.ok) return undefined;
+  const payload: unknown = await response.json();
+  if (!payload || typeof payload !== 'object') return undefined;
+  const tier = (payload as Record<string, unknown>).subscription_tier_display;
+  return typeof tier === 'string' && tier.length > 0 ? tier : undefined;
 }
 
 export async function fetchBillingUsage(
@@ -84,11 +106,17 @@ export async function fetchBillingUsage(
   if (!monthlyResponse.ok) throw new Error(`billing endpoint returned ${monthlyResponse.status}`);
   const monthly = parseMonthlyUsage(await monthlyResponse.json());
 
-  const weekly = await fetchWeeklyUsage(headers, signal).catch((error: unknown) => {
-    if (signal?.aborted) throw error;
-    return undefined;
-  });
-  return { monthly, weekly };
+  const [weekly, tier] = await Promise.all([
+    fetchWeeklyUsage(headers, signal).catch((error: unknown) => {
+      if (signal?.aborted) throw error;
+      return undefined;
+    }),
+    fetchSettingsTier(headers, signal).catch((error: unknown) => {
+      if (signal?.aborted) throw error;
+      return undefined;
+    }),
+  ]);
+  return { monthly, weekly, ...(tier ? { tier } : {}) };
 }
 
 async function fetchWeeklyUsage(
@@ -107,7 +135,7 @@ function formatReset(iso: string): string {
   return `${part('month')} ${part('day')}, ${hour}:${part('minute')} ${part('timeZoneName')} ${LOCAL_TIME_ZONE}`;
 }
 
-const detail = (label: string, value: string) => `      ${label.padEnd(9)}  ${value}`;
+const detail = (label: string, value: string) => `   ${label.padEnd(11)}${value}`;
 
 export function formatQuota(usage: BillingUsage | undefined): string[] {
   if (!usage) {
@@ -117,29 +145,13 @@ export function formatQuota(usage: BillingUsage | undefined): string[] {
     ];
   }
 
-  const monthlyPercent = Math.round((usage.monthly.used / usage.monthly.monthlyLimit) * 100);
-  const lines = [
-    '  Usage:',
-    '    Monthly',
-    detail(
-      'Credits',
-      `${usage.monthly.used.toLocaleString()} / ${usage.monthly.monthlyLimit.toLocaleString()} used  ${monthlyPercent}%`,
-    ),
-    detail(
-      'Remaining',
-      `${(usage.monthly.monthlyLimit - usage.monthly.used).toLocaleString()} credits`,
-    ),
-    detail('Reset', formatReset(usage.monthly.billingPeriodEnd)),
-  ];
-
-  if (usage.weekly) {
-    lines.push(
-      '',
-      '    Weekly',
-      detail('Limit', `${Math.round(usage.weekly.creditUsagePercent)}% used`),
-      detail('Reset', formatReset(usage.weekly.billingPeriodEnd)),
-    );
+  const tier = usage.tier ? ` (${usage.tier})` : '';
+  if (!usage.weekly) {
+    return [`Weekly Limit${tier}`, '    weekly usage unavailable'];
   }
-
-  return lines;
+  return [
+    `Weekly Limit${tier}`,
+    detail('Used', `${Math.round(usage.weekly.creditUsagePercent)}%`),
+    detail('Reset', formatReset(usage.weekly.billingPeriodEnd)),
+  ];
 }

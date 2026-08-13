@@ -9,12 +9,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   GROK_CLI_PROVIDER,
   isGrokCliProvider,
-  planTier,
   registerAccountManagement,
   resolveGrokToken,
 } from '../../src/provider/accounts.js';
 import { getAccountVault, mutateAccountVault } from '../../src/provider/accountVault.js';
-import { loadQuotaCache } from '../../src/provider/quotaCache.js';
+import { loadQuotaCache, saveQuotaUsage } from '../../src/provider/quotaCache.js';
 import {
   deferred,
   oauthCredential,
@@ -125,13 +124,25 @@ describe('Grok provider identity', () => {
     expect(isGrokCliProvider('grok-cli-2')).toBe(false);
   });
 
-  it('classifies plan tiers from monthly limits', () => {
-    expect([planTier(0), planTier(4000), planTier(20000), planTier(20001)]).toEqual([
-      'free',
-      'supergrok-lite',
-      'supergrok',
-      'supergrok-heavy',
-    ]);
+  it('exposes the subscription tier from the cached quota', async () => {
+    await saveQuotaUsage(
+      'account-1',
+      {
+        tier: 'X Premium',
+        monthly: {
+          monthlyLimit: 0,
+          used: 0,
+          billingPeriodEnd: '2026-09-01T00:00:00.000Z',
+        },
+        weekly: {
+          creditUsagePercent: 0,
+          billingPeriodEnd: '2026-08-18T00:00:00.000Z',
+        },
+      },
+      '2026-08-13T04:38:36.000Z',
+    );
+
+    expect(manager().snapshot(ctx).accounts[0]).toMatchObject({ tier: 'X Premium' });
   });
 });
 

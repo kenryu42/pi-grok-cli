@@ -14,7 +14,7 @@ Use your X Premium or SuperGrok subscription in [pi](https://pi.dev/) with a cle
 
 - **OAuth login:** Sign in through a browser or device code with automatic token refresh.
 - **Multiple accounts:** Manage accounts and quotas from the terminal or browser dashboard, and automatically continue with another account when quota runs out.
-- **Usage tracking:** Check account limits, remaining credits, and reset times.
+- **Usage tracking:** Check subscription tier, weekly allowance usage, and reset times.
 - **Image generation:** Generate images directly or let Grok use the `image_gen` tool.
 - **Native image input:** Send images directly to supported Grok models, including Composer 2.5.
 
@@ -60,11 +60,11 @@ Composer 2.5 is the recommended starting point for agentic coding and supports n
 /grok-cli-usage
 ```
 
-This fetches the current account allowance, usage, remaining credits, and reset time. Weekly usage is shown when xAI returns it.
+This fetches your subscription tier, weekly allowance usage, and reset time.
 
 ## Manage multiple accounts
 
-Open the browser dashboard to view accounts and quotas in one place:
+Open the browser dashboard to view accounts, subscription tiers, and weekly usage in one place:
 
 ```text
 /grok-cli-accounts gui
@@ -74,7 +74,7 @@ Select **Add account** to optionally label the account and start browser login.
 
 Prefer the terminal? Run `/grok-cli-accounts`, choose **＋ Add account**, and complete the browser or device-code login.
 
-With at least two logged-in accounts, pi-grok-cli can continue an interrupted request with another account when the current account runs out of quota. Recently exhausted accounts are temporarily skipped, and rotation stops when no eligible account remains.
+With at least two logged-in accounts, pi-grok-cli can continue an interrupted request with another account when the current account runs out of quota, preferring the account with the most weekly allowance remaining. Recently exhausted accounts are temporarily skipped, and rotation stops when no eligible account remains.
 
 Only add accounts you own or are authorized to access.
 

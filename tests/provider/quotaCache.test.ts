@@ -15,6 +15,7 @@ import { useTempHome } from '../stateTestHelpers.js';
 
 const setupHome = useTempHome();
 const usage = (used: number, weekly = 60): BillingUsage => ({
+  tier: 'X Premium',
   monthly: {
     monthlyLimit: 2000,
     used,

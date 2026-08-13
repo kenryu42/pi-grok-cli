@@ -111,11 +111,6 @@ dialog.addEventListener('click', (event) => {
   if (event.target === dialog) dialog.close('cancel');
 });
 
-const percent = (used, limit) =>
-  !Number.isFinite(used) || !Number.isFinite(limit) || limit <= 0
-    ? 0
-    : Math.max(0, Math.min(100, (used / limit) * 100));
-
 const dateLabel = (value) =>
   new Intl.DateTimeFormat(undefined, {
     month: 'short',
@@ -412,7 +407,11 @@ const updateFieldTargets = (state, offline = false) => {
   if (!field) return;
   const usages = state.accounts
     .filter((account) => account.quota)
-    .map((account) => percent(account.quota.monthly.used, account.quota.monthly.monthlyLimit));
+    .map((account) =>
+      account.quota.weekly
+        ? Math.max(0, Math.min(100, account.quota.weekly.creditUsagePercent))
+        : 0,
+    );
   const energy = usages.length
     ? usages.reduce((sum, value) => sum + value, 0) / usages.length / 100
     : 0.12;
@@ -485,13 +484,6 @@ const quotaUnavailable = (label, reason) => {
   header.append(element('span', '', label));
   row.append(header, element('p', 'quota-unavailable', reason));
   return row;
-};
-
-const PLAN_LABELS = {
-  free: 'Free plan',
-  'supergrok-lite': 'SuperGrok Lite',
-  supergrok: 'SuperGrok',
-  'supergrok-heavy': 'SuperGrok Heavy',
 };
 
 const statusPill = (account) => {
@@ -687,7 +679,7 @@ const accountCard = (account, index, isNewPending, refreshing, environmentMode) 
     element('span', 'card-provider', `grok-cli · Account ${account.slot}`),
     statusPill(account),
   );
-  if (account.plan) metaRow.append(element('span', 'plan-pill', PLAN_LABELS[account.plan]));
+  if (account.tier) metaRow.append(element('span', 'plan-pill', account.tier));
   head.append(titleRow, metaRow);
 
   const body = element('div', 'card-body');
@@ -698,31 +690,18 @@ const accountCard = (account, index, isNewPending, refreshing, environmentMode) 
   }
   const errorText = account.login.error || account.login.quotaError;
   if (account.quota) {
-    const isFree = account.plan === 'free';
-    const monthly = account.quota.monthly;
+    const weekly = account.quota.weekly;
+    const weeklyUsed = weekly ? Math.max(0, Math.min(100, weekly.creditUsagePercent)) : 0;
     body.append(
-      quotaRow(
-        account.id,
-        'Monthly credits',
-        isFree ? '' : `${Math.max(0, monthly.monthlyLimit - monthly.used).toLocaleString()} left`,
-        isFree ? 'Not available' : `Resets ${dateLabel(monthly.billingPeriodEnd)}`,
-        percent(monthly.monthlyLimit - monthly.used, monthly.monthlyLimit),
-      ),
-    );
-    body.append(
-      account.quota.weekly || isFree
+      weekly
         ? quotaRow(
             account.id,
-            'Weekly credits',
-            '',
-            !isFree && account.quota.weekly
-              ? `Resets ${dateLabel(account.quota.weekly.billingPeriodEnd)}`
-              : 'Not available',
-            !isFree && account.quota.weekly
-              ? Math.max(0, Math.min(100, 100 - account.quota.weekly.creditUsagePercent))
-              : 0,
+            'Weekly limit',
+            `${Math.round(weeklyUsed)}% used`,
+            `Resets ${dateLabel(weekly.billingPeriodEnd)}`,
+            100 - weeklyUsed,
           )
-        : quotaUnavailable('Weekly credits', 'Not available — try refreshing'),
+        : quotaUnavailable('Weekly limit', 'Not available — try refreshing'),
     );
     const freshness = element('p', 'freshness');
     if (!refreshing && !account.quota.fresh) freshness.append(element('span', 'tag', 'Stale'));

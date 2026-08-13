@@ -36,8 +36,6 @@ export const GROK_CLI_PROVIDER = 'grok-cli';
 export const DEFAULT_GROK_MODEL = 'grok-build';
 const noOp = () => {};
 
-export type PlanTier = 'free' | 'supergrok-lite' | 'supergrok' | 'supergrok-heavy';
-
 export interface AccountSnapshot {
   id: string;
   slot: number;
@@ -47,7 +45,7 @@ export interface AccountSnapshot {
   authenticated: boolean;
   active: boolean;
   environment: boolean;
-  plan?: PlanTier;
+  tier?: string;
   quota?: {
     updatedAt: string;
     fresh: boolean;
@@ -70,13 +68,6 @@ export interface AccountsSnapshot {
 
 export function isGrokCliProvider(provider: string | undefined): boolean {
   return provider === GROK_CLI_PROVIDER;
-}
-
-export function planTier(monthlyLimit: number): PlanTier {
-  if (monthlyLimit <= 0) return 'free';
-  if (monthlyLimit <= 4000) return 'supergrok-lite';
-  if (monthlyLimit <= 20000) return 'supergrok';
-  return 'supergrok-heavy';
 }
 
 function defaultLabel(slot: number) {
@@ -439,7 +430,7 @@ function createAccountManager(
             environment: accountEnvironment,
             ...(quota
               ? {
-                  plan: planTier(quota.monthly.monthlyLimit),
+                  ...(quota.tier ? { tier: quota.tier } : {}),
                   quota: {
                     updatedAt: quota.updatedAt,
                     fresh: isCachedQuotaFresh(quota),

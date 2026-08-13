@@ -47,8 +47,10 @@ function parseCachedQuota(value: unknown): CachedQuota | undefined {
   const entry = value as Record<string, unknown>;
   if (!isDate(entry.updatedAt) || !isMonthlyUsage(entry.monthly)) return undefined;
   if (entry.weekly !== undefined && !isWeeklyUsage(entry.weekly)) return undefined;
+  const tier = typeof entry.tier === 'string' && entry.tier.length > 0 ? entry.tier : undefined;
   return {
     updatedAt: entry.updatedAt,
+    ...(tier ? { tier } : {}),
     monthly: entry.monthly,
     ...(entry.weekly ? { weekly: entry.weekly } : {}),
   };
@@ -102,6 +104,7 @@ async function updateQuotaCache(
 function storeQuota(cache: QuotaCache, accountId: string, usage: BillingUsage, updatedAt: string) {
   cache.accounts[accountId] = {
     updatedAt,
+    ...(usage.tier ? { tier: usage.tier } : {}),
     monthly: { ...usage.monthly },
     ...(usage.weekly ? { weekly: { ...usage.weekly } } : {}),
   };

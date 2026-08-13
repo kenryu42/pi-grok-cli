@@ -3,6 +3,7 @@ import type { AssistantMessage } from '@earendil-works/pi-ai';
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getAccountVault, mutateAccountVault } from '../../src/provider/accountVault.js';
+import { saveQuotaUsage } from '../../src/provider/quotaCache.js';
 import { rememberRequestAccount } from '../../src/provider/requestOwnership.js';
 import {
   EXHAUSTED_BALANCE_ERROR,
@@ -199,6 +200,45 @@ describe('Grok CLI exhaustion rotation', () => {
     expect((await getAccountVault()).activeAccountId).toBe('account-1');
     expect(test.sendUserMessage).not.toHaveBeenCalled();
     expect(test.notify).not.toHaveBeenCalled();
+  });
+
+  it('prefers the eligible account with the most weekly quota remaining', async () => {
+    await addLoggedInAccounts();
+    const updatedAt = new Date(Date.now() - 60_000).toISOString();
+    await saveQuotaUsage(
+      'account-2',
+      {
+        monthly: {
+          monthlyLimit: 0,
+          used: 0,
+          billingPeriodEnd: '2026-08-25T00:00:00.000Z',
+        },
+        weekly: {
+          creditUsagePercent: 90,
+          billingPeriodEnd: '2026-08-18T00:00:00.000Z',
+        },
+      },
+      updatedAt,
+    );
+    await saveQuotaUsage(
+      'account-3',
+      {
+        monthly: {
+          monthlyLimit: 0,
+          used: 0,
+          billingPeriodEnd: '2026-08-25T00:00:00.000Z',
+        },
+        weekly: {
+          creditUsagePercent: 10,
+          billingPeriodEnd: '2026-08-18T00:00:00.000Z',
+        },
+      },
+      updatedAt,
+    );
+    const test = extension();
+    await settleExhaustion(test, 'account-1');
+
+    expect(test.selection.accountId('session-a')).toBe('account-3');
   });
 
   it('selects another candidate when the first candidate is removed before commit', async () => {

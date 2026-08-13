@@ -37,15 +37,10 @@ function circularAccountIds(accountIds: string[], current: string) {
 }
 
 function quotaScore(entry: CachedQuota | undefined, now: number) {
-  if (!entry || !isCachedQuotaFresh(entry, now) || entry.monthly.monthlyLimit <= 0) {
+  if (!entry || !entry.weekly || !isCachedQuotaFresh(entry, now)) {
     return undefined;
   }
-  const monthly = Math.min(
-    1,
-    Math.max(0, (entry.monthly.monthlyLimit - entry.monthly.used) / entry.monthly.monthlyLimit),
-  );
-  if (!entry.weekly) return monthly;
-  return Math.min(monthly, Math.min(1, Math.max(0, 1 - entry.weekly.creditUsagePercent / 100)));
+  return Math.min(1, Math.max(0, 1 - entry.weekly.creditUsagePercent / 100));
 }
 
 function orderAccountsByQuota(

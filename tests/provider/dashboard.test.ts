@@ -739,14 +739,14 @@ describe('account dashboard loopback server', () => {
     await browser.close();
   });
 
-  it('renders free-plan monthly and weekly quotas as unavailable at zero percent', async () => {
+  it('renders the weekly limit with tier and usage percent instead of monthly credits', async () => {
     const session = await openDashboard();
     const browser = await browserDashboard(session, [
       {
         refreshing: false,
         accounts: [
           accountState({
-            plan: 'free',
+            tier: 'X Premium',
             quota: {
               updatedAt: '2026-07-18T11:05:00.000Z',
               fresh: true,
@@ -764,16 +764,20 @@ describe('account dashboard loopback server', () => {
         ],
       },
     ]);
-    const meters = [...browser.window.document.querySelectorAll('[role="meter"]')];
+    const document = browser.window.document;
+    const meters = [...document.querySelectorAll('[role="meter"]')];
 
-    expect(meters.map((meter) => meter.getAttribute('aria-valuenow'))).toEqual(['0', '0']);
-    expect(meters.map((meter) => meter.querySelector('.gauge-value')?.textContent)).toEqual([
-      '0%',
-      '0%',
-    ]);
+    expect(document.querySelector('.plan-pill')?.textContent).toBe('X Premium');
     expect(
-      [...browser.window.document.querySelectorAll('.quota-meta')].map((meta) => meta.textContent),
-    ).toEqual(['Not available', 'Not available']);
+      [...document.querySelectorAll('.quota-head')].map((head) => head.firstChild?.textContent),
+    ).toEqual(['Weekly limit']);
+    expect(
+      [...document.querySelectorAll('.quota-head .mono')].map((head) => head.textContent),
+    ).toEqual(['0% used']);
+    expect(meters.map((meter) => meter.getAttribute('aria-valuenow'))).toEqual(['100']);
+    expect(meters.map((meter) => meter.querySelector('.gauge-value')?.textContent)).toEqual([
+      '100%',
+    ]);
     await browser.close();
   });
 
