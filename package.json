@@ -1,6 +1,6 @@
 {
   "name": "pi-grok-cli",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "Use your X Premium or SuperGrok subscription in pi.",
   "keywords": [
     "pi-package",
