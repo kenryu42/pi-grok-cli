@@ -37,7 +37,7 @@ function circularAccountIds(accountIds: string[], current: string) {
 }
 
 function quotaScore(entry: CachedQuota | undefined, now: number) {
-  if (!entry || !entry.weekly || !isCachedQuotaFresh(entry, now)) {
+  if (!entry?.weekly || !isCachedQuotaFresh(entry, now)) {
     return undefined;
   }
   return Math.min(1, Math.max(0, 1 - entry.weekly.creditUsagePercent / 100));
