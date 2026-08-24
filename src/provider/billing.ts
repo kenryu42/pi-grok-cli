@@ -70,18 +70,9 @@ function parseWeeklyUsage(payload: unknown): WeeklyUsage | undefined {
   ) {
     return undefined;
   }
-  // The credits endpoint reports the on-demand allowance instead of a raw percent;
-  // treat a missing or zero cap as 0% usage.
-  const cap = (
-    (config as Record<string, unknown>).onDemandCap as Record<string, unknown> | undefined
-  )?.val;
-  const used = (
-    (config as Record<string, unknown>).onDemandUsed as Record<string, unknown> | undefined
-  )?.val;
+  const raw = (config as Record<string, unknown>).creditUsagePercent;
   const creditUsagePercent =
-    typeof cap === 'number' && cap > 0 && typeof used === 'number'
-      ? Math.min(100, Math.max(0, (used / cap) * 100))
-      : 0;
+    typeof raw === 'number' && Number.isFinite(raw) ? Math.min(100, Math.max(0, raw)) : 0;
   return { creditUsagePercent, billingPeriodEnd };
 }
 

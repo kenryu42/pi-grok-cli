@@ -278,7 +278,7 @@ function billingResponse(monthlyLimit: unknown, used: unknown, billingPeriodEnd:
   });
 }
 
-function creditsResponse(onDemandCap: unknown, onDemandUsed: unknown, billingPeriodEnd: string) {
+function creditsResponse(creditUsagePercent: unknown, billingPeriodEnd: string) {
   return Response.json({
     config: {
       currentPeriod: {
@@ -286,8 +286,9 @@ function creditsResponse(onDemandCap: unknown, onDemandUsed: unknown, billingPer
         start: '2026-07-07T00:19:56+00:00',
         end: billingPeriodEnd,
       },
-      onDemandCap: { val: onDemandCap },
-      onDemandUsed: { val: onDemandUsed },
+      creditUsagePercent,
+      onDemandCap: { val: 0 },
+      onDemandUsed: { val: 0 },
       billingPeriodStart: '2026-07-07T00:19:56+00:00',
       billingPeriodEnd,
     },
@@ -321,7 +322,7 @@ describe('Grok CLI status command', () => {
     setupHome();
     const fetchMock = billingFetchMock(
       billingResponse(4000, 1421, '2026-07-01T00:00:00+00:00'),
-      creditsResponse(100, 1, '2026-07-14T00:19:56+00:00'),
+      creditsResponse(1, '2026-07-14T00:19:56+00:00'),
     );
     globalThis.fetch = fetchMock;
     const extension = await setupExtension();
@@ -348,6 +349,32 @@ describe('Grok CLI status command', () => {
     );
   });
 
+  it('uses the weekly credit percentage when the on-demand allowance is zero', async () => {
+    process.env.GROK_CLI_OAUTH_TOKEN = 'env-token';
+    setupHome();
+    globalThis.fetch = billingFetchMock(
+      billingResponse(0, 0, '2026-08-25T00:19:56.260346+00:00'),
+      Response.json({
+        config: {
+          currentPeriod: {
+            type: 'USAGE_PERIOD_TYPE_WEEKLY',
+            start: '2026-08-18T00:19:56.260346+00:00',
+            end: '2026-08-25T00:19:56.260346+00:00',
+          },
+          creditUsagePercent: 13,
+          onDemandCap: { val: 0 },
+          onDemandUsed: { val: 0 },
+          productUsage: [{ product: 'GrokBuild', usagePercent: 13 }],
+          billingPeriodEnd: '2026-08-25T00:19:56.260346+00:00',
+        },
+      }),
+    );
+
+    const notify = await runStatus(await setupExtension());
+
+    expect(notify.mock.calls.at(-1)?.[0]).toContain('Used       13%');
+  });
+
   it('omits the weekly block when the credits endpoint is unavailable', async () => {
     process.env.GROK_CLI_OAUTH_TOKEN = 'env-token';
     setupHome();
@@ -372,7 +399,7 @@ describe('Grok CLI status command', () => {
     setupHome();
     globalThis.fetch = billingFetchMock(
       billingResponse(4000, 172, '2026-01-01T00:00:00+00:00'),
-      creditsResponse(100, 1, 'not-a-date'),
+      creditsResponse(1, 'not-a-date'),
     );
     const notify = await runStatus(await setupExtension());
     const message = notify.mock.calls.at(-1)?.[0] as string;
@@ -381,12 +408,12 @@ describe('Grok CLI status command', () => {
     expect(message).toContain('weekly usage unavailable');
   });
 
-  it('shows 0% weekly usage when the on-demand cap is omitted at fresh-period start', async () => {
+  it('shows 0% weekly usage when the credit percentage is omitted at fresh-period start', async () => {
     process.env.GROK_CLI_OAUTH_TOKEN = 'env-token';
     setupHome();
     globalThis.fetch = billingFetchMock(
       billingResponse(4000, 172, '2026-01-01T00:00:00+00:00'),
-      creditsResponse(undefined, undefined, '2026-07-14T00:19:56+00:00'),
+      creditsResponse(undefined, '2026-07-14T00:19:56+00:00'),
     );
     const notify = await runStatus(await setupExtension());
 
@@ -453,7 +480,7 @@ describe('Grok CLI status command', () => {
     globalThis.fetch = vi.fn<typeof fetch>(async (input) => {
       const url = typeof input === 'string' ? input : input.toString();
       if (url.includes('format=credits')) {
-        return creditsResponse(100, 10, '2026-07-14T00:19:56+00:00');
+        return creditsResponse(10, '2026-07-14T00:19:56+00:00');
       }
       return monthly.promise;
     });
