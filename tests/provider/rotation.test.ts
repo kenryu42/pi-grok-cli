@@ -136,7 +136,9 @@ describe('Grok CLI exhaustion rotation', () => {
     });
     expect((await getAccountVault()).activeAccountId).toBe('account-1');
     expect(test.setModel).not.toHaveBeenCalled();
-    expect(test.sendUserMessage).toHaveBeenCalledWith(ROTATION_CONTINUATION);
+    expect(test.sendUserMessage).toHaveBeenCalledWith(ROTATION_CONTINUATION, {
+      deliverAs: 'followUp',
+    });
     expect(test.notify).toHaveBeenCalledWith(
       'Grok CLI: “Account 1” exhausted; switched to “Work” and continuing.',
       'info',
@@ -260,6 +262,8 @@ describe('Grok CLI exhaustion rotation', () => {
     await expect(pending).resolves.toBeUndefined();
     expect(test.selection.accountId('session-a')).toBe('account-3');
     expect((await getAccountVault()).activeAccountId).toBe('account-1');
-    expect(test.sendUserMessage).toHaveBeenCalledWith(ROTATION_CONTINUATION);
+    expect(test.sendUserMessage).toHaveBeenCalledWith(ROTATION_CONTINUATION, {
+      deliverAs: 'followUp',
+    });
   });
 });

@@ -165,7 +165,7 @@ export function registerExhaustionRotation(
         'info',
       );
       awaitingContinuation = true;
-      pi.sendUserMessage(ROTATION_CONTINUATION);
+      pi.sendUserMessage(ROTATION_CONTINUATION, { deliverAs: 'followUp' });
       return;
     }
 
