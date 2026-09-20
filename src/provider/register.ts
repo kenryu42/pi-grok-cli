@@ -28,10 +28,12 @@ import {
   mutateAccountVault,
 } from './accountVault.js';
 import { migrateSavedModelProviders } from './modelMigration.js';
+import { streamWithProxyRetry } from './proxyRetry.js';
 import { removeQuotaUsage } from './quotaCache.js';
 import { rememberRequestAccount } from './requestOwnership.js';
 import { registerExhaustionRotation } from './rotation.js';
 import { createSessionAccountSelection } from './sessionAccountSelection.js';
+import { registerSessionConvId } from './sessionConvId.js';
 import { grokCliModelHeaders } from './stream.js';
 import { registerUsageCommand } from './usage.js';
 
@@ -53,6 +55,7 @@ function accountCredential(credentials: OAuthCredentials): AccountCredential {
 
 export default function registerGrokCli(pi: ExtensionAPI) {
   const sessionSelection = createSessionAccountSelection(pi);
+  const convIds = registerSessionConvId(pi);
   let migrationWarning: string | undefined;
   let migrationError: string | undefined;
   let migrationErrorNotified = false;
@@ -157,30 +160,40 @@ export default function registerGrokCli(pi: ExtensionAPI) {
       headers: grokCliModelHeaders(model.id),
     })),
     streamSimple(model, context, options?: SimpleStreamOptions) {
-      const accountId = sessionSelection.accountId(options?.sessionId);
+      const sessionId = options?.sessionId;
+      const accountId = sessionSelection.accountId(sessionId);
       return lazyStream(model, async () => {
         await migration;
         if (migrationError) throw new Error(migrationError);
         const route = await resolveAccountRoute(accountId);
-        const stream = streamSimpleOpenAIResponses(
-          {
-            ...model,
-            baseUrl: route.baseUrl,
-            api: 'openai-responses',
-          } as Model<'openai-responses'>,
-          context,
-          {
-            ...options,
-            apiKey: route.token,
-          },
-        );
-        void stream.result().then(
-          (message) => {
-            rememberRequestAccount(message, route.accountId);
-          },
-          () => undefined,
-        );
-        return stream;
+        return streamWithProxyRetry({
+          start: () =>
+            streamSimpleOpenAIResponses(
+              {
+                ...model,
+                baseUrl: route.baseUrl,
+                api: 'openai-responses',
+              } as Model<'openai-responses'>,
+              context,
+              {
+                ...options,
+                apiKey: route.token,
+                // Keep the retry budget here; SDK retries would reuse the failed conversation ID.
+                maxRetries: 0,
+                headers: {
+                  ...options?.headers,
+                  ...(sessionId ? { 'x-grok-conv-id': convIds.convId(sessionId) } : {}),
+                },
+              },
+            ),
+          rotate: sessionId
+            ? () => {
+                convIds.rotate(sessionId);
+              }
+            : undefined,
+          signal: options?.signal,
+          onMessage: (message) => rememberRequestAccount(message, route.accountId),
+        });
       });
     },
   });
@@ -240,7 +253,7 @@ export default function registerGrokCli(pi: ExtensionAPI) {
 
   pi.on('before_provider_headers', (event, ctx) => {
     if (ctx.model?.provider !== 'grok-cli') return;
-    event.headers['x-grok-conv-id'] = ctx.sessionManager.getSessionId();
+    event.headers['x-grok-conv-id'] = convIds.convId(ctx.sessionManager.getSessionId());
   });
 
   pi.on('before_provider_request', (event, ctx) => {

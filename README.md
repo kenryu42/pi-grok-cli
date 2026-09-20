@@ -122,6 +122,7 @@ To edit a local PNG, JPEG, or WebP image, use `/grok-cli-imagine --image "./sour
 | --- | --- |
 | `/grok-cli-accounts [gui]` | Manage Grok accounts in the terminal, or add `gui` for the browser dashboard. |
 | `/grok-cli-usage` | Fetch current quota, update its cache, and show cached data if refresh fails. |
+| `/grok-cli-conv [status\|rotate]` | Show or rotate this session's Grok proxy conversation ID. |
 | `/grok-cli-imagine <prompt>` | Generate or edit an image. Supports `--image`/`--edit`, `--aspect`, `--out`, and `--resolution 1k`. |
 | `/grok-cli-imagine:tool [on\|off\|status]` | Toggle, set, or report persistent model-callable `image_gen` availability. |
 
@@ -153,6 +154,8 @@ The extension does not replace saved session files because Pi can append to them
 See [Advanced configuration](./CONFIGURATION.md) for OAuth, callback, endpoint, and Imagine overrides.
 
 ## Troubleshooting
+
+For proxy HTTP 401, 502, or 520 errors before streaming starts, the extension rotates the conversation ID and retries up to twice. The prompt-cache key and selected account stay the same. Rotated IDs are saved in the Pi session. Recovery is best effort: an expired token still requires login. You can also rotate manually with `/grok-cli-conv rotate` before sending another request.
 
 | Problem | What to do |
 | --- | --- |
