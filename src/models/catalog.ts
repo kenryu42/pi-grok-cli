@@ -88,6 +88,7 @@ const FALLBACK_MODELS: GrokCliModelConfig[] = [
     cost: COST_46,
     contextWindow: 500_000,
     maxTokens: 30_000,
+    thinkingLevelMap: { xhigh: 'xhigh' },
   },
   {
     id: 'grok-4.20-0309-reasoning',

@@ -1,3 +1,4 @@
+import { clampThinkingLevel, getSupportedThinkingLevels } from '@earendil-works/pi-ai';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   resolveModels,
@@ -12,6 +13,20 @@ afterEach(() => {
 });
 
 describe('model catalog', () => {
+  it('lets Pi select Extra High reasoning for Grok 4.6', () => {
+    delete process.env.PI_GROK_CLI_MODELS;
+    const config = resolveModels().find((model) => model.id === 'grok-4.6');
+    if (!config) throw new Error('Grok 4.6 is missing');
+    const model = {
+      ...config,
+      provider: 'grok-cli',
+      api: 'openai-responses' as const,
+      baseUrl: 'https://cli-chat-proxy.grok.com',
+    };
+    expect(getSupportedThinkingLevels(model)).toContain('xhigh');
+    expect(clampThinkingLevel(model, 'xhigh')).toBe('xhigh');
+  });
+
   it('reports reasoning-effort support by normalized model name', () => {
     expect(supportsReasoningEffort('grok-4.3')).toBe(true);
     expect(supportsReasoningEffort('grok-4.5')).toBe(true);
