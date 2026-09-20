@@ -112,6 +112,8 @@ Models are bundled rather than discovered live. Registered context limits may di
 
 Run `/grok-cli-imagine <prompt>` to generate and preview a JPEG, or let any active model call the `image_gen` tool. Images use the current session's selected Grok account and are saved under the current session unless you request another path.
 
+To edit a local PNG, JPEG, or WebP image, use `/grok-cli-imagine --image "./source image.png" <edit instructions>`. `--edit` is an alias. The `image_gen` tool accepts the same local path in its optional `image` argument. Relative paths use the session working directory. The source file is uploaded to Imagine; the edited image is saved separately unless you explicitly use `--out` to overwrite the source.
+
 `image_gen` is enabled by default across providers. Use `/grok-cli-imagine:tool [on|off|status]` to manage model access without disabling the direct command.
 
 ## Commands
@@ -120,7 +122,7 @@ Run `/grok-cli-imagine <prompt>` to generate and preview a JPEG, or let any acti
 | --- | --- |
 | `/grok-cli-accounts [gui]` | Manage Grok accounts in the terminal, or add `gui` for the browser dashboard. |
 | `/grok-cli-usage` | Fetch current quota, update its cache, and show cached data if refresh fails. |
-| `/grok-cli-imagine <prompt>` | Generate and preview an image. Supports `--aspect`, `--out`, and `--resolution 1k`. |
+| `/grok-cli-imagine <prompt>` | Generate or edit an image. Supports `--image`/`--edit`, `--aspect`, `--out`, and `--resolution 1k`. |
 | `/grok-cli-imagine:tool [on\|off\|status]` | Toggle, set, or report persistent model-callable `image_gen` availability. |
 
 ## Configuration

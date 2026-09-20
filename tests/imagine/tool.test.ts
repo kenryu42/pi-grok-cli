@@ -2,13 +2,13 @@ import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { describe, expect, it, vi } from 'vitest';
 import { registerImageGenTool } from '../../src/imagine/tool.js';
 import { useEnvironmentToken, useTempHome } from '../stateTestHelpers.js';
-import { imagineDependencies } from './helpers.js';
+import { imagineDependencies, TEST_PNG_BASE64 } from './helpers.js';
 
 const setupHome = useTempHome();
 const setToken = useEnvironmentToken();
 
 function setup(token?: string, resolveToken?: () => Promise<string | undefined>) {
-  setupHome();
+  const home = setupHome();
   setToken(token);
   let tool: Record<string, unknown> | undefined;
   const dependencies = imagineDependencies();
@@ -22,6 +22,7 @@ function setup(token?: string, resolveToken?: () => Promise<string | undefined>)
     resolveToken,
   );
   const context = {
+    cwd: home,
     modelRegistry: { getApiKeyForProvider: vi.fn(async () => token) },
     sessionManager: {
       getSessionDir: () => '/sessions',
@@ -49,6 +50,41 @@ function setup(token?: string, resolveToken?: () => Promise<string | undefined>)
 }
 
 describe('image_gen tool', () => {
+  it.each(['relative', 'absolute'])('edits a source image using its %s path', async (pathKind) => {
+    const test = setup('token');
+    const path = join(test.context.cwd, 'source.bin');
+    writeFileSync(path, Buffer.from(TEST_PNG_BASE64, 'base64'));
+    const result = await test.tool.execute(
+      'edit',
+      { prompt: 'Make it blue', image: pathKind === 'absolute' ? path : 'source.bin' },
+      undefined,
+      undefined,
+      test.context,
+    );
+    expect(result.details.error).toBeUndefined();
+    expect(test.generate).toHaveBeenCalledWith(
+      expect.objectContaining({ imageUrl: `data:image/png;base64,${TEST_PNG_BASE64}` }),
+    );
+  });
+
+  it.each([
+    'not an image',
+    'RIFF0000WAVEfmt ',
+    '\u0089PNG',
+  ])('rejects non-image or incomplete file content %j before generation', async (content) => {
+    const test = setup('token');
+    writeFileSync(join(test.context.cwd, 'fake.png'), content);
+    const result = await test.tool.execute(
+      'edit',
+      { prompt: 'Make it blue', image: 'fake.png' },
+      undefined,
+      undefined,
+      test.context,
+    );
+    expect(result.details.error).toMatch(/Unsupported image/);
+    expect(test.generate).not.toHaveBeenCalled();
+  });
+
   it('returns path-only content and path details', async () => {
     const test = setup('token');
     const signal = new AbortController().signal;
@@ -174,3 +210,6 @@ describe('image_gen tool', () => {
     ).toContain('saved images/1.jpg (/missing.jpg)');
   });
 });
+
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';

@@ -19,6 +19,8 @@ export function parseImagineArgs(args: string) {
     ['--out', 'out'],
     ['-o', 'out'],
     ['--resolution', 'resolution'],
+    ['--image', 'image'],
+    ['--edit', 'image'],
   ]);
 
   for (let index = 0; index < tokens.length; index += 1) {
@@ -42,6 +44,7 @@ export function parseImagineArgs(args: string) {
     prompt: prompt.join(' '),
     aspectRatio: normalizeAspectRatio(optionValues.get('aspect')),
     ...(optionValues.has('out') ? { outPath: optionValues.get('out') } : {}),
+    ...(optionValues.has('image') ? { imagePath: optionValues.get('image') } : {}),
     resolution,
   };
 }

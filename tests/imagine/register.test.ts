@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_CONFIG, loadConfig, saveConfig } from '../../src/config.js';
 import { registerImagineFeature } from '../../src/imagine/register.js';
 import { useEnvironmentToken, useTempHome } from '../stateTestHelpers.js';
-import { imagineDependencies } from './helpers.js';
+import { imagineDependencies, TEST_PNG_BASE64 } from './helpers.js';
 
 const setupHome = useTempHome();
 const setToken = useEnvironmentToken();
@@ -80,6 +80,23 @@ function setup(
 }
 
 describe('registerImagineFeature command', () => {
+  it.each(['--image', '--edit'])('edits a local image with %s', async (flag) => {
+    const extension = setup('token');
+    writeFileSync(join(extension.home, 'source image.png'), Buffer.from(TEST_PNG_BASE64, 'base64'));
+    await extension.commands
+      .get('grok-cli-imagine')
+      ?.handler(`${flag} "source image.png" Make it blue`, {
+        ...extension.context,
+        cwd: extension.home,
+      });
+    expect(extension.generate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: 'Make it blue',
+        imageUrl: `data:image/png;base64,${TEST_PNG_BASE64}`,
+      }),
+    );
+  });
+
   it('registers the command, entry renderer, and image_gen tool', () => {
     const extension = setup('token');
     expect(extension.commands.has('grok-cli-imagine')).toBe(true);

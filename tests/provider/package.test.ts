@@ -55,6 +55,7 @@ describe('repository layout', () => {
       'src/imagine/aspect.ts',
       'src/imagine/auth.ts',
       'src/imagine/generate.ts',
+      'src/imagine/imageUrl.ts',
       'src/imagine/parseArgs.ts',
       'src/imagine/preview.ts',
       'src/imagine/register.ts',
