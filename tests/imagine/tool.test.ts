@@ -50,6 +50,33 @@ function setup(token?: string, resolveToken?: () => Promise<string | undefined>)
 }
 
 describe('image_gen tool', () => {
+  it.each([
+    400 * 1024 - 1,
+    400 * 1024,
+    400 * 1024 + 1,
+  ])('enforces the source-image size limit for a %i-byte file', async (size) => {
+    const test = setup('token');
+    const bytes = Buffer.alloc(size);
+    Buffer.from(TEST_PNG_BASE64, 'base64').copy(bytes);
+    writeFileSync(join(test.context.cwd, 'source.png'), bytes);
+    const result = await test.tool.execute(
+      'edit',
+      { prompt: 'Make it blue', image: 'source.png' },
+      undefined,
+      undefined,
+      test.context,
+    );
+    if (size > 400 * 1024) {
+      expect(result.details.error).toMatch(/400 KiB/);
+      expect(test.generate).not.toHaveBeenCalled();
+      return;
+    }
+    expect(result.details.error).toBeUndefined();
+    expect(test.generate).toHaveBeenCalledWith(
+      expect.objectContaining({ imageUrl: `data:image/png;base64,${bytes.toString('base64')}` }),
+    );
+  });
+
   it.each(['relative', 'absolute'])('edits a source image using its %s path', async (pathKind) => {
     const test = setup('token');
     const path = join(test.context.cwd, 'source.bin');

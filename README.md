@@ -112,7 +112,7 @@ Models are bundled rather than discovered live. Registered context limits may di
 
 Run `/grok-cli-imagine <prompt>` to generate and preview a JPEG, or let any active model call the `image_gen` tool. Images use the current session's selected Grok account and are saved under the current session unless you request another path.
 
-To edit a local PNG, JPEG, or WebP image, use `/grok-cli-imagine --image "./source image.png" <edit instructions>`. `--edit` is an alias. The `image_gen` tool accepts the same local path in its optional `image` argument. Relative paths use the session working directory. The source file is uploaded to Imagine; the edited image is saved separately unless you explicitly use `--out` to overwrite the source.
+To edit a local PNG, JPEG, or WebP image, use `/grok-cli-imagine --image "./source image.png" <edit instructions>`. `--edit` is an alias. The `image_gen` tool accepts the same local path in its optional `image` argument. Relative paths use the session working directory. Source files must be at most 400 KiB; resize or compress larger images before editing. The source file is uploaded to Imagine; the edited image is saved separately unless you explicitly use `--out` to overwrite the source.
 
 `image_gen` is enabled by default across providers. Use `/grok-cli-imagine:tool [on|off|status]` to manage model access without disabling the direct command.
 

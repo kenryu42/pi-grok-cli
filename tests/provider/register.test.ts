@@ -140,6 +140,9 @@ async function setupExtension(initialActiveTools = ['read', 'bash']) {
   const setModel = vi.fn(async (_model: { provider: string; id: string }) => true);
   const sendUserMessage = vi.fn();
   const entries: { customType: string; data: unknown }[] = [];
+  const appendEntry = vi.fn((customType: string, data: unknown) => {
+    entries.push({ customType, data });
+  });
   const registerGrokCli = (await import('../../src/index.js')).default;
   registerGrokCli({
     registerProvider(name: string, config: ProviderConfig) {
@@ -153,9 +156,7 @@ async function setupExtension(initialActiveTools = ['read', 'bash']) {
       commands.set(name, config as CommandConfig);
     },
     registerEntryRenderer() {},
-    appendEntry(customType: string, data: unknown) {
-      entries.push({ customType, data });
-    },
+    appendEntry,
     registerTool(tool: RegisteredTool) {
       tools.set(tool.name, tool);
     },
@@ -182,6 +183,7 @@ async function setupExtension(initialActiveTools = ['read', 'bash']) {
   } as unknown as ExtensionAPI);
   return {
     commands,
+    appendEntry,
     providers,
     tools,
     handlers,
@@ -273,6 +275,30 @@ async function startProxyRequest(
 }
 
 describe('proxy conversation recovery', () => {
+  it('preserves the proxy error and account ownership when rotation persistence fails', async () => {
+    await setAccount1Credential('one');
+    writePiVaultMarker();
+    mockProviderStream.mockImplementation(() => proxyResponse(502));
+    const extension = await setupExtension();
+    extension.appendEntry.mockImplementation(() => {
+      throw new Error('Session storage is full');
+    });
+    const stream = await startProxyRequest(extension, { sessionId: 'session-a' });
+    const events = [];
+    for await (const event of stream) events.push(event);
+    expect(events.map((event) => event.type)).toEqual(['error']);
+    expect(mockProviderStream).toHaveBeenCalledTimes(1);
+    expect(await stream.result()).toMatchObject({
+      stopReason: 'error',
+      errorMessage: 'OpenAI API error (502): proxy failure',
+    });
+    const { requestAccount } = await import('../../src/provider/requestOwnership.js');
+    expect(requestAccount(await stream.result())).toBe('account-1');
+    const ctx = sessionContext('session-a');
+    await extension.commands.get('grok-cli-conv')?.handler('status', ctx);
+    expect(ctx.ui.notify).toHaveBeenCalledWith('Grok CLI conversation ID: session-a', 'info');
+  });
+
   it('recovers through the real Pi HTTP adapter while preserving the prompt cache key', async () => {
     await setAccount1Credential('one');
     writePiVaultMarker();

@@ -33,15 +33,19 @@ export async function* streamWithProxyRetry(options: {
       attempt < 2 &&
       options.rotate
     ) {
-      options.rotate();
-      continue;
+      try {
+        options.rotate();
+        continue;
+      } catch {
+        // A failed session write must not replace the original proxy error.
+      }
     }
     options.onMessage(message);
     if (message.stopReason === 'error' || message.stopReason === 'aborted') {
       yield { type: 'error', reason: message.stopReason, error: message };
-    } else {
-      yield { type: 'done', reason: message.stopReason, message };
+      return;
     }
+    yield { type: 'done', reason: message.stopReason, message };
     return;
   }
 }
