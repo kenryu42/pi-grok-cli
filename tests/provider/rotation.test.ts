@@ -1,6 +1,15 @@
 import { readFileSync } from 'node:fs';
-import type { AssistantMessage } from '@earendil-works/pi-ai';
-import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
+import { join } from 'node:path';
+import { type AssistantMessage, createAssistantMessageEventStream } from '@earendil-works/pi-ai';
+import {
+  createAgentSession,
+  DefaultResourceLoader,
+  type ExtensionAPI,
+  type ExtensionContext,
+  ModelRuntime,
+  SessionManager,
+  SettingsManager,
+} from '@earendil-works/pi-coding-agent';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getAccountVault, mutateAccountVault } from '../../src/provider/accountVault.js';
 import { saveQuotaUsage } from '../../src/provider/quotaCache.js';
@@ -11,8 +20,13 @@ import {
   registerExhaustionRotation,
 } from '../../src/provider/rotation.js';
 import { createSessionAccountSelection } from '../../src/provider/sessionAccountSelection.js';
-import { acquireFileLock, getAccountVaultPath, writeFileAtomic } from '../../src/storage.js';
-import { useEnvironmentToken, useTempHome } from '../stateTestHelpers.js';
+import {
+  acquireFileLock,
+  getAccountVaultPath,
+  getGrokCliDirectory,
+  writeFileAtomic,
+} from '../../src/storage.js';
+import { deferred, useEnvironmentToken, useTempHome } from '../stateTestHelpers.js';
 
 const setupHome = useTempHome();
 const setEnvironmentToken = useEnvironmentToken();
@@ -125,6 +139,144 @@ beforeEach(() => {
 });
 
 describe('Grok CLI exhaustion rotation', () => {
+  it.each([
+    'idle',
+    'streaming',
+  ] as const)('delivers the continuation through Pi when %s after the vault read', async (state) => {
+    await addLoggedInAccounts();
+    const directory = getGrokCliDirectory();
+    const settled = deferred<void>();
+    const settingsManager = SettingsManager.inMemory({
+      compaction: { enabled: false },
+      retry: { enabled: false },
+    });
+    const resourceLoader = new DefaultResourceLoader({
+      cwd: directory,
+      agentDir: directory,
+      settingsManager,
+      noExtensions: true,
+      noSkills: true,
+      noPromptTemplates: true,
+      noThemes: true,
+      noContextFiles: true,
+      extensionFactories: [
+        (pi) => {
+          pi.on('agent_settled', () => settled.resolve());
+          registerExhaustionRotation(pi);
+        },
+      ],
+    });
+    await resourceLoader.reload();
+    const modelRuntime = await ModelRuntime.create({
+      authPath: join(directory, 'test-auth.json'),
+      modelsPath: null,
+      modelsStorePath: join(directory, 'test-models.json'),
+      allowModelNetwork: false,
+    });
+    modelRuntime.registerProvider('grok-cli', {
+      api: 'openai-responses',
+      baseUrl: 'http://127.0.0.1:1',
+      apiKey: 'test-only',
+      models: [
+        {
+          id: 'grok-build',
+          name: 'Test Grok',
+          reasoning: false,
+          input: ['text'],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 10000,
+          maxTokens: 1000,
+        },
+      ],
+    });
+    const { session } = await createAgentSession({
+      cwd: directory,
+      agentDir: directory,
+      modelRuntime,
+      model: modelRuntime.getModel('grok-cli', 'grok-build'),
+      resourceLoader,
+      settingsManager,
+      sessionManager: SessionManager.inMemory(directory),
+      tools: [],
+    });
+    const errors = vi.fn();
+    await session.bindExtensions({ onError: errors });
+    const responses: ReturnType<typeof createAssistantMessageEventStream>[] = [];
+    session.agent.streamFn = (_model, _context, options) => {
+      const stream = createAssistantMessageEventStream();
+      options?.signal?.addEventListener(
+        'abort',
+        () => stream.end({ ...exhaustedMessage(), stopReason: 'aborted' }),
+        { once: true },
+      );
+      responses.push(stream);
+      return stream;
+    };
+    const finish = (index: number, stopReason: 'stop' | 'error') => {
+      const message = {
+        ...exhaustedMessage(),
+        stopReason,
+        errorMessage: stopReason === 'error' ? EXHAUSTED_BALANCE_ERROR : undefined,
+      };
+      responses[index].push(
+        stopReason === 'error'
+          ? { type: 'error', reason: 'error', error: message }
+          : { type: 'done', reason: 'stop', message },
+      );
+      responses[index].end(message);
+    };
+    const release =
+      state === 'streaming' ? await acquireFileLock(getAccountVaultPath()) : undefined;
+    const prompts = [session.prompt('Original request')];
+    try {
+      await vi.waitFor(() => expect(responses).toHaveLength(1));
+      finish(0, 'error');
+      if (state === 'streaming') {
+        await settled.promise;
+        // Let rotation reach the held vault lock before another turn starts.
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        prompts.push(session.prompt('Another request during account rotation'));
+        await vi.waitFor(() => expect(responses).toHaveLength(2));
+        await release?.();
+        await prompts[0];
+        expect(errors).not.toHaveBeenCalled();
+        expect(session.getFollowUpMessages()).toEqual([ROTATION_CONTINUATION]);
+        expect(responses).toHaveLength(2);
+        finish(1, 'stop');
+      }
+      const continuationIndex = state === 'streaming' ? 2 : 1;
+      await vi.waitFor(() => expect(responses).toHaveLength(continuationIndex + 1));
+      finish(continuationIndex, 'stop');
+      await Promise.all(prompts);
+      await session.waitForIdle();
+      expect(errors).not.toHaveBeenCalled();
+      expect(session.getFollowUpMessages()).toEqual([]);
+      expect(
+        session.messages.filter(
+          (message) =>
+            message.role === 'user' &&
+            Array.isArray(message.content) &&
+            message.content.some(
+              (part) => part.type === 'text' && part.text === ROTATION_CONTINUATION,
+            ),
+        ),
+      ).toHaveLength(1);
+      expect(session.sessionManager.getBranch()).toContainEqual(
+        expect.objectContaining({
+          type: 'custom',
+          customType: 'grok-cli-active-account-v1',
+          data: { accountId: 'account-2' },
+        }),
+      );
+    } finally {
+      await release?.();
+      await session.abort();
+      await Promise.allSettled(prompts);
+      await session.abort();
+      session.dispose();
+    }
+  });
+
   it('selects another logged-in account without changing the model provider', async () => {
     await addLoggedInAccounts();
     const test = extension();
