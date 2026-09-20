@@ -278,6 +278,7 @@ function createAccountManager(
         if (!account.credential) {
           throw new Error(`Log in to “${account.label}” before making it active.`);
         }
+        vault.activeAccountId = account.id;
         return { id: account.id, slot: account.slot, label: account.label };
       });
       sessionSelection.select(_ctx, id);

@@ -14,6 +14,7 @@ import {
 } from '../../src/provider/accounts.js';
 import { getAccountVault, mutateAccountVault } from '../../src/provider/accountVault.js';
 import { loadQuotaCache, saveQuotaUsage } from '../../src/provider/quotaCache.js';
+import { createSessionAccountSelection } from '../../src/provider/sessionAccountSelection.js';
 import {
   deferred,
   oauthCredential,
@@ -226,14 +227,33 @@ describe('vault account management', () => {
     await expect(accounts.activate(ctx, account.id)).rejects.toThrow('before making it active');
   });
 
-  it('activates an account only for the current Pi session', async () => {
+  it('activates an account for the current session and future sessions', async () => {
     const test = await selectedLoggedInAccount();
 
     expect(test.appendEntry).toHaveBeenCalledWith('grok-cli-active-account-v1', {
       accountId: test.account.id,
     });
-    expect((await getAccountVault()).activeAccountId).toBe('account-1');
+    expect((await getAccountVault()).activeAccountId).toBe(test.account.id);
     expect(test.accounts.snapshot(ctx).accounts[1]).toMatchObject({ active: true });
+    const freshSelection = createSessionAccountSelection({ appendEntry: vi.fn() });
+    expect(freshSelection.accountId('new-session')).toBe(test.account.id);
+    freshSelection.restore({
+      sessionManager: {
+        ...ctx.sessionManager,
+        getSessionId: () => 'existing-session',
+        getBranch: () => [
+          {
+            type: 'custom',
+            id: 'entry-1',
+            parentId: null,
+            timestamp: new Date().toISOString(),
+            customType: 'grok-cli-active-account-v1',
+            data: { accountId: 'account-1' },
+          },
+        ],
+      },
+    });
+    expect(freshSelection.accountId('existing-session')).toBe('account-1');
   });
 
   it('selects another logged-in account when the active account logs out', async () => {

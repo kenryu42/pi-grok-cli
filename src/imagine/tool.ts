@@ -11,7 +11,15 @@ import {
 } from './workflow.js';
 
 const ImageGenParams = Type.Object({
-  prompt: Type.String({ description: 'Text description of the image to generate.' }),
+  prompt: Type.String({
+    description: 'Describe the image to generate, or the changes to apply to the source image.',
+  }),
+  image: Type.Optional(
+    Type.String({
+      description:
+        'Local PNG, JPEG, or WebP path to edit. Relative paths use the session working directory.',
+    }),
+  ),
   aspect_ratio: Type.Optional(
     Type.String({
       description:
@@ -47,7 +55,7 @@ export function registerImageGenTool(
     name: 'image_gen',
     label: 'Image Gen',
     description:
-      "Generate a new image from a text description using Imagine; returns the saved image's absolute path. For a request for one image, call this tool exactly once. Call it multiple times only when the user explicitly requests multiple images. Do not re-read or re-display the image unless the user asks.",
+      "Generate or edit an image with Grok Imagine; returns the saved image's absolute path. Pass image to edit an existing local file. For a request for one image, call this tool exactly once. Call it multiple times only when the user explicitly requests multiple images. Do not re-read or re-display the image unless the user asks.",
     promptGuidelines: [
       'For a request for one image, call image_gen exactly once. Call it multiple times only when the user explicitly requests multiple images.',
       'Do not repeat the saved path unless the user asks for it; the image_gen result already displays a copyable path.',
@@ -57,9 +65,11 @@ export function registerImageGenTool(
       try {
         const prompt = params.prompt.trim();
         if (!prompt) throw new Error('Prompt is required');
+        if (params.image !== undefined && !params.image.trim())
+          throw new Error('Image path is required');
         const aspectRatio = normalizeAspectRatio(params.aspect_ratio);
         const saved = await generateAndSaveImage(
-          { ctx, prompt, aspectRatio, signal },
+          { ctx, prompt, aspectRatio, signal, imagePath: params.image?.trim() },
           dependencies,
           resolveToken,
         );

@@ -5,6 +5,23 @@ import { generateImage } from '../../src/imagine/generate.js';
 afterEach(() => vi.useRealTimers());
 
 describe('generateImage', () => {
+  it('sends a source image to the JSON editing endpoint', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () =>
+      Response.json({ data: [{ b64_json: '/9j/2Q==' }] }),
+    );
+    await generateImage({
+      token: 'secret',
+      prompt: 'Make it blue',
+      imageUrl: 'data:image/png;base64,source',
+      fetchImpl,
+    });
+    expect(fetchImpl.mock.calls[0]?.[0]).toBe('https://api.x.ai/v1/images/edits');
+    expect(JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body))).toMatchObject({
+      prompt: 'Make it blue',
+      image: { url: 'data:image/png;base64,source', type: 'image_url' },
+    });
+  });
+
   it('sends the captured Imagine request and returns JPEG base64', async () => {
     const fetchImpl = vi.fn<typeof fetch>(async () =>
       Response.json({ data: [{ b64_json: '/9j/2Q==' }] }),
