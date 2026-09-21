@@ -86,6 +86,7 @@ describe('model catalog', () => {
         reasoning: true,
         input: ['text', 'image'],
         contextWindow: 500_000,
+        cost: { input: 2, output: 6, cacheRead: 0.5, cacheWrite: 0 },
         thinkingLevelMap: { xhigh: 'xhigh' },
       }),
       expect.objectContaining({
@@ -94,6 +95,7 @@ describe('model catalog', () => {
         reasoning: true,
         input: ['text', 'image'],
         contextWindow: 500_000,
+        cost: { input: 4, output: 12, cacheRead: 1, cacheWrite: 0 },
         thinkingLevelMap: { xhigh: 'xhigh' },
       }),
     ]);
