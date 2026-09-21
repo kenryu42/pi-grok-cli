@@ -31,6 +31,8 @@ describe('model catalog', () => {
     expect(supportsReasoningEffort('grok-4.3')).toBe(true);
     expect(supportsReasoningEffort('grok-4.5')).toBe(true);
     expect(supportsReasoningEffort('grok-4.6')).toBe(true);
+    expect(supportsReasoningEffort('grok-4.7')).toBe(true);
+    expect(supportsReasoningEffort('grok-4.7-build-fast')).toBe(true);
     expect(supportsReasoningEffort('grok-cli/GROK-COMPOSER-2.5-fast')).toBe(false);
     expect(supportsReasoningEffort('grok-4.20-0309-non-reasoning')).toBe(false);
   });
@@ -53,6 +55,8 @@ describe('model catalog', () => {
       'grok-4.3',
       'grok-4.5',
       'grok-4.6',
+      'grok-4.7',
+      'grok-4.7-build-fast',
       'grok-4.20-0309-reasoning',
       'grok-4.20-0309-non-reasoning',
       'grok-4.20-multi-agent-0309',
@@ -67,18 +71,32 @@ describe('model catalog', () => {
     expect(models.find((model) => model.id === 'grok-4.20-0309-reasoning')).toMatchObject({
       cost: { input: 1.25, output: 2.5, cacheRead: 0.2, cacheWrite: 0 },
     });
-    expect(models.find((model) => model.id === 'grok-4.5')).toMatchObject({
-      reasoning: true,
-      input: ['text', 'image'],
-      contextWindow: 500_000,
-      cost: { input: 2, output: 6, cacheRead: 0.5, cacheWrite: 0 },
-    });
-    expect(models.find((model) => model.id === 'grok-4.6')).toMatchObject({
-      reasoning: true,
-      input: ['text', 'image'],
-      contextWindow: 500_000,
-      cost: { input: 2, output: 6, cacheRead: 0.5, cacheWrite: 0 },
-    });
+    for (const id of ['grok-4.5', 'grok-4.6']) {
+      expect(models.find((model) => model.id === id)).toMatchObject({
+        reasoning: true,
+        input: ['text', 'image'],
+        contextWindow: 500_000,
+        cost: { input: 2, output: 6, cacheRead: 0.5, cacheWrite: 0 },
+      });
+    }
+    expect(models.filter((model) => model.id.startsWith('grok-4.7'))).toEqual([
+      expect.objectContaining({
+        id: 'grok-4.7',
+        name: 'Grok 4.7',
+        reasoning: true,
+        input: ['text', 'image'],
+        contextWindow: 500_000,
+        thinkingLevelMap: { xhigh: 'xhigh' },
+      }),
+      expect.objectContaining({
+        id: 'grok-4.7-build-fast',
+        name: 'Grok 4.7 Fast',
+        reasoning: true,
+        input: ['text', 'image'],
+        contextWindow: 500_000,
+        thinkingLevelMap: { xhigh: 'xhigh' },
+      }),
+    ]);
   });
 
   it('filters, reorders, and fills unknown model overrides', () => {
