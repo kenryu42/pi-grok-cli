@@ -7,10 +7,13 @@ import type {
 export async function* streamWithProxyRetry(options: {
   start: () => AssistantMessageEventStream;
   rotate?: () => void;
+  refreshVersion?: () => Promise<void>;
   signal?: AbortSignal;
   onMessage: (message: AssistantMessage) => void;
 }): AsyncGenerator<AssistantMessageEvent> {
-  for (let attempt = 0; ; attempt += 1) {
+  let rotations = 0;
+  let versionRefreshed = false;
+  for (;;) {
     const stream = options.start();
     let started = false;
     for await (const event of stream) {
@@ -25,20 +28,30 @@ export async function* streamWithProxyRetry(options: {
     }
 
     const message = await stream.result();
+    const status =
+      !started && !options.signal?.aborted && message.stopReason === 'error'
+        ? /^grok-cli API error \((\d+)\)/.exec(message.errorMessage ?? '')?.[1]
+        : undefined;
+    if (status === '426' && !versionRefreshed && options.refreshVersion) {
+      versionRefreshed = true;
+      await options.refreshVersion();
+      continue;
+    }
     if (
-      !started &&
-      !options.signal?.aborted &&
-      message.stopReason === 'error' &&
-      /^OpenAI API error \((401|502|520)\)/.test(message.errorMessage ?? '') &&
-      attempt < 2 &&
+      (status === '401' || status === '502' || status === '520') &&
+      rotations < 2 &&
       options.rotate
     ) {
       try {
         options.rotate();
+        rotations += 1;
         continue;
       } catch {
         // A failed session write must not replace the original proxy error.
       }
+    }
+    if (message.stopReason === 'pending') {
+      throw new Error('Grok CLI response ended without a stop reason');
     }
     options.onMessage(message);
     if (message.stopReason === 'error' || message.stopReason === 'aborted') {

@@ -1,14 +1,14 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   type AssistantMessage,
   createAssistantMessageEventStream,
+  normalizeContext,
   type OAuthLoginCallbacks,
 } from '@earendil-works/pi-ai';
 import type { ExtensionAPI, ProviderConfig } from '@earendil-works/pi-coding-agent';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ACCOUNT_VAULT_MARKER,
   getAccountVault,
@@ -21,6 +21,7 @@ import {
   oauthCredential,
   saveTestAccounts,
   setAccount1Credential,
+  startTestServer,
   writePiCredentials,
   writePiVaultMarker,
 } from '../stateTestHelpers.js';
@@ -65,13 +66,28 @@ interface TestContext {
 
 type ExtensionHandler = (event: unknown, ctx: TestContext) => unknown;
 
+const VERSION_HEADERS = {
+  'User-Agent': 'grok-shell/1.0.99 (macos; aarch64)',
+  'x-grok-client-version': '1.0.99',
+};
 const originalFetch = globalThis.fetch;
 const originalHome = process.env.HOME;
 const originalTimeZone = process.env.TZ;
 const originalToken = process.env.GROK_CLI_OAUTH_TOKEN;
 const tempDirs: string[] = [];
 
+let versionServer: Awaited<ReturnType<typeof startTestServer>>;
+let latestVersion = '1.0.99';
+
+beforeAll(async () => {
+  versionServer = await startTestServer((_request, response) => response.end(`${latestVersion}\n`));
+});
+
+afterAll(() => versionServer.close());
+
 beforeEach(() => {
+  latestVersion = '1.0.99';
+  vi.stubEnv('PI_GROK_CLI_VERSION_URL', `${versionServer.origin}/cli/stable`);
   mockOauthLogin.mockReset();
   mockOauthLogin.mockResolvedValue({
     access: 'new-access',
@@ -108,6 +124,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.resetModules();
+  vi.unstubAllEnvs();
   globalThis.fetch = originalFetch;
   if (originalHome === undefined) {
     delete process.env.HOME;
@@ -244,7 +261,7 @@ function proxyResponse(status?: number, started = false) {
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
     },
     stopReason: status ? 'error' : 'stop',
-    ...(status ? { errorMessage: `OpenAI API error (${status}): proxy failure` } : {}),
+    ...(status ? { errorMessage: `grok-cli API error (${status}): proxy failure` } : {}),
     timestamp: Date.now(),
   };
   const stream = createAssistantMessageEventStream();
@@ -269,7 +286,7 @@ async function startProxyRequest(
       api: 'openai-responses',
       baseUrl: 'https://cli-chat-proxy.grok.com',
     },
-    { messages: [] },
+    normalizeContext({ messages: [] }),
     options,
   );
 }
@@ -290,7 +307,7 @@ describe('proxy conversation recovery', () => {
     expect(mockProviderStream).toHaveBeenCalledTimes(1);
     expect(await stream.result()).toMatchObject({
       stopReason: 'error',
-      errorMessage: 'OpenAI API error (502): proxy failure',
+      errorMessage: 'grok-cli API error (502): proxy failure',
     });
     const { requestAccount } = await import('../../src/provider/requestOwnership.js');
     expect(requestAccount(await stream.result())).toBe('account-1');
@@ -310,8 +327,11 @@ describe('proxy conversation recovery', () => {
       conversationId: string | string[] | undefined;
       cacheKey: unknown;
       authorization: string | undefined;
+      userAgent: string | undefined;
+      clientVersion: string | string[] | undefined;
+      clientIdentifier: string | string[] | undefined;
     }[] = [];
-    const server = createServer(async (request, response) => {
+    const server = await startTestServer(async (request, response) => {
       const chunks: Buffer[] = [];
       for await (const chunk of request) chunks.push(Buffer.from(chunk));
       const payload = JSON.parse(Buffer.concat(chunks).toString());
@@ -319,6 +339,9 @@ describe('proxy conversation recovery', () => {
         conversationId: request.headers['x-grok-conv-id'],
         cacheKey: payload.prompt_cache_key,
         authorization: request.headers.authorization,
+        userAgent: request.headers['user-agent'],
+        clientVersion: request.headers['x-grok-client-version'],
+        clientIdentifier: request.headers['x-grok-client-identifier'],
       });
       if (requests.length < 3) {
         response.writeHead(requests.length === 1 ? 401 : 520, {
@@ -332,10 +355,7 @@ describe('proxy conversation recovery', () => {
         `data: ${JSON.stringify({ type: 'response.completed', response: { id: 'response-1', status: 'completed', output: [], usage: { input_tokens: 1, output_tokens: 0, total_tokens: 1 } } })}\n\n`,
       );
     });
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    const address = server.address();
-    if (!address || typeof address === 'string') throw new Error('Missing test server address');
-    vi.stubEnv('PI_GROK_CLI_BASE_URL', `http://127.0.0.1:${address.port}/v1`);
+    vi.stubEnv('PI_GROK_CLI_BASE_URL', `${server.origin}/v1`);
     try {
       const extension = await setupExtension();
       const stream = await startProxyRequest(extension, { sessionId: 'session-a', maxRetries: 5 });
@@ -346,13 +366,14 @@ describe('proxy conversation recovery', () => {
           conversationId,
           cacheKey: 'session-a',
           authorization: 'Bearer one',
+          userAgent: 'grok-shell/1.0.99 (macos; aarch64)',
+          clientVersion: '1.0.99',
+          clientIdentifier: 'grok-shell',
         })),
       );
     } finally {
       vi.unstubAllEnvs();
-      await new Promise<void>((resolve, reject) =>
-        server.close((error) => (error ? reject(error) : resolve())),
-      );
+      await server.close();
     }
   });
 
@@ -378,9 +399,9 @@ describe('proxy conversation recovery', () => {
     expect(events.map((event) => event.type)).toEqual(['done']);
     expect((await stream.result()).stopReason).toBe('stop');
     expect(mockProviderStream.mock.calls.map((call) => call[2]?.headers)).toEqual([
-      { custom: 'kept', 'x-grok-conv-id': 'session-a' },
-      { custom: 'kept', 'x-grok-conv-id': 'session-a:1' },
-      { custom: 'kept', 'x-grok-conv-id': 'session-a:2' },
+      { ...VERSION_HEADERS, custom: 'kept', 'x-grok-conv-id': 'session-a' },
+      { ...VERSION_HEADERS, custom: 'kept', 'x-grok-conv-id': 'session-a:1' },
+      { ...VERSION_HEADERS, custom: 'kept', 'x-grok-conv-id': 'session-a:2' },
     ]);
     for (const call of mockProviderStream.mock.calls) {
       expect(call[2]).toMatchObject({ apiKey: 'one', sessionId: 'session-a', onPayload });
@@ -427,6 +448,83 @@ describe('proxy conversation recovery', () => {
     });
     const { requestAccount } = await import('../../src/provider/requestOwnership.js');
     expect(requestAccount(await stream.result())).toBe('account-1');
+  });
+
+  it('fails a response that ends without a stop reason instead of completing it', async () => {
+    await setAccount1Credential('one');
+    writePiVaultMarker();
+    const pending = { ...(await proxyResponse().result()), stopReason: 'pending' as const };
+    mockProviderStream.mockImplementation(() => {
+      const stream = createAssistantMessageEventStream();
+      stream.end(pending);
+      return stream;
+    });
+    const extension = await setupExtension();
+    const stream = await startProxyRequest(extension, { sessionId: 'session-a' });
+    const events = [];
+    for await (const event of stream) events.push(event);
+
+    expect(events.map((event) => event.type)).toEqual(['error']);
+    expect(await stream.result()).toMatchObject({
+      stopReason: 'error',
+      errorMessage: 'Grok CLI response ended without a stop reason',
+    });
+  });
+
+  it('looks up the version again and retries once when the gate rejects it with HTTP 426', async () => {
+    await setAccount1Credential('one');
+    writePiVaultMarker();
+    mockProviderStream
+      .mockImplementationOnce(() => {
+        latestVersion = '1.0.100';
+        return proxyResponse(426);
+      })
+      .mockImplementationOnce(() => proxyResponse());
+    const extension = await setupExtension();
+    const stream = await startProxyRequest(extension, { sessionId: 'session-a' });
+    const events = [];
+    for await (const event of stream) events.push(event);
+
+    expect(events.map((event) => event.type)).toEqual(['done']);
+    expect(mockProviderStream.mock.calls.map((call) => call[2]?.headers)).toEqual([
+      { ...VERSION_HEADERS, 'x-grok-conv-id': 'session-a' },
+      {
+        'User-Agent': 'grok-shell/1.0.100 (macos; aarch64)',
+        'x-grok-client-version': '1.0.100',
+        'x-grok-conv-id': 'session-a',
+      },
+    ]);
+  });
+
+  it('delivers a second HTTP 426 after one version refresh', async () => {
+    await setAccount1Credential('one');
+    writePiVaultMarker();
+    mockProviderStream.mockImplementation(() => proxyResponse(426));
+    const extension = await setupExtension();
+    const stream = await startProxyRequest(extension, { sessionId: 'session-a' });
+    const events = [];
+    for await (const event of stream) events.push(event);
+
+    expect(events.map((event) => event.type)).toEqual(['error']);
+    expect(mockProviderStream).toHaveBeenCalledTimes(2);
+    expect(await stream.result()).toMatchObject({
+      errorMessage: 'grok-cli API error (426): proxy failure',
+    });
+  });
+
+  it('lets an explicitly configured client version header win', async () => {
+    await setAccount1Credential('one');
+    writePiVaultMarker();
+    const extension = await setupExtension();
+
+    await drain(
+      await startProxyRequest(extension, { headers: { 'x-grok-client-version': '2.0.0' } }),
+    );
+
+    expect(mockProviderStream.mock.calls[0]?.[2]?.headers).toEqual({
+      ...VERSION_HEADERS,
+      'x-grok-client-version': '2.0.0',
+    });
   });
 
   it('restores rotated IDs on reopen and follows the selected session branch', async () => {
@@ -967,7 +1065,7 @@ describe('Grok CLI provider registration', () => {
             api: 'openai-responses',
             baseUrl: 'https://cli-chat-proxy.grok.com',
           },
-          { messages: [] },
+          normalizeContext({ messages: [] }),
           { sessionId: 'session-a' },
         ),
       ),
@@ -979,7 +1077,7 @@ describe('Grok CLI provider registration', () => {
             api: 'openai-responses',
             baseUrl: 'https://cli-chat-proxy.grok.com',
           },
-          { messages: [] },
+          normalizeContext({ messages: [] }),
           { sessionId: 'session-b' },
         ),
       ),
@@ -1013,7 +1111,7 @@ describe('Grok CLI provider registration', () => {
           api: 'openai-responses',
           baseUrl: 'https://cli-chat-proxy.grok.com',
         },
-        { messages: [] },
+        normalizeContext({ messages: [] }),
         { sessionId: 'session-a' },
       ),
     );
