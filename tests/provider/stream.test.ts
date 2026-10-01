@@ -12,6 +12,20 @@ async function versionServer(status: number, body: string) {
   return { url: `${server.origin}/cli/stable`, paths, close: server.close };
 }
 
+// Serves the queued versions in order, one per lookup.
+async function withVersionSequence(
+  versions: string[],
+  run: (stream: typeof import('../../src/provider/stream.js')) => Promise<void>,
+) {
+  const server = await startTestServer((_request, response) => response.end(versions.shift()));
+  try {
+    vi.stubEnv('PI_GROK_CLI_VERSION_URL', `${server.origin}/cli/stable`);
+    await run(await import('../../src/provider/stream.js'));
+  } finally {
+    await server.close();
+  }
+}
+
 async function resolveWith(url: string) {
   vi.stubEnv('PI_GROK_CLI_VERSION_URL', url);
   const { resolveGrokCliVersion } = await import('../../src/provider/stream.js');
@@ -56,18 +70,25 @@ describe('resolveGrokCliVersion', () => {
 
   it('looks up the latest stable release again on refresh', async () => {
     const versions = ['1.0.99', '1.0.100'];
-    const server = await startTestServer((_request, response) => response.end(versions.shift()));
-    try {
-      vi.stubEnv('PI_GROK_CLI_VERSION_URL', `${server.origin}/cli/stable`);
-      const stream = await import('../../src/provider/stream.js');
-
+    await withVersionSequence(versions, async (stream) => {
       await expect(stream.resolveGrokCliVersion()).resolves.toBe('1.0.99');
       await expect(stream.refreshGrokCliVersion()).resolves.toBe('1.0.100');
       await expect(stream.resolveGrokCliVersion()).resolves.toBe('1.0.100');
-      expect(versions).toEqual([]);
-    } finally {
-      await server.close();
-    }
+    });
+    expect(versions).toEqual([]);
+  });
+
+  it('shares one lookup between concurrent refreshes', async () => {
+    const versions = ['1.0.99', '1.0.100', 'not a version'];
+    await withVersionSequence(versions, async (stream) => {
+      await stream.resolveGrokCliVersion();
+
+      await expect(
+        Promise.all([stream.refreshGrokCliVersion(), stream.refreshGrokCliVersion()]),
+      ).resolves.toEqual(['1.0.100', '1.0.100']);
+      await expect(stream.resolveGrokCliVersion()).resolves.toBe('1.0.100');
+    });
+    expect(versions).toEqual(['not a version']);
   });
 
   it.each([

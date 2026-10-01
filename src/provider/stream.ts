@@ -26,10 +26,18 @@ export function resolveGrokCliVersion() {
   return stableVersion;
 }
 
+let refreshing: Promise<string> | undefined;
+
 // Discards the cached release after the gate rejects it and looks it up again.
+// Concurrent rejections share one lookup so a failed one cannot replace a newer release.
 export function refreshGrokCliVersion() {
-  stableVersion = undefined;
-  return resolveGrokCliVersion();
+  if (!refreshing) {
+    stableVersion = undefined;
+    refreshing = resolveGrokCliVersion().finally(() => {
+      refreshing = undefined;
+    });
+  }
+  return refreshing;
 }
 
 /**
