@@ -54,6 +54,22 @@ describe('resolveGrokCliVersion', () => {
     }
   });
 
+  it('looks up the latest stable release again on refresh', async () => {
+    const versions = ['1.0.99', '1.0.100'];
+    const server = await startTestServer((_request, response) => response.end(versions.shift()));
+    try {
+      vi.stubEnv('PI_GROK_CLI_VERSION_URL', `${server.origin}/cli/stable`);
+      const stream = await import('../../src/provider/stream.js');
+
+      await expect(stream.resolveGrokCliVersion()).resolves.toBe('1.0.99');
+      await expect(stream.refreshGrokCliVersion()).resolves.toBe('1.0.100');
+      await expect(stream.resolveGrokCliVersion()).resolves.toBe('1.0.100');
+      expect(versions).toEqual([]);
+    } finally {
+      await server.close();
+    }
+  });
+
   it.each([
     { status: 500, body: 'unavailable' },
     { status: 200, body: '<html>not a version</html>' },

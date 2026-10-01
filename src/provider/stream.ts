@@ -11,7 +11,8 @@ let stableVersion: Promise<string> | undefined;
  * `x-grok-client-version` is missing or older than its minimum supported
  * release; it ignores User-Agent. Reading the latest stable release from the
  * pointer the official installer uses keeps requests above a raised minimum
- * without an extension release. The lookup runs once per process.
+ * without an extension release. The lookup runs once per process until a
+ * request is rejected by the gate.
  */
 export function resolveGrokCliVersion() {
   stableVersion ??= fetch(process.env.PI_GROK_CLI_VERSION_URL || 'https://x.ai/cli/stable', {
@@ -23,6 +24,12 @@ export function resolveGrokCliVersion() {
     })
     .catch(() => GROK_CLI_VERSION);
   return stableVersion;
+}
+
+// Discards the cached release after the gate rejects it and looks it up again.
+export function refreshGrokCliVersion() {
+  stableVersion = undefined;
+  return resolveGrokCliVersion();
 }
 
 /**

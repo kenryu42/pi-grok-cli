@@ -77,14 +77,16 @@ const originalToken = process.env.GROK_CLI_OAUTH_TOKEN;
 const tempDirs: string[] = [];
 
 let versionServer: Awaited<ReturnType<typeof startTestServer>>;
+let latestVersion = '1.0.99';
 
 beforeAll(async () => {
-  versionServer = await startTestServer((_request, response) => response.end('1.0.99\n'));
+  versionServer = await startTestServer((_request, response) => response.end(`${latestVersion}\n`));
 });
 
 afterAll(() => versionServer.close());
 
 beforeEach(() => {
+  latestVersion = '1.0.99';
   vi.stubEnv('PI_GROK_CLI_VERSION_URL', `${versionServer.origin}/cli/stable`);
   mockOauthLogin.mockReset();
   mockOauthLogin.mockResolvedValue({
@@ -466,6 +468,47 @@ describe('proxy conversation recovery', () => {
     expect(await stream.result()).toMatchObject({
       stopReason: 'error',
       errorMessage: 'Grok CLI response ended without a stop reason',
+    });
+  });
+
+  it('looks up the version again and retries once when the gate rejects it with HTTP 426', async () => {
+    await setAccount1Credential('one');
+    writePiVaultMarker();
+    mockProviderStream
+      .mockImplementationOnce(() => {
+        latestVersion = '1.0.100';
+        return proxyResponse(426);
+      })
+      .mockImplementationOnce(() => proxyResponse());
+    const extension = await setupExtension();
+    const stream = await startProxyRequest(extension, { sessionId: 'session-a' });
+    const events = [];
+    for await (const event of stream) events.push(event);
+
+    expect(events.map((event) => event.type)).toEqual(['done']);
+    expect(mockProviderStream.mock.calls.map((call) => call[2]?.headers)).toEqual([
+      { ...VERSION_HEADERS, 'x-grok-conv-id': 'session-a' },
+      {
+        'User-Agent': 'grok-shell/1.0.100 (macos; aarch64)',
+        'x-grok-client-version': '1.0.100',
+        'x-grok-conv-id': 'session-a',
+      },
+    ]);
+  });
+
+  it('delivers a second HTTP 426 after one version refresh', async () => {
+    await setAccount1Credential('one');
+    writePiVaultMarker();
+    mockProviderStream.mockImplementation(() => proxyResponse(426));
+    const extension = await setupExtension();
+    const stream = await startProxyRequest(extension, { sessionId: 'session-a' });
+    const events = [];
+    for await (const event of stream) events.push(event);
+
+    expect(events.map((event) => event.type)).toEqual(['error']);
+    expect(mockProviderStream).toHaveBeenCalledTimes(2);
+    expect(await stream.result()).toMatchObject({
+      errorMessage: 'grok-cli API error (426): proxy failure',
     });
   });
 

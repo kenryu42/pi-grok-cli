@@ -34,7 +34,12 @@ import { rememberRequestAccount } from './requestOwnership.js';
 import { registerExhaustionRotation } from './rotation.js';
 import { createSessionAccountSelection } from './sessionAccountSelection.js';
 import { registerSessionConvId } from './sessionConvId.js';
-import { grokCliModelHeaders, grokCliVersionHeaders, resolveGrokCliVersion } from './stream.js';
+import {
+  grokCliModelHeaders,
+  grokCliVersionHeaders,
+  refreshGrokCliVersion,
+  resolveGrokCliVersion,
+} from './stream.js';
 import { registerUsageCommand } from './usage.js';
 
 const marker = (): OAuthCredentials => ({
@@ -165,10 +170,11 @@ export default function registerGrokCli(pi: ExtensionAPI) {
       return lazyStream(model, async () => {
         await migration;
         if (migrationError) throw new Error(migrationError);
-        const [route, version] = await Promise.all([
+        const [route, resolvedVersion] = await Promise.all([
           resolveAccountRoute(accountId),
           resolveGrokCliVersion(),
         ]);
+        let version = resolvedVersion;
         return streamWithProxyRetry({
           start: () =>
             streamSimpleOpenAIResponses(
@@ -195,6 +201,9 @@ export default function registerGrokCli(pi: ExtensionAPI) {
                 convIds.rotate(sessionId);
               }
             : undefined,
+          refreshVersion: async () => {
+            version = await refreshGrokCliVersion();
+          },
           signal: options?.signal,
           onMessage: (message) => rememberRequestAccount(message, route.accountId),
         });
