@@ -9,7 +9,7 @@ import {
 } from './sessionAccountSelection.js';
 
 export const EXHAUSTED_BALANCE_ERROR =
-  'OpenAI API error (402): 402 "Grok Build usage balance exhausted"';
+  'grok-cli API error (402): 402 "Grok Build usage balance exhausted"';
 export const ROTATION_CONTINUATION =
   'Continue the previous request using the newly selected Grok account. Do not repeat completed work.';
 const RECENT_EXHAUSTION_COOLDOWN_MS = 5 * 60_000;

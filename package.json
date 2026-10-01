@@ -53,16 +53,16 @@
     ]
   },
   "peerDependencies": {
-    "@earendil-works/pi-ai": ">=0.80.9",
-    "@earendil-works/pi-coding-agent": ">=0.80.9",
-    "@earendil-works/pi-tui": ">=0.80.9"
+    "@earendil-works/pi-ai": ">=0.86.0",
+    "@earendil-works/pi-coding-agent": ">=0.86.0",
+    "@earendil-works/pi-tui": ">=0.86.0"
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.16",
-    "@earendil-works/pi-agent-core": "^0.80.9",
-    "@earendil-works/pi-ai": "^0.80.9",
-    "@earendil-works/pi-coding-agent": "^0.80.9",
-    "@earendil-works/pi-tui": "^0.80.9",
+    "@earendil-works/pi-agent-core": "^0.86.0",
+    "@earendil-works/pi-ai": "^0.86.0",
+    "@earendil-works/pi-coding-agent": "^0.86.0",
+    "@earendil-works/pi-tui": "^0.86.0",
     "@vitest/coverage-v8": "^4.1.8",
     "happy-dom": "^20.10.6",
     "husky": "^9.1.7",

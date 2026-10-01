@@ -1,6 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { type AssistantMessage, createAssistantMessageEventStream } from '@earendil-works/pi-ai';
+import {
+  type AssistantMessage,
+  createAssistantMessageEventStream,
+  normalizeContext,
+} from '@earendil-works/pi-ai';
+import { streamSimpleOpenAIResponses } from '@earendil-works/pi-ai/compat';
 import {
   createAgentSession,
   DefaultResourceLoader,
@@ -26,7 +31,12 @@ import {
   getGrokCliDirectory,
   writeFileAtomic,
 } from '../../src/storage.js';
-import { deferred, useEnvironmentToken, useTempHome } from '../stateTestHelpers.js';
+import {
+  deferred,
+  startTestServer,
+  useEnvironmentToken,
+  useTempHome,
+} from '../stateTestHelpers.js';
 
 const setupHome = useTempHome();
 const setEnvironmentToken = useEnvironmentToken();
@@ -202,7 +212,7 @@ describe('Grok CLI exhaustion rotation', () => {
     const errors = vi.fn();
     await session.bindExtensions({ onError: errors });
     const responses: ReturnType<typeof createAssistantMessageEventStream>[] = [];
-    session.agent.streamFn = (_model, _context, options) => {
+    session.agent.streamFunction = (_model, _context, options) => {
       const stream = createAssistantMessageEventStream();
       options?.signal?.addEventListener(
         'abort',
@@ -274,6 +284,44 @@ describe('Grok CLI exhaustion rotation', () => {
       await Promise.allSettled(prompts);
       await session.abort();
       session.dispose();
+    }
+  });
+
+  it('rotates on the balance exhaustion error as the Pi HTTP adapter reports it', async () => {
+    await addLoggedInAccounts();
+    const server = await startTestServer((_request, response) => {
+      response.writeHead(402, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ error: 'Grok Build usage balance exhausted' }));
+    });
+    try {
+      const message = await streamSimpleOpenAIResponses(
+        {
+          id: 'grok-build',
+          name: 'Test Grok',
+          api: 'openai-responses',
+          provider: 'grok-cli',
+          baseUrl: `${server.origin}/v1`,
+          reasoning: false,
+          input: ['text'],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 10000,
+          maxTokens: 1000,
+        },
+        normalizeContext({ messages: [] }),
+        { apiKey: 'one', maxRetries: 0 },
+      ).result();
+      const test = extension();
+      rememberRequestAccount(message, 'account-1');
+
+      await test.emit('message_end', { message });
+      await test.emit('agent_settled');
+
+      expect(test.selection.accountId('session-a')).toBe('account-2');
+      expect(test.sendUserMessage).toHaveBeenCalledWith(ROTATION_CONTINUATION, {
+        deliverAs: 'followUp',
+      });
+    } finally {
+      await server.close();
     }
   });
 

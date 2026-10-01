@@ -29,7 +29,7 @@ export async function* streamWithProxyRetry(options: {
       !started &&
       !options.signal?.aborted &&
       message.stopReason === 'error' &&
-      /^OpenAI API error \((401|502|520)\)/.test(message.errorMessage ?? '') &&
+      /^grok-cli API error \((401|502|520)\)/.test(message.errorMessage ?? '') &&
       attempt < 2 &&
       options.rotate
     ) {
@@ -39,6 +39,9 @@ export async function* streamWithProxyRetry(options: {
       } catch {
         // A failed session write must not replace the original proxy error.
       }
+    }
+    if (message.stopReason === 'pending') {
+      throw new Error('Grok CLI response ended without a stop reason');
     }
     options.onMessage(message);
     if (message.stopReason === 'error' || message.stopReason === 'aborted') {

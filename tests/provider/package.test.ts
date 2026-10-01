@@ -33,10 +33,10 @@ describe('npm package manifest', () => {
     expect(existsSync(new URL('../../vitest.config.ts', import.meta.url))).toBe(true);
   });
 
-  it('declares the Pi runtime version required by dashboard auth', () => {
-    expect(packageJson.peerDependencies?.['@earendil-works/pi-ai']).toBe('>=0.80.9');
-    expect(packageJson.peerDependencies?.['@earendil-works/pi-coding-agent']).toBe('>=0.80.9');
-    expect(packageJson.peerDependencies?.['@earendil-works/pi-tui']).toBe('>=0.80.9');
+  it('declares the Pi runtime version whose provider error prefix the extension matches', () => {
+    expect(packageJson.peerDependencies?.['@earendil-works/pi-ai']).toBe('>=0.86.0');
+    expect(packageJson.peerDependencies?.['@earendil-works/pi-coding-agent']).toBe('>=0.86.0');
+    expect(packageJson.peerDependencies?.['@earendil-works/pi-tui']).toBe('>=0.86.0');
     expect(packageJson.dependencies).toBeUndefined();
     expect(packageJson.devDependencies?.['@types/proper-lockfile']).toBeUndefined();
   });

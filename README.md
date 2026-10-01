@@ -18,7 +18,7 @@ Use your X Premium or SuperGrok subscription in [pi](https://pi.dev/) with a cle
 - **Image generation:** Generate images directly or let Grok use the `image_gen` tool.
 - **Native image input:** Send images directly to supported Grok models, including Composer 2.5.
 
-> Requires pi 0.80.9 or newer and an xAI/Grok account with access to the selected model. Availability varies by account, plan, region, and xAI rollout. The Grok Build executable is not required.
+> Requires pi 0.86.0 or newer and an xAI/Grok account with access to the selected model. Availability varies by account, plan, region, and xAI rollout. The Grok Build executable is not required.
 >
 > This is an unofficial community integration. It does not bypass xAI access controls, quotas, or billing.
 

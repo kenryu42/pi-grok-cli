@@ -1,4 +1,5 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer, type RequestListener } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach } from 'vitest';
@@ -75,6 +76,20 @@ export function setAccount1Credential(access: string) {
     vault.accounts[0].revision += 1;
     vault.activeAccountId = 'account-1';
   });
+}
+
+export async function startTestServer(handler: RequestListener) {
+  const server = createServer(handler);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('Missing test server address');
+  return {
+    origin: `http://127.0.0.1:${address.port}`,
+    close: () =>
+      new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      ),
+  };
 }
 
 export function writeTestJson(path: string, value: unknown) {
