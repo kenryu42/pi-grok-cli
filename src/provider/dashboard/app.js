@@ -34,6 +34,8 @@ const element = (tag, className, text) => {
   return node;
 };
 
+const CLEAR_TOAST_AFTER_HIDE_TRANSITION_MS = 400;
+
 const makeToast = (node) => {
   let dismiss;
   const hide = () => {
@@ -44,7 +46,7 @@ const makeToast = (node) => {
       if (!node.classList.contains('visible') && node.textContent === message) {
         node.textContent = '';
       }
-    }, 400);
+    }, CLEAR_TOAST_AFTER_HIDE_TRANSITION_MS);
   };
   node.addEventListener('pointerenter', () => clearTimeout(dismiss));
   node.addEventListener('pointerleave', () => {
@@ -423,12 +425,10 @@ const gaugeMemory = new Map();
 
 const animateGauge = (gauge, from, to) => {
   if (reduceMotion.matches) return;
-  try {
-    gauge.animate([{ '--gauge': String(from) }, { '--gauge': String(to) }], {
-      duration: 780,
-      easing: 'cubic-bezier(0.22, 0.9, 0.24, 1)',
-    });
-  } catch {}
+  gauge.animate([{ '--gauge': String(from) }, { '--gauge': String(to) }], {
+    duration: 780,
+    easing: 'cubic-bezier(0.22, 0.9, 0.24, 1)',
+  });
 };
 
 const quotaRow = (accountId, label, usedLabel, metaText, remaining) => {
@@ -716,6 +716,27 @@ const accountCard = (account, index, isNewPending, refreshing, environmentMode) 
   return card;
 };
 
+const announceResolvedLogins = (state, nextPending) => {
+  for (const accountId of pendingAccountIds) {
+    if (nextPending.has(accountId)) continue;
+    const account = state.accounts.find((candidate) => candidate.id === accountId);
+    if (account?.login.state === 'success') showToast(`Logged in ${account.label}.`);
+    if (account?.login.state === 'failed') showToast(account.login.error || 'Login failed.', true);
+    if (account?.login.quotaError) showToast(account.login.quotaError, true);
+  }
+};
+
+const announceLoginProgressInLiveRegion = (state) => {
+  const progress = state.accounts
+    .filter((account) => account.login.state === 'pending')
+    .map((account) => account.login.progress || 'Waiting for browser authorization…')
+    .join(' ');
+  if (progress !== lastProgress) {
+    lastProgress = progress;
+    if (progress) srStatus.textContent = progress;
+  }
+};
+
 const render = (state) => {
   const environmentMode = state.accounts.some((account) => account.environment);
   statsSummary.textContent = `${state.accounts.length} account${state.accounts.length === 1 ? '' : 's'}`;
@@ -744,21 +765,8 @@ const render = (state) => {
       .filter((account) => account.login.state === 'pending')
       .map((account) => account.id),
   );
-  for (const accountId of pendingAccountIds) {
-    if (nextPending.has(accountId)) continue;
-    const account = state.accounts.find((candidate) => candidate.id === accountId);
-    if (account?.login.state === 'success') showToast(`Logged in ${account.label}.`);
-    if (account?.login.state === 'failed') showToast(account.login.error || 'Login failed.', true);
-    if (account?.login.quotaError) showToast(account.login.quotaError, true);
-  }
-  const progress = state.accounts
-    .filter((account) => account.login.state === 'pending')
-    .map((account) => account.login.progress || 'Waiting for browser authorization…')
-    .join(' ');
-  if (progress !== lastProgress) {
-    lastProgress = progress;
-    if (progress) srStatus.textContent = progress;
-  }
+  announceResolvedLogins(state, nextPending);
+  announceLoginProgressInLiveRegion(state);
   const children = state.accounts.length
     ? state.accounts.map((account, index) =>
         accountCard(
