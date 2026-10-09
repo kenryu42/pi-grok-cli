@@ -221,13 +221,13 @@ export function sanitizePayload(
   sessionId: string | undefined,
   cwd: string,
 ): Record<string, unknown> {
-  const next = params;
+  const next = { ...params };
 
   if (Array.isArray(next.input)) {
     let input = (next.input as unknown[])
       .map((item: unknown) => {
         if (!item || typeof item !== 'object') return item;
-        const obj = item as Record<string, unknown>;
+        const obj = { ...(item as Record<string, unknown>) };
 
         if (obj.type === 'reasoning') {
           delete obj.status;

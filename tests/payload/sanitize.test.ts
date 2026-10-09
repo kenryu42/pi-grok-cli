@@ -63,6 +63,28 @@ describe('payload sanitization', () => {
     expect(payload.prompt_cache_key).toBe('session-123');
   });
 
+  it('returns a sanitized copy and leaves the given payload unchanged', () => {
+    const original = {
+      input: [
+        { role: 'system', content: 'system instruction' },
+        { type: 'reasoning', content: 'cached reasoning', status: 'completed' },
+        { role: 'user', content: 'hello' },
+      ],
+      include: ['message.output_text'],
+      prompt_cache_retention: '24h',
+      reasoning: { effort: 'minimal' },
+      reasoningEffort: 'minimal',
+      response_format: { type: 'json_object' },
+    };
+    const snapshot = structuredClone(original);
+
+    const payload = sanitizePayload(original, 'grok-4.3', 'session-123', process.cwd());
+
+    expect(original).toEqual(snapshot);
+    expect(payload).not.toBe(original);
+    expect(payload.prompt_cache_key).toBe('session-123');
+  });
+
   it('preserves encrypted reasoning and drops invalid reasoning-content types', () => {
     const payload = sanitizePayload(
       {
