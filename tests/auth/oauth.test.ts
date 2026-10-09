@@ -370,7 +370,7 @@ describe('OAuth helpers without network access', () => {
     await expect(
       login({
         onAuth: (auth) => setTimeout(() => authorizeCallback(auth), 0),
-      } as OAuthLoginCallbacks),
+      }),
     ).resolves.toMatchObject({
       access: 'login-access',
       refresh: 'login-refresh',
@@ -401,7 +401,7 @@ describe('OAuth helpers without network access', () => {
           });
           authorizeCallback(auth);
         },
-      } as OAuthLoginCallbacks),
+      }),
     ).resolves.toMatchObject({ access: 'access' });
 
     expect(preflight?.status).toBe(204);
@@ -418,12 +418,10 @@ describe('OAuth helpers without network access', () => {
     );
     globalThis.fetch = fetchMock;
 
-    await expect(login({ onAuth: authorizeCallback } as OAuthLoginCallbacks)).rejects.toMatchObject(
-      {
-        code: XaiErrorCode.TOKEN_EXCHANGE_FAILED,
-        message: 'xAI token exchange failed: 400 authorization code expired',
-      },
-    );
+    await expect(login({ onAuth: authorizeCallback })).rejects.toMatchObject({
+      code: XaiErrorCode.TOKEN_EXCHANGE_FAILED,
+      message: 'xAI token exchange failed: 400 authorization code expired',
+    });
   });
 
   it.each([
@@ -432,12 +430,10 @@ describe('OAuth helpers without network access', () => {
   ])('rejects token exchange payloads missing %s', async (payload, field) => {
     mockBrowserLogin(payload);
 
-    await expect(login({ onAuth: authorizeCallback } as OAuthLoginCallbacks)).rejects.toMatchObject(
-      {
-        code: XaiErrorCode.TOKEN_EXCHANGE_INVALID,
-        message: `xAI token exchange did not return ${field}.`,
-      },
-    );
+    await expect(login({ onAuth: authorizeCallback })).rejects.toMatchObject({
+      code: XaiErrorCode.TOKEN_EXCHANGE_INVALID,
+      message: `xAI token exchange did not return ${field}.`,
+    });
   });
 
   it('offers only fresh login methods when an official Grok auth file exists', async () => {
@@ -499,7 +495,7 @@ describe('OAuth helpers without network access', () => {
     await expect(
       login({
         onAuth: (auth) => rejectCallbackThenAuthorize(auth, 'code=bad&state=wrong'),
-      } as OAuthLoginCallbacks),
+      }),
     ).resolves.toMatchObject({ access: 'login-access' });
     expect((fetchMock.mock.calls[1]?.[1]?.body as URLSearchParams).get('code')).toBe('accepted');
   });
@@ -510,7 +506,7 @@ describe('OAuth helpers without network access', () => {
     await expect(
       login({
         onAuth: (auth) => rejectCallbackThenAuthorize(auth, 'code=ignored'),
-      } as OAuthLoginCallbacks),
+      }),
     ).resolves.toMatchObject({ access: 'access' });
   });
 
@@ -533,7 +529,7 @@ describe('OAuth helpers without network access', () => {
           });
           authorizeCallback(auth);
         },
-      } as OAuthLoginCallbacks),
+      }),
     ).resolves.toMatchObject({ access: 'access' });
   });
 
@@ -556,7 +552,7 @@ describe('OAuth helpers without network access', () => {
             ),
           );
         },
-      } as OAuthLoginCallbacks),
+      }),
     ).rejects.toMatchObject({
       code: XaiErrorCode.AUTHORIZATION_FAILED,
       message: 'Denied',
@@ -574,7 +570,7 @@ describe('OAuth helpers without network access', () => {
           .then(() => fetchCallback(callbackUrl(auth, `code=second&state=${state}`)))
           .catch(() => undefined);
       },
-    } as OAuthLoginCallbacks);
+    });
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect((fetchMock.mock.calls[1]?.[1]?.body as URLSearchParams).get('code')).toBe('first');
@@ -616,7 +612,7 @@ describe('OAuth helpers without network access', () => {
         onManualCodeInput: async () => authorizationCode,
         onProgress,
         signal: controller.signal,
-      } as OAuthLoginCallbacks),
+      }),
     ).resolves.toMatchObject({ access: 'manual-access' });
     expect(onProgress).not.toHaveBeenCalled();
     expect((fetchMock.mock.calls[1]?.[1]?.body as URLSearchParams).get('code')).toBe(
@@ -635,7 +631,7 @@ describe('OAuth helpers without network access', () => {
         },
         onManualCodeInput: async () => 'code=ignored&state=wrong',
         onProgress,
-      } as OAuthLoginCallbacks),
+      }),
     ).resolves.toMatchObject({ access: 'access' });
     expect(onProgress).toHaveBeenCalledWith(
       "Ignored pasted callback: OAuth state did not match. Paste the complete callback URL or xAI's one-time code.",
@@ -653,7 +649,7 @@ describe('OAuth helpers without network access', () => {
       onAuth: (auth) => setTimeout(() => authorizeCallback(auth), 0),
       onManualCodeInput: async () => input,
       onProgress,
-    } as OAuthLoginCallbacks);
+    });
     expect(onProgress).toHaveBeenCalledWith(
       `Ignored pasted callback: ${reason} Paste the complete callback URL or xAI's one-time code.`,
     );
@@ -671,7 +667,7 @@ describe('OAuth helpers without network access', () => {
           resolveManual = resolve;
         }),
       onProgress,
-    } as OAuthLoginCallbacks);
+    });
     resolveManual?.('malformed');
     await Promise.resolve();
     expect(onProgress).not.toHaveBeenCalled();
@@ -691,7 +687,7 @@ describe('OAuth helpers without network access', () => {
         await vi.waitFor(() => expect(authUrl).not.toBe(''));
         return `${redirectUri}?code=manual&state=${new URL(authUrl).searchParams.get('state')}`;
       },
-    } as OAuthLoginCallbacks);
+    });
     await expect(fetchCallback(redirectUri)).rejects.toThrow();
   });
 
@@ -717,7 +713,7 @@ describe('OAuth helpers without network access', () => {
         onAuth,
         onManualCodeInput: () => new Promise(() => undefined),
         signal: controller.signal,
-      } as OAuthLoginCallbacks),
+      }),
     ).rejects.toThrow('Login cancelled');
   });
 
@@ -729,7 +725,7 @@ describe('OAuth helpers without network access', () => {
       login({
         onAuth: () => setTimeout(() => controller.abort(), 0),
         signal: controller.signal,
-      } as OAuthLoginCallbacks),
+      }),
     ).rejects.toThrow('Login cancelled');
   });
 
@@ -766,7 +762,7 @@ describe('OAuth helpers without network access', () => {
       onSelect,
       onDeviceCode,
       onProgress,
-    } as unknown as OAuthLoginCallbacks);
+    });
 
     await vi.waitFor(() => expect(onDeviceCode).toHaveBeenCalledOnce());
     expect(onSelect).toHaveBeenCalledWith({
@@ -979,7 +975,7 @@ describe('OAuth helpers without network access', () => {
       login({
         onAuth: (auth: { url: string }) => setTimeout(() => authorizeCallback(auth), 0),
         onSelect,
-      } as unknown as OAuthLoginCallbacks),
+      }),
     ).resolves.toMatchObject({
       access: 'login-access',
       refresh: 'login-refresh',
@@ -995,7 +991,7 @@ describe('OAuth helpers without network access', () => {
     vi.useFakeTimers();
     globalThis.fetch = vi.fn<typeof fetch>(async () => Response.json(discoveryDocument));
     const onAuth = vi.fn();
-    const resultPromise = login({ onAuth } as unknown as OAuthLoginCallbacks).then(
+    const resultPromise = login({ onAuth }).then(
       () => undefined,
       (error: unknown) => error,
     );
@@ -1031,7 +1027,7 @@ describe('OAuth helpers without network access', () => {
     await expect(
       login({
         onAuth: authorizeCallback,
-      } as OAuthLoginCallbacks),
+      }),
     ).rejects.toMatchObject({
       code: XaiErrorCode.TOKEN_EXCHANGE_FAILED,
       message: 'xAI token exchange failed: exchange socket closed',
@@ -1047,7 +1043,7 @@ describe('OAuth helpers without network access', () => {
     await expect(
       login({
         onAuth: authorizeCallback,
-      } as OAuthLoginCallbacks),
+      }),
     ).rejects.toMatchObject({
       code: XaiErrorCode.TOKEN_EXCHANGE_FAILED,
       message: expect.stringContaining('xAI token exchange returned invalid JSON:'),

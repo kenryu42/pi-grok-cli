@@ -234,7 +234,7 @@ async function browserDashboard(
       await window.happyDOM.abort();
     },
     async runFrame(now: number) {
-      const next = frames.entries().next().value as [number, FrameRequestCallback] | undefined;
+      const next = frames.entries().next().value;
       if (!next) return;
       frames.delete(next[0]);
       next[1](now);

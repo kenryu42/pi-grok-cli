@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ExtensionCommandContext } from '@earendil-works/pi-coding-agent';
+import type { ExtensionCommandContext } from '@earendil-works/pi-coding-agent';
 import { describe, expect, it, vi } from 'vitest';
 import type { AccountRoute } from '../../src/provider/accountRouting.js';
 import { fetchBillingUsage } from '../../src/provider/billing.js';
@@ -31,7 +31,7 @@ function commandHarness(resolveRoute: () => Promise<AccountRoute>): {
       registerCommand(name, command) {
         commands.set(name, command);
       },
-    } as Pick<ExtensionAPI, 'registerCommand'>,
+    },
     resolveRoute,
   );
   const notify = vi.fn();

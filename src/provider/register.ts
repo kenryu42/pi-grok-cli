@@ -1,9 +1,4 @@
-import {
-  lazyStream,
-  type Model,
-  type OAuthCredentials,
-  type SimpleStreamOptions,
-} from '@earendil-works/pi-ai';
+import { lazyStream, type OAuthCredentials, type SimpleStreamOptions } from '@earendil-works/pi-ai';
 import { streamSimpleOpenAIResponses } from '@earendil-works/pi-ai/compat';
 import {
   type ExtensionAPI,
@@ -55,7 +50,7 @@ function isMarker(credentials: OAuthCredentials) {
 }
 
 function accountCredential(credentials: OAuthCredentials): AccountCredential {
-  return structuredClone(credentials) as AccountCredential;
+  return structuredClone(credentials);
 }
 
 export default function registerGrokCli(pi: ExtensionAPI) {
@@ -182,7 +177,7 @@ export default function registerGrokCli(pi: ExtensionAPI) {
                 ...model,
                 baseUrl: route.baseUrl,
                 api: 'openai-responses',
-              } as Model<'openai-responses'>,
+              },
               context,
               {
                 ...options,

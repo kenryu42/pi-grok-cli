@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
+import type { ExtensionContext } from '@earendil-works/pi-coding-agent';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { mutateAccountVault } from '../../src/provider/accountVault.js';
 import {
@@ -55,7 +55,7 @@ beforeEach(async () => {
 describe('Pi session account selection', () => {
   it('keeps account selections independent for two sessions', () => {
     const appendEntry = vi.fn();
-    const selection = createSessionAccountSelection({ appendEntry } as unknown as ExtensionAPI);
+    const selection = createSessionAccountSelection({ appendEntry });
     const first = context('session-a');
     const second = context('session-b');
 
@@ -71,7 +71,7 @@ describe('Pi session account selection', () => {
   it('restores the last account selection on the active session branch', () => {
     const selection = createSessionAccountSelection({
       appendEntry: vi.fn(),
-    } as unknown as ExtensionAPI);
+    });
 
     expect(selection.restore(context('session-a', ['account-1', 'work-id']))).toBe('work-id');
     expect(selection.accountId('session-a')).toBe('work-id');
@@ -80,7 +80,7 @@ describe('Pi session account selection', () => {
   it('restores an account when the callback is detached', () => {
     const selection = createSessionAccountSelection({
       appendEntry: vi.fn(),
-    } as unknown as ExtensionAPI);
+    });
     const restore = selection.restore;
 
     expect(restore(context('session-a', ['work-id']))).toBe('work-id');
@@ -89,7 +89,7 @@ describe('Pi session account selection', () => {
   it('returns another logged-in account when a stored selection is no longer valid', () => {
     const selection = createSessionAccountSelection({
       appendEntry: vi.fn(),
-    } as unknown as ExtensionAPI);
+    });
 
     expect(selection.restore(context('session-a', ['removed-id']))).toBe('account-1');
     expect(selection.accountId('session-a')).toBe('account-1');

@@ -135,7 +135,7 @@ function accountCredential(credential: Credential | undefined): AccountCredentia
     return undefined;
   }
   const { type: _type, ...oauth } = credential;
-  return structuredClone(oauth) as AccountCredential;
+  return structuredClone(oauth);
 }
 
 async function migrateQuota(accountIds: Map<string, string>) {

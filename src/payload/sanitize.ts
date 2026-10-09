@@ -244,9 +244,9 @@ export function sanitizePayload(
 
     const instructionParts: string[] = [];
     input = input.filter((item) => {
-      const role = (item as Record<string, unknown>).role;
+      const role = item.role;
       if (role !== 'developer' && role !== 'system') return true;
-      const text = textFromContent((item as Record<string, unknown>).content).trim();
+      const text = textFromContent(item.content).trim();
       if (text) instructionParts.push(text);
       return false;
     });
@@ -262,7 +262,6 @@ export function sanitizePayload(
     input = rewriteFunctionCallOutput(input);
 
     next.input = input;
-  } else if (typeof next.input === 'string') {
   }
 
   if (next.response_format) {
