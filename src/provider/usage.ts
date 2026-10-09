@@ -31,20 +31,16 @@ export function registerUsageCommand(
           return;
         }
 
-        let routeError: unknown;
+        let routeReason: string | undefined;
         const route = await resolveRoute(ctx).catch((error: unknown) => {
-          routeError = error;
+          routeReason = error instanceof Error ? error.message : String(error);
           return undefined;
         });
         if (!route) {
           ctx.ui.notify(
             [
               ...formatQuota(undefined),
-              ...(routeError === undefined
-                ? []
-                : [
-                    `    Reason     ${routeError instanceof Error ? routeError.message : String(routeError)}`,
-                  ]),
+              ...(routeReason === undefined ? [] : [`    Reason     ${routeReason}`]),
             ].join('\n'),
             'info',
           );

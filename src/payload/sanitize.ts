@@ -183,7 +183,7 @@ function rewriteFunctionCallOutput(input: Record<string, unknown>[]): Record<str
     rewritten.push({ ...item, output: outputText });
 
     if (imageCount > 0) {
-      const callId = item.call_id ? ` (${String(item.call_id)})` : '';
+      const callId = typeof item.call_id === 'string' && item.call_id ? ` (${item.call_id})` : '';
       const label = `The previous tool result${callId} included ${imageCount} image${imageCount === 1 ? '' : 's'}. Use the attached image${imageCount === 1 ? '' : 's'} as the visual output from that tool.`;
       rewritten.push({
         role: 'user',
@@ -207,7 +207,7 @@ function normalizeReasoningContent(content: unknown) {
     if (!part || typeof part !== 'object' || Array.isArray(part)) return [];
     const reasoningPart = part as Record<string, unknown>;
     if (reasoningPart.type === 'reasoning_text' && typeof reasoningPart.text === 'string') {
-      return [part];
+      return [reasoningPart];
     }
     if (reasoningPart.type !== undefined || typeof reasoningPart.text !== 'string') return [];
     return [{ ...reasoningPart, type: 'reasoning_text' }];

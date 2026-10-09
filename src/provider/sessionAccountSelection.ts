@@ -33,7 +33,7 @@ export function createSessionAccountSelection(pi: Pick<ExtensionAPI, 'appendEntr
 
   return {
     accountId,
-    restore(ctx: Pick<ExtensionContext, 'sessionManager'>) {
+    restore: (ctx: Pick<ExtensionContext, 'sessionManager'>) => {
       const sessionId = ctx.sessionManager.getSessionId();
       const restored = ctx.sessionManager
         .getBranch()

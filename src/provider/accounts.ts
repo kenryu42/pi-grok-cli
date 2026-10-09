@@ -76,7 +76,8 @@ function defaultLabel(slot: number) {
 
 function normalizeLabel(accounts: VaultAccount[], id: string, slot: number, value: string) {
   const label = value.trim() || defaultLabel(slot);
-  if ([...label].length > 40) throw new Error('Account labels must be 40 characters or fewer.');
+  if (Array.from(label).length > 40)
+    throw new Error('Account labels must be 40 characters or fewer.');
   if (hasTerminalControlCharacters(label)) {
     throw new Error('Account labels cannot contain control characters.');
   }
@@ -551,7 +552,7 @@ export function registerAccountManagement(
 
   return {
     manager,
-    closeDashboard: dashboard.close,
+    closeDashboard: () => dashboard.close(),
     handleModelSelect: manager.handleModelSelect,
   };
 }

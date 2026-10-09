@@ -32,7 +32,7 @@ function releasedAccount(provider: unknown, label: unknown): ReleasedAccount | u
   const normalizedLabel = label.trim();
   if (
     !normalizedLabel ||
-    [...normalizedLabel].length > 40 ||
+    Array.from(normalizedLabel).length > 40 ||
     hasTerminalControlCharacters(normalizedLabel)
   ) {
     return undefined;

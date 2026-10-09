@@ -207,7 +207,7 @@ export default function registerGrokCli(pi: ExtensionAPI) {
 
   const accountManagement = registerAccountManagement(
     pi,
-    exhaustionRotation.clearRecentExhaustion,
+    (accountId) => exhaustionRotation.clearRecentExhaustion(accountId),
     sessionSelection,
   );
   const resolveSessionRoute = (ctx: Pick<ExtensionContext, 'sessionManager'>) =>

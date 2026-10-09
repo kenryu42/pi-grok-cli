@@ -41,7 +41,7 @@ function combineWarnings(warnings: (string | undefined)[]) {
 }
 
 export function hasTerminalControlCharacters(value: string) {
-  return [...value].some((character) => {
+  return Array.from(value).some((character) => {
     const code = character.charCodeAt(0);
     return code <= 31 || (code >= 127 && code <= 159);
   });

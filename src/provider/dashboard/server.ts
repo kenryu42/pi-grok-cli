@@ -90,15 +90,16 @@ function readJson(req: IncomingMessage, timeoutMs: number) {
   return new Promise<unknown>((resolve, reject) => {
     const chunks: Buffer[] = [];
     let size = 0;
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timer = setTimeout(() => fail(new HttpError(408, 'Request body timed out.')), timeoutMs);
+    timer.unref();
     const cleanup = (keepErrorListener = false) => {
-      if (timer) clearTimeout(timer);
+      clearTimeout(timer);
       req.removeListener('data', onData);
       req.removeListener('end', onEnd);
       req.removeListener('aborted', onAborted);
       if (!keepErrorListener) req.removeListener('error', onError);
     };
-    const fail = (error: unknown) => {
+    const fail = (error: Error) => {
       cleanup(true);
       req.once('close', () => req.removeListener('error', onError));
       reject(error);
@@ -129,8 +130,6 @@ function readJson(req: IncomingMessage, timeoutMs: number) {
     req.once('end', onEnd);
     req.once('aborted', onAborted);
     req.once('error', onError);
-    timer = setTimeout(() => fail(new HttpError(408, 'Request body timed out.')), timeoutMs);
-    timer.unref();
   });
 }
 
