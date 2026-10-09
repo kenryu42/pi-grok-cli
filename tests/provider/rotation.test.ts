@@ -214,11 +214,14 @@ async function rotationSession() {
   };
   return {
     session,
-    settled,
     errors,
     responses,
     prompts,
     finish,
+    async untilRotationWaitsForVaultLock() {
+      await settled.promise;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    },
     startOriginalRequest() {
       prompts.push(session.prompt('Original request'));
     },
@@ -276,8 +279,7 @@ describe('Grok CLI exhaustion rotation', () => {
     try {
       await vi.waitFor(() => expect(test.responses).toHaveLength(1));
       test.finish(0, 'error');
-      await test.settled.promise;
-      await new Promise<void>((resolve) => setImmediate(resolve));
+      await test.untilRotationWaitsForVaultLock();
       test.prompts.push(test.session.prompt('Another request during account rotation'));
       await vi.waitFor(() => expect(test.responses).toHaveLength(2));
       await release();
