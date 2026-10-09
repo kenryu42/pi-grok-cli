@@ -115,12 +115,15 @@ describe('model catalog', () => {
     expect(models.find((model) => model.id === 'grok-4.20-0309-reasoning')).toMatchObject({
       cost: { input: 1.25, output: 2.5, cacheRead: 0.2, cacheWrite: 0 },
     });
-    for (const id of ['grok-4.5', 'grok-4.6']) {
+    for (const [id, cacheRead] of [
+      ['grok-4.5', 0.3],
+      ['grok-4.6', 0.5],
+    ] as const) {
       expect(models.find((model) => model.id === id)).toMatchObject({
         reasoning: true,
         input: ['text', 'image'],
         contextWindow: 500_000,
-        cost: { input: 2, output: 6, cacheRead: 0.5, cacheWrite: 0 },
+        cost: { input: 2, output: 6, cacheRead, cacheWrite: 0 },
       });
     }
     expect(models.filter((model) => model.id.startsWith('grok-4.7'))).toEqual([

@@ -18,7 +18,7 @@ const withLongContextTier = (rates: ModelCostRates): ModelCost => ({
 const COST_BUILD = withLongContextTier({ input: 1, output: 2, cacheRead: 0.2, cacheWrite: 0.2 });
 const COST_COMPOSER_FAST = { input: 3, output: 15, cacheRead: 0.5, cacheWrite: 0 };
 const COST_43 = withLongContextTier({ input: 1.25, output: 2.5, cacheRead: 0.2, cacheWrite: 0 });
-const COST_45 = withLongContextTier({ input: 2, output: 6, cacheRead: 0.5, cacheWrite: 0 });
+const COST_45 = withLongContextTier({ input: 2, output: 6, cacheRead: 0.3, cacheWrite: 0 });
 const COST_46 = withLongContextTier({ input: 2, output: 6, cacheRead: 0.5, cacheWrite: 0 });
 const COST_47 = withLongContextTier({ input: 2, output: 6, cacheRead: 0.5, cacheWrite: 0 });
 const COST_47_FAST_AT_TWICE_GROK_47 = withLongContextTier({
