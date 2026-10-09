@@ -379,12 +379,21 @@ describe('vault account management', () => {
     await expect(accounts.activate(ctx, account.id)).rejects.toThrow('environment token');
   });
 
-  it('reports the authorization URL when the browser opener fails', async () => {
+  it.each([
+    {
+      failure: 'emits an error',
+      trigger: (child: EventEmitter) => child.emit('error', new Error('missing')),
+    },
+    {
+      failure: 'exits with non-zero code',
+      trigger: (child: EventEmitter) => child.emit('exit', 1),
+    },
+  ])('reports the authorization URL when the browser opener $failure', async ({ trigger }) => {
     const child = Object.assign(new EventEmitter(), { unref: vi.fn() });
     spawnProcess.mockReturnValue(child);
     login.mockImplementationOnce(async (callbacks) => {
       callbacks.onAuth({ url: 'https://accounts.x.ai/authorize?state=test' });
-      child.emit('error', new Error('xdg-open missing'));
+      trigger(child);
       throw new Error('stop test login');
     });
     const commands = new Map<
@@ -413,10 +422,6 @@ describe('vault account management', () => {
 
     await commands.get('grok-cli-accounts')?.handler('', commandContext);
 
-    expect(commandContext.ui.notify).toHaveBeenCalledWith(
-      expect.stringContaining('https://accounts.x.ai/authorize?state=test'),
-      'info',
-    );
     expect(commandContext.ui.notify).toHaveBeenCalledWith(
       expect.stringContaining('https://accounts.x.ai/authorize?state=test'),
       'warning',

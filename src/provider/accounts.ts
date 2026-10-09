@@ -126,7 +126,16 @@ function openAuthorizationUrl(url: string, onError: () => void) {
         ? ['rundll32', ['url.dll,FileProtocolHandler', url]]
         : ['xdg-open', [url]];
   const child = spawn(command[0], command[1], { detached: true, stdio: 'ignore' });
-  child.once('error', onError);
+  let failed = false;
+  const fail = () => {
+    if (failed) return;
+    failed = true;
+    onError();
+  };
+  child.once('error', fail);
+  child.once('exit', (code) => {
+    if (code !== 0 && code !== null) fail();
+  });
   child.unref();
 }
 
@@ -134,13 +143,10 @@ function terminalInteraction(ctx: ExtensionCommandContext): AuthInteraction {
   return {
     notify(event) {
       if (event.type === 'auth_url') {
-        ctx.ui.notify(`Open this URL to continue login: ${event.url}`, 'info');
         openAuthorizationUrl(event.url, () => {
-          ctx.ui.notify(`Could not open browser automatically: ${event.url}`, 'warning');
+          ctx.ui.notify(`Open this URL to continue login: ${event.url}`, 'warning');
         });
-        if (event.instructions) {
-          ctx.ui.notify(event.instructions, 'info');
-        }
+        ctx.ui.notify(event.instructions ?? 'Complete the Grok CLI login in your browser.', 'info');
         return;
       }
       if (event.type === 'device_code') {
