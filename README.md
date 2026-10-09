@@ -95,18 +95,18 @@ pi remove npm:pi-grok-cli
 
 Models are bundled rather than discovered live. Registered context limits may differ from the limits xAI enforces.
 
-| Model ID | Registered context | Reasoning | Input |
-| --- | ---: | --- | --- |
-| `grok-composer-2.5-fast` | 200K | no | text + image |
-| `grok-build` | 500K | yes | text + image |
-| `grok-4.3` | 1M | yes | text + image |
-| `grok-4.5` | 500K | yes | text + image |
-| `grok-4.6` | 500K | yes | text + image |
-| `grok-4.7` | 500K | yes | text + image |
-| `grok-4.7-build-fast` | 500K | yes | text + image |
-| `grok-4.20-0309-reasoning` | 2M | yes | text + image |
-| `grok-4.20-0309-non-reasoning` | 2M | no | text + image |
-| `grok-4.20-multi-agent-0309` | 2M | yes | text + image |
+| Model ID                       | Registered context | Reasoning | Input        |
+| ------------------------------ | -----------------: | --------- | ------------ |
+| `grok-composer-2.5-fast`       |               200K | no        | text + image |
+| `grok-build`                   |               500K | yes       | text + image |
+| `grok-4.3`                     |                 1M | yes       | text + image |
+| `grok-4.5`                     |               500K | yes       | text + image |
+| `grok-4.6`                     |               500K | yes       | text + image |
+| `grok-4.7`                     |               500K | yes       | text + image |
+| `grok-4.7-build-fast`          |               500K | yes       | text + image |
+| `grok-4.20-0309-reasoning`     |                 2M | yes       | text + image |
+| `grok-4.20-0309-non-reasoning` |                 2M | no        | text + image |
+| `grok-4.20-multi-agent-0309`   |                 2M | yes       | text + image |
 
 ## Media
 
@@ -120,13 +120,13 @@ To edit a local PNG, JPEG, or WebP image, use `/grok-cli-imagine --image "./sour
 
 ## Commands
 
-| Command | Description |
-| --- | --- |
-| `/grok-cli-accounts [gui]` | Manage Grok accounts in the terminal, or add `gui` for the browser dashboard. |
-| `/grok-cli-usage` | Fetch current quota, update its cache, and show cached data if refresh fails. |
-| `/grok-cli-conv [status\|rotate]` | Show or rotate this session's Grok proxy conversation ID. |
-| `/grok-cli-imagine <prompt>` | Generate or edit an image. Supports `--image`/`--edit`, `--aspect`, `--out`, and `--resolution 1k`. |
-| `/grok-cli-imagine:tool [on\|off\|status]` | Toggle, set, or report persistent model-callable `image_gen` availability. |
+| Command                                    | Description                                                                                         |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------------- |
+| `/grok-cli-accounts [gui]`                 | Manage Grok accounts in the terminal, or add `gui` for the browser dashboard.                       |
+| `/grok-cli-usage`                          | Fetch current quota, update its cache, and show cached data if refresh fails.                       |
+| `/grok-cli-conv [status\|rotate]`          | Show or rotate this session's Grok proxy conversation ID.                                           |
+| `/grok-cli-imagine <prompt>`               | Generate or edit an image. Supports `--image`/`--edit`, `--aspect`, `--out`, and `--resolution 1k`. |
+| `/grok-cli-imagine:tool [on\|off\|status]` | Toggle, set, or report persistent model-callable `image_gen` availability.                          |
 
 ## Configuration
 
@@ -148,10 +148,10 @@ The extension does not replace saved session files because Pi can append to them
 
 ### Common environment variables
 
-| Variable | Default | Description |
-| --- | --- | --- |
-| `PI_GROK_CLI_MODELS` | all bundled models | Comma-separated model IDs to expose, in display order. Unknown IDs receive generic text-only metadata. |
-| `GROK_CLI_OAUTH_TOKEN` | — | Use an external access token instead of `/login`. No automatic refresh. |
+| Variable               | Default            | Description                                                                                            |
+| ---------------------- | ------------------ | ------------------------------------------------------------------------------------------------------ |
+| `PI_GROK_CLI_MODELS`   | all bundled models | Comma-separated model IDs to expose, in display order. Unknown IDs receive generic text-only metadata. |
+| `GROK_CLI_OAUTH_TOKEN` | —                  | Use an external access token instead of `/login`. No automatic refresh.                                |
 
 See [Advanced configuration](./CONFIGURATION.md) for OAuth, callback, endpoint, and Imagine overrides.
 
@@ -159,17 +159,17 @@ See [Advanced configuration](./CONFIGURATION.md) for OAuth, callback, endpoint, 
 
 For proxy HTTP 401, 502, or 520 errors before streaming starts, the extension rotates the conversation ID and retries up to twice. The prompt-cache key and selected account stay the same. Rotated IDs are saved in the Pi session. Recovery is best effort: an expired token still requires login. You can also rotate manually with `/grok-cli-conv rotate` before sending another request.
 
-| Problem | What to do |
-| --- | --- |
-| grok-cli is missing from `/model` | Confirm the package appears in `pi list`, run `/login`, choose **Grok CLI**, then restart pi or run `/reload`. |
-| xAI shows a one-time code | Paste the code into pi to complete the active login. |
-| Browser login does not redirect to pi | Paste the complete callback URL into pi when prompted. |
-| The browser callback cannot start | Use device-code login or review the callback settings in [Advanced configuration](./CONFIGURATION.md). |
-| Authentication returns HTTP 401 or 403 | Run `/login` again and confirm the account can access the selected model. Replace an expired `GROK_CLI_OAUTH_TOKEN` if using an external token. |
-| A listed model is unavailable | Availability can differ by account or region, and the catalog is bundled rather than discovered live. Try another model or update the extension. |
-| Account rotation does not start | Confirm at least two accounts are logged in. Rotation responds only to Grok Build's final balance-exhausted error, not authentication failures, rate limits, or similar messages. |
-| A migrated account cannot send requests | Run `/login` once, choose **Grok CLI**, and restart pi if the model list does not update. |
-| The dashboard says Pi is disconnected | Run `/login` and choose **Grok CLI**. Saved dashboard accounts remain available. |
+| Problem                                 | What to do                                                                                                                                                                        |
+| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| grok-cli is missing from `/model`       | Confirm the package appears in `pi list`, run `/login`, choose **Grok CLI**, then restart pi or run `/reload`.                                                                    |
+| xAI shows a one-time code               | Paste the code into pi to complete the active login.                                                                                                                              |
+| Browser login does not redirect to pi   | Paste the complete callback URL into pi when prompted.                                                                                                                            |
+| The browser callback cannot start       | Use device-code login or review the callback settings in [Advanced configuration](./CONFIGURATION.md).                                                                            |
+| Authentication returns HTTP 401 or 403  | Run `/login` again and confirm the account can access the selected model. Replace an expired `GROK_CLI_OAUTH_TOKEN` if using an external token.                                   |
+| A listed model is unavailable           | Availability can differ by account or region, and the catalog is bundled rather than discovered live. Try another model or update the extension.                                  |
+| Account rotation does not start         | Confirm at least two accounts are logged in. Rotation responds only to Grok Build's final balance-exhausted error, not authentication failures, rate limits, or similar messages. |
+| A migrated account cannot send requests | Run `/login` once, choose **Grok CLI**, and restart pi if the model list does not update.                                                                                         |
+| The dashboard says Pi is disconnected   | Run `/login` and choose **Grok CLI**. Saved dashboard accounts remain available.                                                                                                  |
 
 ## Security and data flow
 

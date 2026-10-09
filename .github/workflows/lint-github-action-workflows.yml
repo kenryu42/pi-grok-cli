@@ -3,10 +3,10 @@ name: Lint GitHub Actions Workflows
 on:
   push:
     paths:
-      - '.github/workflows/**'
+      - ".github/workflows/**"
   pull_request:
     paths:
-      - '.github/workflows/**'
+      - ".github/workflows/**"
 
 jobs:
   actionlint:
