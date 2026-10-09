@@ -1,25 +1,43 @@
-const COST_BUILD = { input: 1, output: 2, cacheRead: 0.2, cacheWrite: 0.2 };
+import type { ModelCost, ModelCostRates } from '@earendil-works/pi-ai';
+
+const LONG_CONTEXT_PROMPT_TOKENS = 200_000;
+
+const withLongContextTier = (rates: ModelCostRates): ModelCost => ({
+  ...rates,
+  tiers: [
+    {
+      inputTokensAbove: LONG_CONTEXT_PROMPT_TOKENS - 1,
+      input: rates.input * 2,
+      output: rates.output * 2,
+      cacheRead: rates.cacheRead * 2,
+      cacheWrite: rates.cacheWrite * 2,
+    },
+  ],
+});
+
+const COST_BUILD = withLongContextTier({ input: 1, output: 2, cacheRead: 0.2, cacheWrite: 0.2 });
 const COST_COMPOSER_FAST = { input: 3, output: 15, cacheRead: 0.5, cacheWrite: 0 };
-const COST_43 = { input: 1.25, output: 2.5, cacheRead: 0.2, cacheWrite: 0 };
-const COST_45 = { input: 2, output: 6, cacheRead: 0.5, cacheWrite: 0 };
-const COST_46 = { input: 2, output: 6, cacheRead: 0.5, cacheWrite: 0 };
-const COST_47 = { input: 2, output: 6, cacheRead: 0.5, cacheWrite: 0 };
-const COST_47_FAST = { input: 4, output: 12, cacheRead: 1, cacheWrite: 0 };
-const COST_420 = { input: 1.25, output: 2.5, cacheRead: 0.2, cacheWrite: 0 };
+const COST_43 = withLongContextTier({ input: 1.25, output: 2.5, cacheRead: 0.2, cacheWrite: 0 });
+const COST_45 = withLongContextTier({ input: 2, output: 6, cacheRead: 0.5, cacheWrite: 0 });
+const COST_46 = withLongContextTier({ input: 2, output: 6, cacheRead: 0.5, cacheWrite: 0 });
+const COST_47 = withLongContextTier({ input: 2, output: 6, cacheRead: 0.5, cacheWrite: 0 });
+const COST_47_FAST_AT_TWICE_GROK_47 = withLongContextTier({
+  input: 4,
+  output: 12,
+  cacheRead: 1,
+  cacheWrite: 0,
+});
+const COST_420 = withLongContextTier({ input: 1.25, output: 2.5, cacheRead: 0.2, cacheWrite: 0 });
 
 export interface GrokCliModelConfig {
   id: string;
   name: string;
   reasoning: boolean;
   input: ('text' | 'image')[];
-  cost: {
-    input: number;
-    output: number;
-    cacheRead: number;
-    cacheWrite: number;
-  };
+  cost: ModelCost;
   contextWindow: number;
   maxTokens: number;
+  acceptsReasoningEffort: boolean;
   thinkingLevelMap?: Record<string, string | null>;
 }
 
@@ -28,6 +46,7 @@ const FALLBACK_MODELS: GrokCliModelConfig[] = [
     id: 'grok-composer-2.5-fast',
     name: 'Composer 2.5 Fast (Grok CLI)',
     reasoning: false,
+    acceptsReasoningEffort: false,
     input: ['text', 'image'],
     cost: COST_COMPOSER_FAST,
     contextWindow: 200_000,
@@ -45,6 +64,7 @@ const FALLBACK_MODELS: GrokCliModelConfig[] = [
     id: 'grok-build',
     name: 'Grok Build',
     reasoning: true,
+    acceptsReasoningEffort: false,
     input: ['text', 'image'],
     cost: COST_BUILD,
     contextWindow: 500_000,
@@ -54,6 +74,7 @@ const FALLBACK_MODELS: GrokCliModelConfig[] = [
     id: 'grok-4.3',
     name: 'Grok 4.3',
     reasoning: true,
+    acceptsReasoningEffort: true,
     input: ['text', 'image'],
     cost: COST_43,
     contextWindow: 1_000_000,
@@ -63,6 +84,7 @@ const FALLBACK_MODELS: GrokCliModelConfig[] = [
     id: 'grok-4.5',
     name: 'Grok 4.5',
     reasoning: true,
+    acceptsReasoningEffort: true,
     input: ['text', 'image'],
     cost: COST_45,
     contextWindow: 500_000,
@@ -72,6 +94,7 @@ const FALLBACK_MODELS: GrokCliModelConfig[] = [
     id: 'grok-4.6',
     name: 'Grok 4.6',
     reasoning: true,
+    acceptsReasoningEffort: true,
     input: ['text', 'image'],
     cost: COST_46,
     contextWindow: 500_000,
@@ -82,6 +105,7 @@ const FALLBACK_MODELS: GrokCliModelConfig[] = [
     id: 'grok-4.7',
     name: 'Grok 4.7',
     reasoning: true,
+    acceptsReasoningEffort: true,
     input: ['text', 'image'],
     cost: COST_47,
     contextWindow: 500_000,
@@ -92,8 +116,9 @@ const FALLBACK_MODELS: GrokCliModelConfig[] = [
     id: 'grok-4.7-build-fast',
     name: 'Grok 4.7 Fast',
     reasoning: true,
+    acceptsReasoningEffort: true,
     input: ['text', 'image'],
-    cost: COST_47_FAST,
+    cost: COST_47_FAST_AT_TWICE_GROK_47,
     contextWindow: 500_000,
     maxTokens: 30_000,
     thinkingLevelMap: { xhigh: 'xhigh' },
@@ -102,6 +127,7 @@ const FALLBACK_MODELS: GrokCliModelConfig[] = [
     id: 'grok-4.20-0309-reasoning',
     name: 'Grok 4.20 Reasoning',
     reasoning: true,
+    acceptsReasoningEffort: false,
     input: ['text', 'image'],
     cost: COST_420,
     contextWindow: 2_000_000,
@@ -111,6 +137,7 @@ const FALLBACK_MODELS: GrokCliModelConfig[] = [
     id: 'grok-4.20-0309-non-reasoning',
     name: 'Grok 4.20 Non-Reasoning',
     reasoning: false,
+    acceptsReasoningEffort: false,
     input: ['text', 'image'],
     cost: COST_420,
     contextWindow: 2_000_000,
@@ -128,6 +155,7 @@ const FALLBACK_MODELS: GrokCliModelConfig[] = [
     id: 'grok-4.20-multi-agent-0309',
     name: 'Grok 4.20 Multi-Agent',
     reasoning: true,
+    acceptsReasoningEffort: true,
     input: ['text', 'image'],
     cost: COST_420,
     contextWindow: 2_000_000,
@@ -157,14 +185,7 @@ export function supportsReasoning(modelId: string): boolean {
 }
 
 export function supportsReasoningEffort(modelId: string): boolean {
-  const name = normalizedModelName(modelId);
-  const model = modelConfig(modelId);
-  if (!EFFORT_CAPABLE_PREFIXES.some((prefix) => name.startsWith(prefix))) {
-    return false;
-  }
-  if (!model?.reasoning) return false;
-  if (!model.thinkingLevelMap) return true;
-  return Object.values(model.thinkingLevelMap).some((level) => level !== null && level !== 'none');
+  return modelConfig(modelId)?.acceptsReasoningEffort ?? false;
 }
 
 export function resolveModels(): GrokCliModelConfig[] {
@@ -181,6 +202,9 @@ export function resolveModels(): GrokCliModelConfig[] {
         id,
         name: id,
         reasoning: true,
+        acceptsReasoningEffort: EFFORT_CAPABLE_PREFIXES.some((prefix) =>
+          id.toLowerCase().startsWith(prefix),
+        ),
         input: ['text'] as ('text' | 'image')[],
         cost: COST_BUILD,
         contextWindow: 1_000_000,

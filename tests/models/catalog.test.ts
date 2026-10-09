@@ -35,6 +35,50 @@ describe('model catalog', () => {
     expect(supportsReasoningEffort('grok-4.7-build-fast')).toBe(true);
     expect(supportsReasoningEffort('grok-cli/GROK-COMPOSER-2.5-fast')).toBe(false);
     expect(supportsReasoningEffort('grok-4.20-0309-non-reasoning')).toBe(false);
+    expect(supportsReasoningEffort('grok-build')).toBe(false);
+    expect(supportsReasoningEffort('grok-4.20-0309-reasoning')).toBe(false);
+    expect(supportsReasoningEffort('grok-4.20-multi-agent-0309')).toBe(true);
+  });
+
+  it('infers reasoning-effort support for overridden models from their name', () => {
+    process.env.PI_GROK_CLI_MODELS = 'grok-3-mini,grok-4.5-preview,custom-model,grok-4.3';
+
+    expect(supportsReasoningEffort('grok-3-mini')).toBe(true);
+    expect(supportsReasoningEffort('grok-cli/GROK-4.5-PREVIEW')).toBe(true);
+    expect(supportsReasoningEffort('custom-model')).toBe(false);
+    expect(supportsReasoningEffort('grok-4.3')).toBe(true);
+    expect(supportsReasoningEffort('grok-4.6')).toBe(false);
+  });
+
+  it('bills documented models at double rates once the prompt reaches 200K tokens', () => {
+    delete process.env.PI_GROK_CLI_MODELS;
+    const models = resolveModels();
+
+    for (const id of [
+      'grok-build',
+      'grok-4.3',
+      'grok-4.5',
+      'grok-4.6',
+      'grok-4.7',
+      'grok-4.7-build-fast',
+      'grok-4.20-0309-reasoning',
+      'grok-4.20-0309-non-reasoning',
+      'grok-4.20-multi-agent-0309',
+    ]) {
+      const cost = models.find((model) => model.id === id)?.cost;
+      expect(cost?.tiers).toEqual([
+        {
+          inputTokensAbove: 199_999,
+          input: (cost?.input ?? 0) * 2,
+          output: (cost?.output ?? 0) * 2,
+          cacheRead: (cost?.cacheRead ?? 0) * 2,
+          cacheWrite: (cost?.cacheWrite ?? 0) * 2,
+        },
+      ]);
+    }
+    expect(
+      models.find((model) => model.id === 'grok-composer-2.5-fast')?.cost.tiers,
+    ).toBeUndefined();
   });
 
   it('reports reasoning support by normalized model name', () => {
@@ -86,7 +130,13 @@ describe('model catalog', () => {
         reasoning: true,
         input: ['text', 'image'],
         contextWindow: 500_000,
-        cost: { input: 2, output: 6, cacheRead: 0.5, cacheWrite: 0 },
+        cost: {
+          input: 2,
+          output: 6,
+          cacheRead: 0.5,
+          cacheWrite: 0,
+          tiers: [{ inputTokensAbove: 199_999, input: 4, output: 12, cacheRead: 1, cacheWrite: 0 }],
+        },
         thinkingLevelMap: { xhigh: 'xhigh' },
       }),
       expect.objectContaining({
@@ -95,7 +145,13 @@ describe('model catalog', () => {
         reasoning: true,
         input: ['text', 'image'],
         contextWindow: 500_000,
-        cost: { input: 4, output: 12, cacheRead: 1, cacheWrite: 0 },
+        cost: {
+          input: 4,
+          output: 12,
+          cacheRead: 1,
+          cacheWrite: 0,
+          tiers: [{ inputTokensAbove: 199_999, input: 8, output: 24, cacheRead: 2, cacheWrite: 0 }],
+        },
         thinkingLevelMap: { xhigh: 'xhigh' },
       }),
     ]);
