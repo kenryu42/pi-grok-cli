@@ -23,10 +23,12 @@ function setup(
   const tools: { name: string }[] = [];
   const dependencies = imagineDependencies();
   let activeTools = [...initialActiveTools];
-  const setActiveTools = vi.fn((toolsToActivate: string[]) => {
+  const setActiveTools = vi.fn<(toolsToActivate: string[]) => void>((toolsToActivate) => {
     activeTools = [...toolsToActivate];
   });
-  const getApiKeyForProvider = vi.fn(async () => token);
+  const getApiKeyForProvider = vi.fn<(provider: string) => Promise<string | undefined>>(
+    async () => token,
+  );
   registerImagineFeature(
     {
       registerCommand(name: string, command: unknown) {
@@ -49,7 +51,7 @@ function setup(
     dependencies,
     resolveToken,
   );
-  const notify = vi.fn();
+  const notify = vi.fn<(message: string, type?: 'info' | 'warning' | 'error') => void>();
   const context = {
     cwd: '/project',
     model: { provider: 'openai' },
@@ -155,7 +157,7 @@ describe('registerImagineFeature command', () => {
   });
 
   it('uses the supplied session token resolver', async () => {
-    const resolveToken = vi.fn(async () => 'session-token');
+    const resolveToken = vi.fn<() => Promise<string | undefined>>(async () => 'session-token');
     const extension = setup(undefined, ['read'], resolveToken);
 
     await extension.commands.get('grok-cli-imagine')?.handler('cat', extension.context);

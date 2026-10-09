@@ -1,11 +1,14 @@
+import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import type { AuthInteraction } from '@earendil-works/pi-ai';
 import type {
   ExtensionAPI,
   ExtensionCommandContext,
   ExtensionContext,
+  ExtensionUIContext,
 } from '@earendil-works/pi-coding-agent';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as OAuth from '../../src/auth/oauth.js';
 import {
   GROK_CLI_PROVIDER,
   isGrokCliProvider,
@@ -13,6 +16,8 @@ import {
   resolveGrokToken,
 } from '../../src/provider/accounts.js';
 import { getAccountVault, mutateAccountVault } from '../../src/provider/accountVault.js';
+import type * as Billing from '../../src/provider/billing.js';
+import type * as QuotaCache from '../../src/provider/quotaCache.js';
 import { loadQuotaCache, saveQuotaUsage } from '../../src/provider/quotaCache.js';
 import { createSessionAccountSelection } from '../../src/provider/sessionAccountSelection.js';
 import {
@@ -26,23 +31,30 @@ import {
 } from '../stateTestHelpers.js';
 
 const { fetchBillingUsage, login, removeQuotaUsage, spawnProcess } = vi.hoisted(() => ({
-  fetchBillingUsage: vi.fn(),
-  login: vi.fn(),
-  removeQuotaUsage: vi.fn(),
-  spawnProcess: vi.fn(),
+  fetchBillingUsage: vi.fn<typeof Billing.fetchBillingUsage>(),
+  login: vi.fn<typeof OAuth.login>(),
+  removeQuotaUsage: vi.fn<typeof QuotaCache.removeQuotaUsage>(),
+  spawnProcess:
+    vi.fn<
+      (
+        command: string,
+        args: string[],
+        options: SpawnOptions,
+      ) => EventEmitter & Pick<ChildProcess, 'unref'>
+    >(),
 }));
 
 vi.mock('node:child_process', () => ({ spawn: spawnProcess }));
 
 vi.mock('../../src/auth/oauth.js', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../../src/auth/oauth.js')>()),
+  ...(await importOriginal<typeof OAuth>()),
   login,
 }));
 
 vi.mock('../../src/provider/billing.js', () => ({ fetchBillingUsage }));
 
 vi.mock('../../src/provider/quotaCache.js', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../../src/provider/quotaCache.js')>()),
+  ...(await importOriginal<typeof QuotaCache>()),
   removeQuotaUsage,
 }));
 
@@ -55,20 +67,23 @@ const ctx = {
     getBranch: () => [],
   },
   ui: {
-    notify: vi.fn(),
+    notify: vi.fn<ExtensionUIContext['notify']>(),
   },
 } as unknown as ExtensionContext;
 
 const interaction = {
-  notify: vi.fn(),
-  prompt: vi.fn(),
+  notify: vi.fn<AuthInteraction['notify']>(),
+  prompt: vi.fn<AuthInteraction['prompt']>(),
 } satisfies AuthInteraction;
 
-function manager(clearRecentExhaustion = (_accountId: string) => {}, appendEntry = vi.fn()) {
+function manager(
+  clearRecentExhaustion = (_accountId: string) => {},
+  appendEntry = vi.fn<ExtensionAPI['appendEntry']>(),
+) {
   return registerAccountManagement(
     {
       appendEntry,
-      registerCommand: vi.fn(),
+      registerCommand: vi.fn<ExtensionAPI['registerCommand']>(),
     } as unknown as ExtensionAPI,
     clearRecentExhaustion,
   ).manager;
@@ -89,7 +104,7 @@ async function addLoggedInAccount(accounts: ReturnType<typeof manager>) {
 
 async function selectedLoggedInAccount() {
   await setAccount1Credential('one');
-  const appendEntry = vi.fn();
+  const appendEntry = vi.fn<ExtensionAPI['appendEntry']>();
   const accounts = manager(undefined, appendEntry);
   const account = await addLoggedInAccount(accounts);
   await accounts.activate(ctx, account.id);
@@ -211,7 +226,7 @@ describe('vault account management', () => {
   });
 
   it('clears recent exhaustion after direct account login succeeds', async () => {
-    const clearRecentExhaustion = vi.fn();
+    const clearRecentExhaustion = vi.fn<(accountId: string) => void>();
     const accounts = manager(clearRecentExhaustion);
     const account = await accounts.add(ctx, 'Work');
 
@@ -235,7 +250,9 @@ describe('vault account management', () => {
     });
     expect((await getAccountVault()).activeAccountId).toBe(test.account.id);
     expect(test.accounts.snapshot(ctx).accounts[1]).toMatchObject({ active: true });
-    const freshSelection = createSessionAccountSelection({ appendEntry: vi.fn() });
+    const freshSelection = createSessionAccountSelection({
+      appendEntry: vi.fn<ExtensionAPI['appendEntry']>(),
+    });
     expect(freshSelection.accountId('new-session')).toBe(test.account.id);
     freshSelection.restore({
       sessionManager: {
@@ -380,7 +397,7 @@ describe('vault account management', () => {
   });
 
   it('reports the authorization URL as a warning in terminal and launches browser opener', async () => {
-    const child = Object.assign(new EventEmitter(), { unref: vi.fn() });
+    const child = Object.assign(new EventEmitter(), { unref: vi.fn<() => void>() });
     spawnProcess.mockReturnValue(child);
     login.mockImplementationOnce(async (callbacks) => {
       callbacks.onAuth({ url: 'https://accounts.x.ai/authorize?state=test' });
@@ -398,15 +415,16 @@ describe('vault account management', () => {
         commands.set(name, command);
       },
     } as unknown as ExtensionAPI);
+    const notify = vi.fn<ExtensionUIContext['notify']>();
     const commandContext = {
       sessionManager: {
         getSessionId: () => 'session-a',
         getBranch: () => [],
       },
       ui: {
-        input: vi.fn().mockResolvedValue('Work'),
-        notify: vi.fn(),
-        select: vi.fn().mockResolvedValue('Add account'),
+        input: vi.fn<ExtensionUIContext['input']>().mockResolvedValue('Work'),
+        notify,
+        select: vi.fn<ExtensionUIContext['select']>().mockResolvedValue('Add account'),
       },
     } as unknown as ExtensionCommandContext;
 
@@ -415,14 +433,11 @@ describe('vault account management', () => {
     expect(spawnProcess).toHaveBeenCalled();
     expect(child.unref).toHaveBeenCalled();
     expect(() => child.emit('error', new Error('spawn failed'))).not.toThrow();
-    expect(commandContext.ui.notify).toHaveBeenCalledWith(
+    expect(notify).toHaveBeenCalledWith(
       expect.stringContaining('https://accounts.x.ai/authorize?state=test'),
       'warning',
     );
-    expect(commandContext.ui.notify).toHaveBeenCalledWith(
-      'Complete the Grok CLI login in your browser.',
-      'info',
-    );
+    expect(notify).toHaveBeenCalledWith('Complete the Grok CLI login in your browser.', 'info');
   });
 
   it('does not save quota after the captured account logs out', async () => {

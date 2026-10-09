@@ -1,27 +1,24 @@
 import type { ExtensionCommandContext } from '@earendil-works/pi-coding-agent';
 import { describe, expect, it, vi } from 'vitest';
 import type { AccountRoute } from '../../src/provider/accountRouting.js';
-import { fetchBillingUsage } from '../../src/provider/billing.js';
-import { saveQuotaUsageWhen } from '../../src/provider/quotaCache.js';
+import * as Billing from '../../src/provider/billing.js';
+import * as QuotaCache from '../../src/provider/quotaCache.js';
 import { registerUsageCommand } from '../../src/provider/usage.js';
 
 vi.mock('../../src/provider/billing.js', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../../src/provider/billing.js')>()),
-  fetchBillingUsage: vi.fn(),
+  ...(await importOriginal<typeof Billing>()),
+  fetchBillingUsage: vi.fn<typeof Billing.fetchBillingUsage>(),
 }));
 
 vi.mock('../../src/provider/quotaCache.js', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../../src/provider/quotaCache.js')>()),
-  saveQuotaUsageWhen: vi.fn(),
+  ...(await importOriginal<typeof QuotaCache>()),
+  saveQuotaUsageWhen: vi.fn<typeof QuotaCache.saveQuotaUsageWhen>(),
 }));
 
-const mockedFetch = vi.mocked(fetchBillingUsage);
-const mockedSave = vi.mocked(saveQuotaUsageWhen);
+const mockedFetch = vi.mocked(Billing.fetchBillingUsage);
+const mockedSave = vi.mocked(QuotaCache.saveQuotaUsageWhen);
 
-function commandHarness(resolveRoute: () => Promise<AccountRoute>): {
-  notify: ReturnType<typeof vi.fn>;
-  run: () => Promise<void>;
-} {
+function commandHarness(resolveRoute: () => Promise<AccountRoute>) {
   const commands = new Map<
     string,
     { handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> }
@@ -34,7 +31,7 @@ function commandHarness(resolveRoute: () => Promise<AccountRoute>): {
     },
     resolveRoute,
   );
-  const notify = vi.fn();
+  const notify = vi.fn<ExtensionCommandContext['ui']['notify']>();
   return {
     notify,
     run: async () => {

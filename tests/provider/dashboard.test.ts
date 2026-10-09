@@ -1,6 +1,6 @@
 import { once } from 'node:events';
 import { createConnection } from 'node:net';
-import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
+import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import {
   type HTMLDialogElement as BrowserDialog,
   type HTMLElement as BrowserElement,
@@ -8,6 +8,7 @@ import {
   Window,
 } from 'happy-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type * as OAuth from '../../src/auth/oauth.js';
 import { registerAccountManagement } from '../../src/provider/accounts.js';
 import { getAccountVault, mutateAccountVault } from '../../src/provider/accountVault.js';
 import {
@@ -15,12 +16,17 @@ import {
   createAccountDashboard,
   startAccountDashboard,
 } from '../../src/provider/dashboard/server.js';
-import { deferred, oauthCredential, useTempHome } from '../stateTestHelpers.js';
+import {
+  deferred,
+  oauthCredential,
+  testExtensionContext,
+  useTempHome,
+} from '../stateTestHelpers.js';
 
-const { oauthLogin } = vi.hoisted(() => ({ oauthLogin: vi.fn() }));
+const { oauthLogin } = vi.hoisted(() => ({ oauthLogin: vi.fn<typeof OAuth.login>() }));
 
 vi.mock('../../src/auth/oauth.js', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../../src/auth/oauth.js')>()),
+  ...(await importOriginal<typeof OAuth>()),
   login: oauthLogin,
 }));
 
@@ -41,21 +47,14 @@ async function setup() {
     vault.activeAccountId = 'account-1';
   });
   const pi = {
-    appendEntry: vi.fn(),
-    registerCommand: vi.fn(),
+    appendEntry: vi.fn<ExtensionAPI['appendEntry']>(),
+    registerCommand: vi.fn<ExtensionAPI['registerCommand']>(),
   } as unknown as ExtensionAPI;
-  const accountManagement = registerAccountManagement(pi);
-  const ctx = {
-    model: { provider: 'grok-cli', id: 'grok-build' },
-    sessionManager: {
-      getSessionId: () => 'session-a',
-      getBranch: () => [],
-    },
-    ui: { notify: vi.fn() },
-  } as unknown as ExtensionContext;
+  const context = testExtensionContext();
   return {
-    accountManagement,
-    ctx,
+    accountManagement: registerAccountManagement(pi),
+    ctx: context.ctx,
+    notify: context.notify,
     pi,
   };
 }
@@ -107,7 +106,7 @@ async function browserDashboard(
     servedFile(session, '/app.js'),
   ]);
   const window = new Window({ url: session.dashboard.origin });
-  const timers = new Map<number, { callback: TimerHandler; delay: number }>();
+  const timers = new Map<number, { callback: () => void; delay: number }>();
   const frames = new Map<number, FrameRequestCallback>();
   const resizeCallbacks: ResizeObserverCallback[] = [];
   let timerId = 0;
@@ -115,26 +114,30 @@ async function browserDashboard(
   let stateIndex = 0;
   let canvasWidth = 800;
   let canvasHeight = 600;
-  const drawArrays = vi.fn();
-  const viewport = vi.fn();
-  const animations = vi.fn(() => ({ cancel() {} }));
+  const drawArrays = vi.fn<WebGLRenderingContext['drawArrays']>();
+  const viewport = vi.fn<WebGLRenderingContext['viewport']>();
+  const animations = vi.fn<() => Pick<Animation, 'cancel'>>(() => ({ cancel() {} }));
 
   Object.assign(window, {
-    fetch: vi.fn(async (input: RequestInfo | URL, options: RequestInit = {}) => {
-      const url = new URL(String(input), session.dashboard.origin);
-      if (url.pathname === '/api/state') {
-        const state = states[Math.min(stateIndex, states.length - 1)];
-        stateIndex += 1;
-        return Response.json(state);
-      }
-      return Response.json(
-        mutate(
-          url.pathname,
-          options.method ?? 'GET',
-          options.body ? JSON.parse(String(options.body)) : {},
-        ),
-      );
-    }),
+    fetch: vi.fn<(input: string, options?: RequestInit) => Promise<Response>>(
+      async (input, options = {}) => {
+        const url = new URL(input, session.dashboard.origin);
+        if (url.pathname === '/api/state') {
+          const state = states[Math.min(stateIndex, states.length - 1)];
+          stateIndex += 1;
+          return Response.json(state);
+        }
+        return Response.json(
+          mutate(
+            url.pathname,
+            options.method ?? 'GET',
+            typeof options.body === 'string' && options.body
+              ? (JSON.parse(options.body) as Record<string, unknown>)
+              : {},
+          ),
+        );
+      },
+    ),
     matchMedia: () => ({
       matches: false,
       addEventListener() {},
@@ -155,7 +158,7 @@ async function browserDashboard(
       unobserve() {}
       disconnect() {}
     },
-    setTimeout: (callback: TimerHandler, delay = 0) => {
+    setTimeout: (callback: () => void, delay = 0) => {
       timerId += 1;
       timers.set(timerId, { callback, delay });
       return timerId;
@@ -167,7 +170,7 @@ async function browserDashboard(
     clientHeight: { configurable: true, get: () => canvasHeight },
   });
   Object.defineProperty(window.performance, 'now', { configurable: true, value: () => 0 });
-  window.HTMLCanvasElement.prototype.getContext = vi.fn(() =>
+  window.HTMLCanvasElement.prototype.getContext = vi.fn<() => object | null>(() =>
     webgl
       ? {
           ARRAY_BUFFER: 1,
@@ -244,7 +247,7 @@ async function browserDashboard(
       const pending = [...timers].filter(([, timer]) => timer.delay === delay);
       for (const [id, timer] of pending) {
         timers.delete(id);
-        if (typeof timer.callback === 'function') timer.callback();
+        timer.callback();
       }
       await flush();
     },
@@ -597,14 +600,14 @@ describe('account dashboard loopback server', () => {
   it('keeps a new account when its first browser login is cancelled', async () => {
     const session = await openDashboard({ refreshAfterLogin: false });
     const workId = (await addDashboardAccount(session, 'Work')).account.id;
-    const started = deferred<void>();
+    const started = deferred<undefined>();
     oauthLogin.mockImplementationOnce(
       (callbacks) =>
         new Promise((_resolve, reject) => {
           callbacks.signal?.addEventListener('abort', () => reject(new Error('Login cancelled')), {
             once: true,
           });
-          started.resolve();
+          started.resolve(undefined);
         }),
     );
     const ticket = await requestLoginTicket(session, workId);
@@ -941,7 +944,7 @@ describe('account dashboard loopback server', () => {
 
   it('reuses one server, reports browser-launch failures, and closes cleanly', async () => {
     const extension = await setup();
-    const launchBrowser = vi.fn(async () => false);
+    const launchBrowser = vi.fn<(url: string) => Promise<boolean>>(async () => false);
     const dashboard = createAccountDashboard(extension.accountManagement.manager, {
       launchBrowser,
     });
@@ -951,19 +954,19 @@ describe('account dashboard loopback server', () => {
 
     expect(second.origin).toBe(first.origin);
     expect(launchBrowser).toHaveBeenCalledTimes(2);
-    expect(extension.ctx.ui.notify).toHaveBeenCalledWith(
+    expect(extension.notify).toHaveBeenCalledWith(
       expect.stringContaining(first.bootstrapUrl),
       'warning',
     );
     await dashboard.close();
-    await expect(fetch(first.origin)).rejects.toThrow();
+    await expect(fetch(first.origin)).rejects.toThrow('fetch failed');
   });
 
   it('times out incomplete mutation request bodies', async () => {
     const session = await openDashboard({ bodyTimeoutMs: 20 });
     const socket = await openIncompleteMutation(session);
     const response = await Promise.race([
-      once(socket, 'data').then(([data]) => data.toString()),
+      once(socket, 'data').then(([data]) => (data as Buffer).toString()),
       new Promise<string>((resolve) => setTimeout(() => resolve(''), 100)),
     ]);
     const connectionClosed = await Promise.race([
@@ -1001,6 +1004,6 @@ describe('account dashboard loopback server', () => {
     dashboards.push(dashboard);
     await new Promise((resolve) => setTimeout(resolve, 50));
 
-    await expect(fetch(dashboard.origin)).rejects.toThrow();
+    await expect(fetch(dashboard.origin)).rejects.toThrow('fetch failed');
   });
 });

@@ -70,7 +70,8 @@ describe('Grok CLI quota cache', () => {
       },
     });
     expect(
-      JSON.parse(readFileSync(getQuotaCachePath(), 'utf8')).accounts['grok-cli-2'].monthly.used,
+      (JSON.parse(readFileSync(getQuotaCachePath(), 'utf8')) as ReturnType<typeof loadQuotaCache>)
+        .accounts['grok-cli-2']?.monthly.used,
     ).toBe(900);
     expect(
       existsSync(`${getQuotaCachePath()}.${process.pid}.tmp`) ||

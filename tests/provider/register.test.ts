@@ -1,16 +1,21 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { json } from 'node:stream/consumers';
 import {
   type AssistantMessage,
   createAssistantMessageEventStream,
   normalizeContext,
   type OAuthLoginCallbacks,
+  type SimpleStreamOptions,
 } from '@earendil-works/pi-ai';
+import type * as PiAiCompat from '@earendil-works/pi-ai/compat';
 import type { ExtensionAPI, ProviderConfig } from '@earendil-works/pi-coding-agent';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as OAuth from '../../src/auth/oauth.js';
 import {
   ACCOUNT_VAULT_MARKER,
+  type AccountVault,
   getAccountVault,
   mutateAccountVault,
 } from '../../src/provider/accountVault.js';
@@ -25,14 +30,16 @@ import {
   writePiCredentials,
   writePiVaultMarker,
 } from '../stateTestHelpers.js';
+import { addWorkAccount, assistantMessage, liveCredential } from './providerTestHelpers.js';
 
 const { mockOauthLogin, mockProviderStream } = vi.hoisted(() => ({
-  mockOauthLogin: vi.fn(),
-  mockProviderStream: vi.fn(),
+  mockOauthLogin: vi.fn<typeof OAuth.login>(),
+  mockProviderStream:
+    vi.fn<(...args: Parameters<typeof PiAiCompat.streamSimpleOpenAIResponses>) => unknown>(),
 }));
 
 vi.mock('../../src/auth/oauth.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../src/auth/oauth.js')>();
+  const actual = await importOriginal<typeof OAuth>();
   return { ...actual, login: mockOauthLogin };
 });
 
@@ -97,23 +104,7 @@ beforeEach(() => {
   mockProviderStream.mockReset();
   mockProviderStream.mockImplementation(() => ({
     async *[Symbol.asyncIterator]() {},
-    result: vi.fn(async () => ({
-      role: 'assistant',
-      content: [],
-      api: 'openai-responses',
-      provider: 'grok-cli',
-      model: 'grok-build',
-      usage: {
-        input: 0,
-        output: 0,
-        cacheRead: 0,
-        cacheWrite: 0,
-        totalTokens: 0,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-      },
-      stopReason: 'stop',
-      timestamp: Date.now(),
-    })),
+    result: vi.fn<() => Promise<AssistantMessage>>(async () => assistantMessage({})),
   }));
   process.env.TZ = 'America/New_York';
   const dir = mkdtempSync(join(tmpdir(), 'pi-grok-cli-home-'));
@@ -151,13 +142,13 @@ async function setupExtension(initialActiveTools = ['read', 'bash']) {
   const handlers = new Map<string, ExtensionHandler>();
   const allHandlers = new Map<string, ExtensionHandler[]>();
   let activeTools = initialActiveTools;
-  const setActiveTools = vi.fn((toolNames: string[]) => {
+  const setActiveTools = vi.fn<ExtensionAPI['setActiveTools']>((toolNames) => {
     activeTools = toolNames;
   });
-  const setModel = vi.fn(async (_model: { provider: string; id: string }) => true);
-  const sendUserMessage = vi.fn();
+  const setModel = vi.fn<ExtensionAPI['setModel']>(async () => true);
+  const sendUserMessage = vi.fn<ExtensionAPI['sendUserMessage']>();
   const entries: { customType: string; data: unknown }[] = [];
-  const appendEntry = vi.fn((customType: string, data: unknown) => {
+  const appendEntry = vi.fn<(customType: string, data: unknown) => void>((customType, data) => {
     entries.push({ customType, data });
   });
   const registerGrokCli = (await import('../../src/index.js')).default;
@@ -234,7 +225,7 @@ function sessionContext(sessionId: string, accountId?: string): TestContext {
             ]
           : [],
     },
-    ui: { notify: vi.fn() },
+    ui: { notify: vi.fn<TestContext['ui']['notify']>() },
   };
 }
 
@@ -245,30 +236,23 @@ async function drain(stream: AsyncIterable<unknown> | undefined) {
 }
 
 function proxyResponse(status?: number, started = false) {
-  const message: AssistantMessage = {
-    role: 'assistant',
-    content: [],
-    api: 'openai-responses',
-    provider: 'grok-cli',
+  const message = assistantMessage({
     model: 'grok-4.6',
-    usage: {
-      input: 0,
-      output: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-      totalTokens: 0,
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-    },
     stopReason: status ? 'error' : 'stop',
     ...(status ? { errorMessage: `grok-cli API error (${status}): proxy failure` } : {}),
-    timestamp: Date.now(),
-  };
+  });
   const stream = createAssistantMessageEventStream();
   if (started) stream.push({ type: 'start', partial: message });
   if (status) stream.push({ type: 'error', reason: 'error', error: message });
   else stream.push({ type: 'done', reason: 'stop', message });
   stream.end(message);
   return stream;
+}
+
+async function eventTypes(stream: AsyncIterable<{ type: string }>) {
+  const types: string[] = [];
+  for await (const event of stream) types.push(event.type);
+  return types;
 }
 
 async function startProxyRequest(
@@ -300,9 +284,7 @@ describe('proxy conversation recovery', () => {
       throw new Error('Session storage is full');
     });
     const stream = await startProxyRequest(extension, { sessionId: 'session-a' });
-    const events = [];
-    for await (const event of stream) events.push(event);
-    expect(events.map((event) => event.type)).toEqual(['error']);
+    expect(await eventTypes(stream)).toEqual(['error']);
     expect(mockProviderStream).toHaveBeenCalledTimes(1);
     expect(await stream.result()).toMatchObject({
       stopReason: 'error',
@@ -318,9 +300,7 @@ describe('proxy conversation recovery', () => {
   it('recovers through the real Pi HTTP adapter while preserving the prompt cache key', async () => {
     await setAccount1Credential('one');
     writePiVaultMarker();
-    const actual = await vi.importActual<typeof import('@earendil-works/pi-ai/compat')>(
-      '@earendil-works/pi-ai/compat',
-    );
+    const actual = await vi.importActual<typeof PiAiCompat>('@earendil-works/pi-ai/compat');
     mockProviderStream.mockImplementation(actual.streamSimpleOpenAIResponses);
     const requests: {
       conversationId: string | string[] | undefined;
@@ -330,29 +310,28 @@ describe('proxy conversation recovery', () => {
       clientVersion: string | string[] | undefined;
       clientIdentifier: string | string[] | undefined;
     }[] = [];
-    const server = await startTestServer(async (request, response) => {
-      const chunks: Buffer[] = [];
-      for await (const chunk of request) chunks.push(Buffer.from(chunk));
-      const payload = JSON.parse(Buffer.concat(chunks).toString());
-      requests.push({
-        conversationId: request.headers['x-grok-conv-id'],
-        cacheKey: payload.prompt_cache_key,
-        authorization: request.headers.authorization,
-        userAgent: request.headers['user-agent'],
-        clientVersion: request.headers['x-grok-client-version'],
-        clientIdentifier: request.headers['x-grok-client-identifier'],
-      });
-      if (requests.length < 3) {
-        response.writeHead(requests.length === 1 ? 401 : 520, {
-          'Content-Type': 'application/json',
+    const server = await startTestServer((request, response) => {
+      void json(request).then((payload) => {
+        requests.push({
+          conversationId: request.headers['x-grok-conv-id'],
+          cacheKey: (payload as { prompt_cache_key?: unknown }).prompt_cache_key,
+          authorization: request.headers.authorization,
+          userAgent: request.headers['user-agent'],
+          clientVersion: request.headers['x-grok-client-version'],
+          clientIdentifier: request.headers['x-grok-client-identifier'],
         });
-        response.end(JSON.stringify({ error: { message: 'proxy failure' } }));
-        return;
-      }
-      response.writeHead(200, { 'Content-Type': 'text/event-stream' });
-      response.end(
-        `data: ${JSON.stringify({ type: 'response.completed', response: { id: 'response-1', status: 'completed', output: [], usage: { input_tokens: 1, output_tokens: 0, total_tokens: 1 } } })}\n\n`,
-      );
+        if (requests.length < 3) {
+          response.writeHead(requests.length === 1 ? 401 : 520, {
+            'Content-Type': 'application/json',
+          });
+          response.end(JSON.stringify({ error: { message: 'proxy failure' } }));
+          return;
+        }
+        response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        response.end(
+          `data: ${JSON.stringify({ type: 'response.completed', response: { id: 'response-1', status: 'completed', output: [], usage: { input_tokens: 1, output_tokens: 0, total_tokens: 1 } } })}\n\n`,
+        );
+      });
     });
     vi.stubEnv('PI_GROK_CLI_BASE_URL', `${server.origin}/v1`);
     try {
@@ -386,16 +365,14 @@ describe('proxy conversation recovery', () => {
       .mockImplementationOnce(() => proxyResponse(status))
       .mockImplementationOnce(() => proxyResponse());
     const extension = await setupExtension();
-    const onPayload = vi.fn();
+    const onPayload = vi.fn<NonNullable<SimpleStreamOptions['onPayload']>>();
     const stream = await startProxyRequest(extension, {
       sessionId: 'session-a',
       headers: { custom: 'kept' },
       onPayload,
     });
-    const events = [];
-    for await (const event of stream) events.push(event);
 
-    expect(events.map((event) => event.type)).toEqual(['done']);
+    expect(await eventTypes(stream)).toEqual(['done']);
     expect((await stream.result()).stopReason).toBe('stop');
     expect(mockProviderStream.mock.calls.map((call) => call[2]?.headers)).toEqual([
       { ...VERSION_HEADERS, custom: 'kept', 'x-grok-conv-id': 'session-a' },
@@ -433,18 +410,15 @@ describe('proxy conversation recovery', () => {
       sessionId: scenario.sessionId,
       signal: controller.signal,
     });
-    const events = [];
-    for await (const event of stream) events.push(event);
+    const types = await eventTypes(stream);
     expect(mockProviderStream).toHaveBeenCalledTimes(scenario.attempts);
-    expect(events.map((event) => event.type)).toEqual(
-      scenario.started ? ['start', 'error'] : ['error'],
-    );
+    expect(types).toEqual(scenario.started ? ['start', 'error'] : ['error']);
     expect(await stream.result()).toMatchObject({
       role: 'assistant',
       provider: 'grok-cli',
       stopReason: 'error',
-      errorMessage: expect.stringContaining(`(${scenario.status})`),
     });
+    expect((await stream.result()).errorMessage).toContain(`(${scenario.status})`);
     const { requestAccount } = await import('../../src/provider/requestOwnership.js');
     expect(requestAccount(await stream.result())).toBe('account-1');
   });
@@ -460,10 +434,8 @@ describe('proxy conversation recovery', () => {
     });
     const extension = await setupExtension();
     const stream = await startProxyRequest(extension, { sessionId: 'session-a' });
-    const events = [];
-    for await (const event of stream) events.push(event);
 
-    expect(events.map((event) => event.type)).toEqual(['error']);
+    expect(await eventTypes(stream)).toEqual(['error']);
     expect(await stream.result()).toMatchObject({
       stopReason: 'error',
       errorMessage: 'Grok CLI response ended without a stop reason',
@@ -481,10 +453,8 @@ describe('proxy conversation recovery', () => {
       .mockImplementationOnce(() => proxyResponse());
     const extension = await setupExtension();
     const stream = await startProxyRequest(extension, { sessionId: 'session-a' });
-    const events = [];
-    for await (const event of stream) events.push(event);
 
-    expect(events.map((event) => event.type)).toEqual(['done']);
+    expect(await eventTypes(stream)).toEqual(['done']);
     expect(mockProviderStream.mock.calls.map((call) => call[2]?.headers)).toEqual([
       { ...VERSION_HEADERS, 'x-grok-conv-id': 'session-a' },
       {
@@ -501,10 +471,8 @@ describe('proxy conversation recovery', () => {
     mockProviderStream.mockImplementation(() => proxyResponse(426));
     const extension = await setupExtension();
     const stream = await startProxyRequest(extension, { sessionId: 'session-a' });
-    const events = [];
-    for await (const event of stream) events.push(event);
 
-    expect(events.map((event) => event.type)).toEqual(['error']);
+    expect(await eventTypes(stream)).toEqual(['error']);
     expect(mockProviderStream).toHaveBeenCalledTimes(2);
     expect(await stream.result()).toMatchObject({
       errorMessage: 'grok-cli API error (426): proxy failure',
@@ -588,7 +556,7 @@ function contextForModel(provider: string, id = `${provider}-model`): TestContex
       getSessionId: () => 'session-a',
       getBranch: () => [],
     },
-    ui: { notify: vi.fn() },
+    ui: { notify: vi.fn<TestContext['ui']['notify']>() },
   };
 }
 
@@ -598,6 +566,16 @@ function setupHome() {
   tempDirs.push(dir);
   process.env.HOME = dir;
   return dir;
+}
+
+function saveAccount1(access: string, addAccounts = (_vault: AccountVault) => {}) {
+  return mutateAccountVault((vault) => {
+    vault.migration.legacyCredentialCopyComplete = true;
+    vault.accounts[0].credential = liveCredential(access);
+    vault.accounts[0].revision = 1;
+    addAccounts(vault);
+    vault.activeAccountId = 'account-1';
+  });
 }
 
 function billingResponse(monthlyLimit: unknown, used: unknown, billingPeriodEnd: unknown) {
@@ -637,14 +615,22 @@ const billingFetchMock = (
   settings: Response = settingsResponse('X Premium'),
 ) =>
   vi.fn<typeof fetch>(async (input) => {
-    const url = typeof input === 'string' ? input : input.toString();
+    const url = input instanceof Request ? input.url : input.toString();
     if (url.endsWith('/settings')) return settings;
     return url.includes('format=credits') ? credits : monthly;
   });
 
 async function runStatus(extension: Awaited<ReturnType<typeof setupExtension>>) {
-  const notify = vi.fn();
+  const notify = vi.fn<TestContext['ui']['notify']>();
   await extension.commands.get('grok-cli-usage')?.handler('', statusContext(notify));
+  return notify;
+}
+
+async function runStatusWithModels(getAll: TestContext['modelRegistry']['getAll']) {
+  const notify = vi.fn<TestContext['ui']['notify']>();
+  await (await setupExtension()).commands
+    .get('grok-cli-usage')
+    ?.handler('', { modelRegistry: { getAll }, ui: { notify } });
   return notify;
 }
 
@@ -761,24 +747,17 @@ describe('Grok CLI status command', () => {
   it('uses the active vault account when no environment token is set', async () => {
     delete process.env.GROK_CLI_OAUTH_TOKEN;
     setupHome();
-    await mutateAccountVault((vault) => {
-      vault.migration.legacyCredentialCopyComplete = true;
-      vault.accounts[0].credential = {
-        access: 'provider-token',
-        refresh: 'provider-refresh',
-        expires: Date.now() + 300_000,
-      };
-      vault.accounts[0].revision = 1;
-      vault.activeAccountId = 'account-1';
-    });
+    await saveAccount1('provider-token');
     writePiVaultMarker();
     const fetchMock = vi.fn<typeof fetch>(async () =>
       billingResponse(4000, 100, '2026-07-01T00:00:00+00:00'),
     );
     globalThis.fetch = fetchMock;
     const extension = await setupExtension();
-    const notify = vi.fn();
-    const getApiKeyForProvider = vi.fn(async () => 'provider-token');
+    const notify = vi.fn<TestContext['ui']['notify']>();
+    const getApiKeyForProvider = vi.fn<
+      NonNullable<TestContext['modelRegistry']['getApiKeyForProvider']>
+    >(async () => 'provider-token');
 
     await extension.commands.get('grok-cli-usage')?.handler('', {
       ...statusContext(notify),
@@ -798,26 +777,18 @@ describe('Grok CLI status command', () => {
   });
 
   it('does not cache usage after the account changes during the request', async () => {
-    await mutateAccountVault((vault) => {
-      vault.migration.legacyCredentialCopyComplete = true;
-      vault.accounts[0].credential = {
-        ...oauthCredential('one'),
-        expires: Date.now() + 300_000,
-      };
-      vault.accounts[0].revision = 1;
-      vault.activeAccountId = 'account-1';
-    });
+    await saveAccount1('one');
     writePiVaultMarker();
     const monthly = deferred<Response>();
     globalThis.fetch = vi.fn<typeof fetch>(async (input) => {
-      const url = typeof input === 'string' ? input : input.toString();
+      const url = input instanceof Request ? input.url : input.toString();
       if (url.includes('format=credits')) {
         return creditsResponse(10, '2026-07-14T00:19:56+00:00');
       }
       return monthly.promise;
     });
     const extension = await setupExtension();
-    const notify = vi.fn();
+    const notify = vi.fn<TestContext['ui']['notify']>();
 
     const pending = extension.commands.get('grok-cli-usage')?.handler('', statusContext(notify));
     await vi.waitFor(() => expect(globalThis.fetch).toHaveBeenCalledOnce());
@@ -933,7 +904,7 @@ describe('Grok CLI status command', () => {
 
   it('warns when no Grok models are registered', async () => {
     const extension = await setupExtension();
-    const notify = vi.fn();
+    const notify = vi.fn<TestContext['ui']['notify']>();
 
     await extension.commands.get('grok-cli-usage')?.handler('', emptyStatusContext(notify));
 
@@ -946,19 +917,13 @@ describe('Grok CLI status command', () => {
 
   it('shows env-token bypass warning', async () => {
     process.env.GROK_CLI_OAUTH_TOKEN = 'token';
-    const extension = await setupExtension();
-    const notify = vi.fn();
 
-    await extension.commands.get('grok-cli-usage')?.handler('', {
-      modelRegistry: {
-        getAll: () =>
-          Array.from({ length: 7 }, (_value, index) => ({
-            provider: 'grok-cli',
-            id: `grok-model-${index + 1}`,
-          })),
-      },
-      ui: { notify },
-    });
+    const notify = await runStatusWithModels(() =>
+      Array.from({ length: 7 }, (_value, index) => ({
+        provider: 'grok-cli',
+        id: `grok-model-${index + 1}`,
+      })),
+    );
 
     expect(notify.mock.calls[0]).toEqual([
       '⚠️  Grok CLI: using GROK_CLI_OAUTH_TOKEN env bypass — no auto-refresh available',
@@ -967,16 +932,8 @@ describe('Grok CLI status command', () => {
   });
 
   it('reports registry errors as status warnings', async () => {
-    const extension = await setupExtension();
-    const notify = vi.fn();
-
-    await extension.commands.get('grok-cli-usage')?.handler('', {
-      modelRegistry: {
-        getAll: () => {
-          throw new Error('registry unavailable');
-        },
-      },
-      ui: { notify },
+    const notify = await runStatusWithModels(() => {
+      throw new Error('registry unavailable');
     });
 
     expect(notify).toHaveBeenCalledWith('Grok CLI: registry unavailable', 'warning');
@@ -984,16 +941,9 @@ describe('Grok CLI status command', () => {
 
   it('includes OAuth error codes in status warnings', async () => {
     const { XaiOAuthError } = await import('../../src/shared/errors.js');
-    const extension = await setupExtension();
-    const notify = vi.fn();
 
-    await extension.commands.get('grok-cli-usage')?.handler('', {
-      modelRegistry: {
-        getAll: () => {
-          throw new XaiOAuthError('refresh failed', 'refresh_failed', true);
-        },
-      },
-      ui: { notify },
+    const notify = await runStatusWithModels(() => {
+      throw new XaiOAuthError('refresh failed', 'refresh_failed', true);
     });
 
     expect(notify).toHaveBeenCalledWith(
@@ -1014,28 +964,7 @@ describe('Grok CLI provider registration', () => {
   });
 
   it('routes two live Pi sessions through their own selected accounts', async () => {
-    await mutateAccountVault((vault) => {
-      vault.migration.legacyCredentialCopyComplete = true;
-      vault.accounts[0].credential = {
-        access: 'one',
-        refresh: 'one-refresh',
-        expires: Date.now() + 300_000,
-      };
-      vault.accounts[0].revision = 1;
-      vault.accounts.push({
-        id: 'work-id',
-        slot: 2,
-        label: 'Work',
-        credential: {
-          access: 'two',
-          refresh: 'two-refresh',
-          expires: Date.now() + 300_000,
-        },
-        revision: 1,
-      });
-      vault.nextSlot = 3;
-      vault.activeAccountId = 'account-1';
-    });
+    await saveAccount1('one', addWorkAccount);
     writePiVaultMarker();
     const first = await setupExtension();
     const second = await setupExtension();
@@ -1097,24 +1026,16 @@ describe('Grok CLI provider registration', () => {
       async *[Symbol.asyncIterator]() {},
       result: () => Promise.reject(new Error('provider failed')),
     }));
-    const extension = await setupExtension();
-    const provider = extension.providers.get('grok-cli');
-    const model = provider?.models?.[0];
-    if (!model) throw new Error('Grok CLI test model is missing.');
+    const unhandledRejection = vi.fn<(reason: unknown) => void>();
+    process.on('unhandledRejection', unhandledRejection);
+    try {
+      await drain(await startProxyRequest(await setupExtension(), { sessionId: 'session-a' }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    } finally {
+      process.off('unhandledRejection', unhandledRejection);
+    }
 
-    await drain(
-      provider.streamSimple?.(
-        {
-          ...model,
-          provider: 'grok-cli',
-          api: 'openai-responses',
-          baseUrl: 'https://cli-chat-proxy.grok.com',
-        },
-        normalizeContext({ messages: [] }),
-        { sessionId: 'session-a' },
-      ),
-    );
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(unhandledRejection).not.toHaveBeenCalled();
   });
 
   it('stores the default account in a new Pi session', async () => {
@@ -1134,30 +1055,12 @@ describe('Grok CLI provider registration', () => {
   });
 
   it('uses the session account for the usage command', async () => {
-    await mutateAccountVault((vault) => {
-      vault.migration.legacyCredentialCopyComplete = true;
-      vault.accounts[0].credential = {
-        ...oauthCredential('one'),
-        expires: Date.now() + 300_000,
-      };
-      vault.accounts[0].revision = 1;
-      vault.accounts.push({
-        id: 'work-id',
-        slot: 2,
-        label: 'Work',
-        credential: {
-          ...oauthCredential('two'),
-          expires: Date.now() + 300_000,
-        },
-        revision: 1,
-      });
-      vault.nextSlot = 3;
-      vault.activeAccountId = 'account-1';
-    });
+    await saveAccount1('one', addWorkAccount);
     writePiVaultMarker();
-    globalThis.fetch = vi.fn<typeof fetch>(async () =>
+    const fetchMock = vi.fn<typeof fetch>(async () =>
       billingResponse(4000, 100, '2026-07-01T00:00:00+00:00'),
     );
+    globalThis.fetch = fetchMock;
     const extension = await setupExtension();
     const context = sessionContext('session-b', 'work-id');
     context.modelRegistry.getAll = () => [{ provider: 'grok-cli', id: 'grok-build' }];
@@ -1165,12 +1068,10 @@ describe('Grok CLI provider registration', () => {
 
     await extension.commands.get('grok-cli-usage')?.handler('', context);
 
-    expect(globalThis.fetch).toHaveBeenCalledWith(
+    expect(fetchMock.mock.calls.map(([input, init]) => [input, init?.headers])).toContainEqual([
       'https://cli-chat-proxy.grok.com/v1/billing',
-      expect.objectContaining({
-        headers: expect.objectContaining({ authorization: 'Bearer two' }),
-      }),
-    );
+      expect.objectContaining({ authorization: 'Bearer two' }),
+    ]);
   });
 
   it('uses OAuth and a custom stream in stored-account mode', async () => {
@@ -1256,16 +1157,7 @@ describe('Grok CLI provider registration', () => {
   });
 
   it('reconnects an existing vault with no Pi credential or an existing marker', async () => {
-    await mutateAccountVault((vault) => {
-      vault.migration.legacyCredentialCopyComplete = true;
-      vault.accounts[0].credential = {
-        access: 'saved-access',
-        refresh: 'saved-refresh',
-        expires: Date.now() + 300_000,
-      };
-      vault.accounts[0].revision = 1;
-      vault.activeAccountId = 'account-1';
-    });
+    await saveAccount1('saved-access');
     const extension = await setupExtension();
     const provider = extension.providers.get('grok-cli');
 
@@ -1300,13 +1192,8 @@ describe('Grok CLI provider registration', () => {
       activeAccountId: 'account-1',
       migration: { markerInstallPending: true },
     });
-    expect(vault.accounts).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: 'account-1',
-          credential: expect.objectContaining({ access: 'released-account' }),
-        }),
-      ]),
+    expect(vault.accounts.find((account) => account.id === 'account-1')?.credential?.access).toBe(
+      'released-account',
     );
   });
 
@@ -1362,7 +1249,7 @@ describe('Grok CLI provider registration', () => {
     expect(provider?.oauth?.getApiKey({ access: 'access-token', refresh: '', expires: 0 })).toBe(
       'access-token',
     );
-    expect(provider?.oauth?.modifyModels).toBeUndefined();
+    expect(typeof provider?.oauth?.modifyModels).toBe('undefined');
   });
 
   it('does not register provider aliases from the released account config', async () => {
@@ -1413,11 +1300,9 @@ describe('Grok CLI provider registration', () => {
         },
       },
       {
+        ...contextForModel('grok-cli', 'grok-4.3'),
         cwd: process.cwd(),
-        model: { provider: 'grok-cli', id: 'grok-4.3' },
-        modelRegistry: { getAll: () => [] },
         sessionManager: { getSessionId: () => 'session-123' },
-        ui: { notify: vi.fn() },
       },
     );
 
@@ -1430,11 +1315,9 @@ describe('Grok CLI provider registration', () => {
     const aliasResult = extension.handlers.get('before_provider_request')?.(
       { payload: { input: [{ role: 'system', content: 'alias instruction' }] } },
       {
+        ...contextForModel('grok-cli-2', 'grok-build'),
         cwd: process.cwd(),
-        model: { provider: 'grok-cli-2', id: 'grok-build' },
-        modelRegistry: { getAll: () => [] },
         sessionManager: { getSessionId: () => 'session-alias' },
-        ui: { notify: vi.fn() },
       },
     );
 
@@ -1447,10 +1330,8 @@ describe('Grok CLI provider registration', () => {
     const result = extension.handlers.get('before_provider_request')?.(
       { payload },
       {
-        model: { provider: 'openai', id: 'gpt-4' },
-        modelRegistry: { getAll: () => [] },
+        ...contextForModel('openai', 'gpt-4'),
         sessionManager: { getSessionId: () => 'session-123' },
-        ui: { notify: vi.fn() },
       },
     );
 
@@ -1461,7 +1342,7 @@ describe('Grok CLI provider registration', () => {
   it('warns at session start when env-token bypass is active', async () => {
     process.env.GROK_CLI_OAUTH_TOKEN = 'token';
     const extension = await setupExtension();
-    const notify = vi.fn();
+    const notify = vi.fn<TestContext['ui']['notify']>();
 
     await extension.handlers.get('session_start')?.(
       {},

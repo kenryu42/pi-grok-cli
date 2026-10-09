@@ -25,11 +25,10 @@ function writeJson(path: string, value: unknown) {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
 }
 
-async function expectLockTimeout(lockPath: string) {
+async function acquireLockAfterTimeout() {
   const pending = acquireFileLock(getQuotaCachePath());
-  const rejection = expect(pending).rejects.toThrow(`Timed out waiting for file lock: ${lockPath}`);
-  await vi.advanceTimersByTimeAsync(30_000);
-  await rejection;
+  await Promise.all([Promise.allSettled([pending]), vi.advanceTimersByTimeAsync(30_000)]);
+  return pending;
 }
 
 describe('Grok CLI storage', () => {
@@ -51,7 +50,9 @@ describe('Grok CLI storage', () => {
     expect(migrateLegacyConfig()).toEqual({});
 
     expect(loadConfig().config.imagine.enabled).toBe(false);
-    expect(JSON.parse(readFileSync(getConfigPath(), 'utf8')).version).toBe(3);
+    expect((JSON.parse(readFileSync(getConfigPath(), 'utf8')) as { version: number }).version).toBe(
+      3,
+    );
     expect(existsSync(getLegacyConfigPath())).toBe(false);
   });
 
@@ -122,7 +123,9 @@ describe('Grok CLI storage', () => {
     vi.useFakeTimers();
 
     try {
-      await expectLockTimeout(lockPath);
+      await expect(acquireLockAfterTimeout()).rejects.toThrow(
+        `Timed out waiting for file lock: ${lockPath}`,
+      );
       expect(existsSync(lockPath)).toBe(true);
     } finally {
       vi.useRealTimers();
@@ -157,7 +160,9 @@ describe('Grok CLI storage', () => {
     vi.useFakeTimers();
 
     try {
-      await expectLockTimeout(lockPath);
+      await expect(acquireLockAfterTimeout()).rejects.toThrow(
+        `Timed out waiting for file lock: ${lockPath}`,
+      );
     } finally {
       vi.useRealTimers();
       rmSync(recoveryPath, { force: true });

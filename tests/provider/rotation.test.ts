@@ -1,10 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import {
-  type AssistantMessage,
-  createAssistantMessageEventStream,
-  normalizeContext,
-} from '@earendil-works/pi-ai';
+import { createAssistantMessageEventStream, normalizeContext } from '@earendil-works/pi-ai';
 import { streamSimpleOpenAIResponses } from '@earendil-works/pi-ai/compat';
 import {
   createAgentSession,
@@ -37,36 +33,20 @@ import {
   useEnvironmentToken,
   useTempHome,
 } from '../stateTestHelpers.js';
+import { assistantMessage } from './providerTestHelpers.js';
 
 const setupHome = useTempHome();
 const setEnvironmentToken = useEnvironmentToken();
 
-function exhaustedMessage(): AssistantMessage {
-  return {
-    role: 'assistant',
-    api: 'openai-responses',
-    provider: 'grok-cli',
-    model: 'grok-build',
-    content: [],
-    usage: {
-      input: 0,
-      output: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-      totalTokens: 0,
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-    },
-    stopReason: 'error',
-    errorMessage: EXHAUSTED_BALANCE_ERROR,
-    timestamp: Date.now(),
-  };
+function exhaustedMessage() {
+  return assistantMessage({ stopReason: 'error', errorMessage: EXHAUSTED_BALANCE_ERROR });
 }
 
 function extension() {
   const handlers = new Map<string, ((event: unknown, ctx: ExtensionContext) => unknown)[]>();
-  const sendUserMessage = vi.fn();
-  const setModel = vi.fn();
-  const appendEntry = vi.fn();
+  const sendUserMessage = vi.fn<ExtensionAPI['sendUserMessage']>();
+  const setModel = vi.fn<ExtensionAPI['setModel']>();
+  const appendEntry = vi.fn<ExtensionAPI['appendEntry']>();
   const pi = {
     on(event: string, handler: (event: unknown, ctx: ExtensionContext) => unknown) {
       handlers.set(event, [...(handlers.get(event) ?? []), handler]);
@@ -77,7 +57,7 @@ function extension() {
   } as unknown as ExtensionAPI;
   const selection = createSessionAccountSelection(pi);
   const rotation = registerExhaustionRotation(pi, selection);
-  const notify = vi.fn();
+  const notify = vi.fn<ExtensionContext['ui']['notify']>();
   const ctx = {
     model: { provider: 'grok-cli', id: 'grok-build' },
     sessionManager: {
@@ -148,112 +128,101 @@ beforeEach(() => {
   vi.useRealTimers();
 });
 
-describe('Grok CLI exhaustion rotation', () => {
-  it.each([
-    'idle',
-    'streaming',
-  ] as const)('delivers the continuation through Pi when %s after the vault read', async (state) => {
-    await addLoggedInAccounts();
-    const directory = getGrokCliDirectory();
-    const settled = deferred<void>();
-    const settingsManager = SettingsManager.inMemory({
-      compaction: { enabled: false },
-      retry: { enabled: false },
-    });
-    const resourceLoader = new DefaultResourceLoader({
-      cwd: directory,
-      agentDir: directory,
-      settingsManager,
-      noExtensions: true,
-      noSkills: true,
-      noPromptTemplates: true,
-      noThemes: true,
-      noContextFiles: true,
-      extensionFactories: [
-        (pi) => {
-          pi.on('agent_settled', () => settled.resolve());
-          registerExhaustionRotation(pi);
-        },
-      ],
-    });
-    await resourceLoader.reload();
-    const modelRuntime = await ModelRuntime.create({
-      authPath: join(directory, 'test-auth.json'),
-      modelsPath: null,
-      modelsStorePath: join(directory, 'test-models.json'),
-      allowModelNetwork: false,
-    });
-    modelRuntime.registerProvider('grok-cli', {
-      api: 'openai-responses',
-      baseUrl: 'http://127.0.0.1:1',
-      apiKey: 'test-only',
-      models: [
-        {
-          id: 'grok-build',
-          name: 'Test Grok',
-          reasoning: false,
-          input: ['text'],
-          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-          contextWindow: 10000,
-          maxTokens: 1000,
-        },
-      ],
-    });
-    const { session } = await createAgentSession({
-      cwd: directory,
-      agentDir: directory,
-      modelRuntime,
-      model: modelRuntime.getModel('grok-cli', 'grok-build'),
-      resourceLoader,
-      settingsManager,
-      sessionManager: SessionManager.inMemory(directory),
-      tools: [],
-    });
-    const errors = vi.fn();
-    await session.bindExtensions({ onError: errors });
-    const responses: ReturnType<typeof createAssistantMessageEventStream>[] = [];
-    session.agent.streamFunction = (_model, _context, options) => {
-      const stream = createAssistantMessageEventStream();
-      options?.signal?.addEventListener(
-        'abort',
-        () => stream.end({ ...exhaustedMessage(), stopReason: 'aborted' }),
-        { once: true },
-      );
-      responses.push(stream);
-      return stream;
+async function rotationSession() {
+  await addLoggedInAccounts();
+  const directory = getGrokCliDirectory();
+  const settled = deferred<undefined>();
+  const settingsManager = SettingsManager.inMemory({
+    compaction: { enabled: false },
+    retry: { enabled: false },
+  });
+  const resourceLoader = new DefaultResourceLoader({
+    cwd: directory,
+    agentDir: directory,
+    settingsManager,
+    noExtensions: true,
+    noSkills: true,
+    noPromptTemplates: true,
+    noThemes: true,
+    noContextFiles: true,
+    extensionFactories: [
+      (pi) => {
+        pi.on('agent_settled', () => settled.resolve(undefined));
+        registerExhaustionRotation(pi);
+      },
+    ],
+  });
+  await resourceLoader.reload();
+  const modelRuntime = await ModelRuntime.create({
+    authPath: join(directory, 'test-auth.json'),
+    modelsPath: null,
+    modelsStorePath: join(directory, 'test-models.json'),
+    allowModelNetwork: false,
+  });
+  modelRuntime.registerProvider('grok-cli', {
+    api: 'openai-responses',
+    baseUrl: 'http://127.0.0.1:1',
+    apiKey: 'test-only',
+    models: [
+      {
+        id: 'grok-build',
+        name: 'Test Grok',
+        reasoning: false,
+        input: ['text'],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 10000,
+        maxTokens: 1000,
+      },
+    ],
+  });
+  const { session } = await createAgentSession({
+    cwd: directory,
+    agentDir: directory,
+    modelRuntime,
+    model: modelRuntime.getModel('grok-cli', 'grok-build'),
+    resourceLoader,
+    settingsManager,
+    sessionManager: SessionManager.inMemory(directory),
+    tools: [],
+  });
+  const errors = vi.fn<(error: unknown) => void>();
+  await session.bindExtensions({ onError: errors });
+  const responses: ReturnType<typeof createAssistantMessageEventStream>[] = [];
+  session.agent.streamFunction = (_model, _context, options) => {
+    const stream = createAssistantMessageEventStream();
+    options?.signal?.addEventListener(
+      'abort',
+      () => stream.end({ ...exhaustedMessage(), stopReason: 'aborted' }),
+      { once: true },
+    );
+    responses.push(stream);
+    return stream;
+  };
+  const prompts: Promise<void>[] = [];
+  const finish = (index: number, stopReason: 'stop' | 'error') => {
+    const message = {
+      ...exhaustedMessage(),
+      stopReason,
+      errorMessage: stopReason === 'error' ? EXHAUSTED_BALANCE_ERROR : undefined,
     };
-    const finish = (index: number, stopReason: 'stop' | 'error') => {
-      const message = {
-        ...exhaustedMessage(),
-        stopReason,
-        errorMessage: stopReason === 'error' ? EXHAUSTED_BALANCE_ERROR : undefined,
-      };
-      responses[index].push(
-        stopReason === 'error'
-          ? { type: 'error', reason: 'error', error: message }
-          : { type: 'done', reason: 'stop', message },
-      );
-      responses[index].end(message);
-    };
-    const release =
-      state === 'streaming' ? await acquireFileLock(getAccountVaultPath()) : undefined;
-    const prompts = [session.prompt('Original request')];
-    try {
-      await vi.waitFor(() => expect(responses).toHaveLength(1));
-      finish(0, 'error');
-      if (state === 'streaming') {
-        await settled.promise;
-        await new Promise<void>((resolve) => setImmediate(resolve));
-        prompts.push(session.prompt('Another request during account rotation'));
-        await vi.waitFor(() => expect(responses).toHaveLength(2));
-        await release?.();
-        await prompts[0];
-        expect(errors).not.toHaveBeenCalled();
-        expect(session.getFollowUpMessages()).toEqual([ROTATION_CONTINUATION]);
-        expect(responses).toHaveLength(2);
-        finish(1, 'stop');
-      }
-      const continuationIndex = state === 'streaming' ? 2 : 1;
+    responses[index].push(
+      stopReason === 'error'
+        ? { type: 'error', reason: 'error', error: message }
+        : { type: 'done', reason: 'stop', message },
+    );
+    responses[index].end(message);
+  };
+  return {
+    session,
+    settled,
+    errors,
+    responses,
+    prompts,
+    finish,
+    startOriginalRequest() {
+      prompts.push(session.prompt('Original request'));
+    },
+    async expectContinuation(continuationIndex: number) {
       await vi.waitFor(() => expect(responses).toHaveLength(continuationIndex + 1));
       finish(continuationIndex, 'stop');
       await Promise.all(prompts);
@@ -277,12 +246,50 @@ describe('Grok CLI exhaustion rotation', () => {
           data: { accountId: 'account-2' },
         }),
       );
-    } finally {
-      await release?.();
+    },
+    async close() {
       await session.abort();
       await Promise.allSettled(prompts);
       await session.abort();
       session.dispose();
+    },
+  };
+}
+
+describe('Grok CLI exhaustion rotation', () => {
+  it('delivers the continuation through Pi when idle after the vault read', async () => {
+    const test = await rotationSession();
+    test.startOriginalRequest();
+    try {
+      await vi.waitFor(() => expect(test.responses).toHaveLength(1));
+      test.finish(0, 'error');
+      await test.expectContinuation(1);
+    } finally {
+      await test.close();
+    }
+  });
+
+  it('delivers the continuation through Pi when streaming after the vault read', async () => {
+    const test = await rotationSession();
+    const release = await acquireFileLock(getAccountVaultPath());
+    test.startOriginalRequest();
+    try {
+      await vi.waitFor(() => expect(test.responses).toHaveLength(1));
+      test.finish(0, 'error');
+      await test.settled.promise;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      test.prompts.push(test.session.prompt('Another request during account rotation'));
+      await vi.waitFor(() => expect(test.responses).toHaveLength(2));
+      await release();
+      await test.prompts[0];
+      expect(test.errors).not.toHaveBeenCalled();
+      expect(test.session.getFollowUpMessages()).toEqual([ROTATION_CONTINUATION]);
+      expect(test.responses).toHaveLength(2);
+      test.finish(1, 'stop');
+      await test.expectContinuation(2);
+    } finally {
+      await release();
+      await test.close();
     }
   });
 

@@ -29,6 +29,10 @@ const releasedConfig = {
   },
   imagine: { enabled: false },
 };
+function readConfigVersion() {
+  return (JSON.parse(readFileSync(getConfigPath(), 'utf8')) as { version: number }).version;
+}
+
 const releasedAccountLabels = [
   { slot: 1, label: 'Personal' },
   { slot: 2, label: 'Work' },
@@ -50,9 +54,9 @@ describe('released account migration', () => {
       'grok-cli': { ...oauthCredential('personal'), baseUrl: 'https://personal.example' },
       'grok-cli-10': oauthCredential('backup'),
     };
-    const readCredential = vi.fn(
-      (provider: string) => credentials[provider as keyof typeof credentials],
-    );
+    const readCredential = vi.fn<
+      (provider: string) => (typeof credentials)[keyof typeof credentials]
+    >((provider) => credentials[provider as keyof typeof credentials]);
     const original = readFileSync(getConfigPath(), 'utf8');
 
     expect(await migrateReleasedAccounts({ readCredential })).toEqual({ migrated: true });
@@ -77,10 +81,11 @@ describe('released account migration', () => {
       version: 3,
       imagine: { enabled: false },
     });
-    expect(Object.keys(JSON.parse(readFileSync(getQuotaCachePath(), 'utf8')).accounts)).toEqual([
-      vault.accounts[0]?.id,
-      vault.accounts[2]?.id,
-    ]);
+    expect(
+      Object.keys(
+        (JSON.parse(readFileSync(getQuotaCachePath(), 'utf8')) as { accounts: object }).accounts,
+      ),
+    ).toEqual([vault.accounts[0]?.id, vault.accounts[2]?.id]);
   });
 
   it('migrates the previously supported version 1 account configuration', async () => {
@@ -160,7 +165,7 @@ describe('released account migration', () => {
       }),
     ).resolves.toEqual({ migrated: true });
 
-    expect(JSON.parse(readFileSync(getConfigPath(), 'utf8')).version).toBe(3);
+    expect(readConfigVersion()).toBe(3);
     expect((await getAccountVault()).accounts[0].credential?.access).toBe('personal');
   });
 
@@ -206,7 +211,7 @@ describe('released account migration', () => {
       },
     });
     const release = await acquireFileLock(getQuotaCachePath());
-    const settled = vi.fn();
+    const settled = vi.fn<() => void>();
     const migration = migrateReleasedAccounts().finally(settled);
 
     try {
@@ -227,7 +232,7 @@ describe('released account migration', () => {
     writeTestJson(getConfigPath(), { version: 4, imagine: { enabled: false } });
 
     await expect(migrateReleasedAccounts()).rejects.toThrow('is not a supported version 1 or 2');
-    expect(JSON.parse(readFileSync(getConfigPath(), 'utf8')).version).toBe(4);
+    expect(readConfigVersion()).toBe(4);
     expect(existsSync(getConfigBackupPath())).toBe(false);
   });
 
@@ -244,7 +249,7 @@ describe('released account migration', () => {
       releasedAccountLabels,
     );
     expect(existsSync(getLegacyConfigPath())).toBe(false);
-    expect(JSON.parse(readFileSync(getConfigPath(), 'utf8')).version).toBe(3);
+    expect(readConfigVersion()).toBe(3);
   });
 
   it('migrates a normal Account 1 login when no extension config exists', async () => {

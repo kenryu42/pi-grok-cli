@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type * as Stream from '../../src/provider/stream.js';
 import { grokCliModelHeaders, grokCliVersionHeaders } from '../../src/provider/stream.js';
 import { startTestServer } from '../stateTestHelpers.js';
 
@@ -14,7 +15,7 @@ async function versionServer(status: number, body: string) {
 
 async function withVersionSequence(
   versions: string[],
-  run: (stream: typeof import('../../src/provider/stream.js')) => Promise<void>,
+  run: (stream: typeof Stream) => Promise<void>,
 ) {
   const server = await startTestServer((_request, response) => response.end(versions.shift()));
   try {

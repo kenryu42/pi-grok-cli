@@ -1,12 +1,13 @@
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as OAuth from '../../src/auth/oauth.js';
 import { mutateAccountVault } from '../../src/provider/accountVault.js';
 import { useTempHome, writeTestJson } from '../stateTestHelpers.js';
 
-const { refresh } = vi.hoisted(() => ({ refresh: vi.fn() }));
+const { refresh } = vi.hoisted(() => ({ refresh: vi.fn<typeof OAuth.refresh>() }));
 
 vi.mock('../../src/auth/oauth.js', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../../src/auth/oauth.js')>()),
+  ...(await importOriginal<typeof OAuth>()),
   refresh,
 }));
 

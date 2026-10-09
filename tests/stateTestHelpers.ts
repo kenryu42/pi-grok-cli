@@ -2,7 +2,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type RequestListener } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach } from 'vitest';
+import type { ExtensionContext, ExtensionUIContext } from '@earendil-works/pi-coding-agent';
+import { afterEach, vi } from 'vitest';
 import { ACCOUNT_VAULT_MARKER, mutateAccountVault } from '../src/provider/accountVault.js';
 import { getConfigPath, writeFileAtomic } from '../src/storage.js';
 
@@ -17,6 +18,18 @@ export const oauthCredential = (access: string) => ({
   refresh: `${access}-refresh`,
   expires: Date.now() + 60_000,
 });
+
+export function testExtensionContext() {
+  const notify = vi.fn<ExtensionUIContext['notify']>();
+  return {
+    notify,
+    ctx: {
+      model: { provider: 'grok-cli', id: 'grok-build' },
+      sessionManager: { getSessionId: () => 'session-a', getBranch: () => [] },
+      ui: { notify },
+    } as unknown as ExtensionContext,
+  };
+}
 
 export function deferred<T>() {
   let resolvePromise!: (value: T) => void;
@@ -37,32 +50,38 @@ export function saveTestAccounts(selectedProvider = 'grok-cli-2') {
   );
 }
 
-export function useTempHome(): () => string {
-  const originalHome = process.env.HOME;
-  const dirs: string[] = [];
+function setEnvironmentVariable(name: string, value: string | undefined) {
+  if (value === undefined) {
+    delete process.env[name];
+    return;
+  }
+  process.env[name] = value;
+}
+
+function useEnvironmentVariable(name: string, cleanup = () => {}) {
+  const original = process.env[name];
   afterEach(() => {
-    if (originalHome === undefined) delete process.env.HOME;
-    else process.env.HOME = originalHome;
+    setEnvironmentVariable(name, original);
+    cleanup();
+  });
+  return (value?: string) => setEnvironmentVariable(name, value);
+}
+
+export function useTempHome(): () => string {
+  const dirs: string[] = [];
+  const setHome = useEnvironmentVariable('HOME', () => {
     for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
   });
   return () => {
     const dir = mkdtempSync(join(tmpdir(), 'grok-cli-test-'));
     dirs.push(dir);
-    process.env.HOME = dir;
+    setHome(dir);
     return dir;
   };
 }
 
 export function useEnvironmentToken() {
-  const originalToken = process.env.GROK_CLI_OAUTH_TOKEN;
-  afterEach(() => {
-    if (originalToken === undefined) delete process.env.GROK_CLI_OAUTH_TOKEN;
-    else process.env.GROK_CLI_OAUTH_TOKEN = originalToken;
-  });
-  return (token?: string) => {
-    if (token === undefined) delete process.env.GROK_CLI_OAUTH_TOKEN;
-    else process.env.GROK_CLI_OAUTH_TOKEN = token;
-  };
+  return useEnvironmentVariable('GROK_CLI_OAUTH_TOKEN');
 }
 
 export function setAccount1Credential(access: string) {

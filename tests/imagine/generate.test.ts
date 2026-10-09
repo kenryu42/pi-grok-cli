@@ -16,7 +16,7 @@ describe('generateImage', () => {
       fetchImpl,
     });
     expect(fetchImpl.mock.calls[0]?.[0]).toBe('https://api.x.ai/v1/images/edits');
-    expect(JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body))).toMatchObject({
+    expect(JSON.parse(fetchImpl.mock.calls[0]?.[1]?.body as string)).toMatchObject({
       prompt: 'Make it blue',
       image: { url: 'data:image/png;base64,source', type: 'image_url' },
     });
@@ -31,17 +31,18 @@ describe('generateImage', () => {
       generateImage({ token: 'secret', prompt: 'a cat', aspectRatio: '16:9', fetchImpl }),
     ).resolves.toEqual({ b64: '/9j/2Q==', mimeType: 'image/jpeg' });
 
+    const headers = fetchImpl.mock.calls[0]?.[1]?.headers;
+    expect(headers).toMatchObject({
+      authorization: 'Bearer secret',
+      'content-type': 'application/json',
+      accept: 'application/json',
+      'user-agent': `pi-grok-cli/${packageJson.version}`,
+    });
+    expect(headers).toHaveProperty('x-grok-client-version', expect.any(String));
     expect(fetchImpl).toHaveBeenCalledWith(
       'https://api.x.ai/v1/images/generations',
       expect.objectContaining({
         method: 'POST',
-        headers: expect.objectContaining({
-          authorization: 'Bearer secret',
-          'content-type': 'application/json',
-          accept: 'application/json',
-          'user-agent': `pi-grok-cli/${packageJson.version}`,
-          'x-grok-client-version': expect.any(String),
-        }),
         body: JSON.stringify({
           model: 'grok-imagine-image-quality',
           prompt: 'a cat',

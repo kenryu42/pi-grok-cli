@@ -1,3 +1,5 @@
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { describe, expect, it, vi } from 'vitest';
 import { registerImageGenTool } from '../../src/imagine/tool.js';
@@ -23,7 +25,11 @@ function setup(token?: string, resolveToken?: () => Promise<string | undefined>)
   );
   const context = {
     cwd: home,
-    modelRegistry: { getApiKeyForProvider: vi.fn(async () => token) },
+    modelRegistry: {
+      getApiKeyForProvider: vi.fn<(provider: string) => Promise<string | undefined>>(
+        async () => token,
+      ),
+    },
     sessionManager: {
       getSessionDir: () => '/sessions',
       getSessionId: () => 'id',
@@ -50,11 +56,7 @@ function setup(token?: string, resolveToken?: () => Promise<string | undefined>)
 }
 
 describe('image_gen tool', () => {
-  it.each([
-    400 * 1024 - 1,
-    400 * 1024,
-    400 * 1024 + 1,
-  ])('enforces the source-image size limit for a %i-byte file', async (size) => {
+  async function editSourceImageOfSize(size: number) {
     const test = setup('token');
     const bytes = Buffer.alloc(size);
     Buffer.from(TEST_PNG_BASE64, 'base64').copy(bytes);
@@ -66,15 +68,26 @@ describe('image_gen tool', () => {
       undefined,
       test.context,
     );
-    if (size > 400 * 1024) {
-      expect(result.details.error).toMatch(/400 KiB/);
-      expect(test.generate).not.toHaveBeenCalled();
-      return;
-    }
-    expect(result.details.error).toBeUndefined();
-    expect(test.generate).toHaveBeenCalledWith(
-      expect.objectContaining({ imageUrl: `data:image/png;base64,${bytes.toString('base64')}` }),
+    return { test, bytes, result };
+  }
+
+  it.each([
+    400 * 1024 - 1,
+    400 * 1024,
+  ])('accepts a %i-byte source image within the size limit', async (size) => {
+    const edit = await editSourceImageOfSize(size);
+    expect(edit.result.details.error).toBeUndefined();
+    expect(edit.test.generate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        imageUrl: `data:image/png;base64,${edit.bytes.toString('base64')}`,
+      }),
     );
+  });
+
+  it('rejects a source image one byte over the size limit', async () => {
+    const edit = await editSourceImageOfSize(400 * 1024 + 1);
+    expect(edit.result.details.error).toMatch(/400 KiB/);
+    expect(edit.test.generate).not.toHaveBeenCalled();
   });
 
   it.each(['relative', 'absolute'])('edits a source image using its %s path', async (pathKind) => {
@@ -150,7 +163,7 @@ describe('image_gen tool', () => {
   });
 
   it('uses the supplied session token resolver', async () => {
-    const resolveToken = vi.fn(async () => 'session-token');
+    const resolveToken = vi.fn<() => Promise<string | undefined>>(async () => 'session-token');
     const test = setup(undefined, resolveToken);
 
     await test.tool.execute('call', { prompt: 'cat' }, undefined, undefined, test.context);
@@ -237,6 +250,3 @@ describe('image_gen tool', () => {
     ).toContain('saved images/1.jpg (/missing.jpg)');
   });
 });
-
-import { writeFileSync } from 'node:fs';
-import { join } from 'node:path';

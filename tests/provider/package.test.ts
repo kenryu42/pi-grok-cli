@@ -3,7 +3,17 @@ import { describe, expect, it } from 'vitest';
 
 const packageJson = JSON.parse(
   readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
-);
+) as {
+  name: string;
+  keywords: string[];
+  pi?: { extensions?: string[] };
+  main: string;
+  files: string[];
+  scripts?: Record<string, string>;
+  dependencies?: Record<string, string>;
+  devDependencies?: Record<string, string>;
+  peerDependencies?: Record<string, string>;
+};
 
 describe('npm package manifest', () => {
   it('declares a pi package entry point', () => {

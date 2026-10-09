@@ -89,7 +89,9 @@ describe('Grok CLI configuration', () => {
     writeConfig(home, { version: 4, imagine: { enabled: false } });
 
     expect(migrateLegacyConfig().warning).toContain('Unsupported config version 4');
-    expect(JSON.parse(readFileSync(paths(home).config, 'utf8')).version).toBe(4);
+    expect(
+      (JSON.parse(readFileSync(paths(home).config, 'utf8')) as { version: number }).version,
+    ).toBe(4);
   });
 
   it.each(['grok-cli', 'all'])('migrates released Imagine scope %s', (scope) => {

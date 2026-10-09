@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { convertToPng } from '@earendil-works/pi-coding-agent';
 import { afterEach, vi } from 'vitest';
-import type { savePreviewImage } from '../../src/imagine/save.js';
+import type { generateImage } from '../../src/imagine/generate.js';
+import type { saveImage, savePreviewImage } from '../../src/imagine/save.js';
 
 const tempDirs: string[] = [];
 
@@ -22,12 +23,15 @@ export function tempDir(prefix: string) {
 
 export function imagineDependencies() {
   return {
-    generateImage: vi.fn(async () => ({ b64: '/9j/2Q==', mimeType: 'image/jpeg' as const })),
+    generateImage: vi.fn<typeof generateImage>(async () => ({
+      b64: '/9j/2Q==',
+      mimeType: 'image/jpeg' as const,
+    })),
     convertToPng: vi.fn<typeof convertToPng>(async () => ({
       data: 'iVBORw0KGgo=',
       mimeType: 'image/png',
     })),
-    saveImage: vi.fn(async () => ({
+    saveImage: vi.fn<typeof saveImage>(async () => ({
       absolutePath: '/sessions/id/images/1.jpg',
       relativePath: 'images/1.jpg',
       filename: '1.jpg',
