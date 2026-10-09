@@ -1,4 +1,5 @@
-import { createServer } from 'node:http';
+import { createServer, type Server } from 'node:http';
+import type { OAuthCredentials, OAuthLoginCallbacks } from '@earendil-works/pi-ai';
 import { XaiErrorCode, XaiOAuthError } from '../shared/errors.js';
 import { getBaseUrl, XAI_ISSUER, XAI_OAUTH_CLIENT_ID } from './config.js';
 
@@ -52,6 +53,10 @@ async function generatePKCE(): Promise<{
   const verifier = base64Url(crypto.getRandomValues(new Uint8Array(32)));
   const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
   return { verifier, challenge: base64Url(hash) };
+}
+
+function stringField(value: unknown) {
+  return typeof value === 'string' ? value : undefined;
 }
 
 function validateEndpoint(value: string, field: string): string {
@@ -114,13 +119,16 @@ async function discover(): Promise<XaiDiscovery> {
     );
   }
   const authorizationEndpoint = validateEndpoint(
-    String(payload.authorization_endpoint ?? ''),
+    stringField(payload.authorization_endpoint) ?? '',
     'authorization_endpoint',
   );
-  const tokenEndpoint = validateEndpoint(String(payload.token_endpoint ?? ''), 'token_endpoint');
+  const tokenEndpoint = validateEndpoint(
+    stringField(payload.token_endpoint) ?? '',
+    'token_endpoint',
+  );
   const deviceAuthorizationEndpoint = payload.device_authorization_endpoint
     ? validateEndpoint(
-        String(payload.device_authorization_endpoint),
+        stringField(payload.device_authorization_endpoint) ?? '',
         'device_authorization_endpoint',
       )
     : undefined;
@@ -172,9 +180,9 @@ function parseManualCallback(input: string, expectedState: string) {
   }
 }
 
-const callbackServerClosures = new WeakMap<import('node:http').Server, Promise<void>>();
+const callbackServerClosures = new WeakMap<Server, Promise<void>>();
 
-export function closeCallbackServer(server: import('node:http').Server) {
+export function closeCallbackServer(server: Server) {
   const existing = callbackServerClosures.get(server);
   if (existing) return existing;
   if (!server.listening) return Promise.resolve();
@@ -184,7 +192,7 @@ export function closeCallbackServer(server: import('node:http').Server) {
 }
 
 function startCallbackServer(expectedState: string): Promise<{
-  server: import('node:http').Server;
+  server: Server;
   redirectUri: string;
   acceptManualCallback: (input: string) => string | undefined;
   waitForCallback: (timeoutMs: number, signal?: AbortSignal) => Promise<CallbackResult>;
@@ -376,8 +384,8 @@ function credentialsFromLoginPayload(
   invalidCode: string,
   label: string,
 ): XaiOAuthCredentials {
-  const access = String(payload.access_token ?? '');
-  const refresh = String(payload.refresh_token ?? '');
+  const access = stringField(payload.access_token) ?? '';
+  const refresh = stringField(payload.refresh_token) ?? '';
   if (!access) {
     throw new XaiOAuthError(`xAI ${label} did not return access_token.`, invalidCode);
   }
@@ -394,8 +402,8 @@ function credentialsFromLoginPayload(
     expires: Date.now() + expiresIn * 1000 - REFRESH_SKEW_MS,
     tokenEndpoint,
     discovery: { authorization_endpoint: '', token_endpoint: tokenEndpoint },
-    idToken: String(payload.id_token ?? ''),
-    tokenType: String(payload.token_type ?? 'Bearer'),
+    idToken: stringField(payload.id_token) ?? '',
+    tokenType: stringField(payload.token_type) ?? 'Bearer',
     baseUrl: getBaseUrl(),
   };
 }
@@ -479,11 +487,10 @@ async function requestDeviceCode(deviceAuthorizationEndpoint: string) {
     XaiErrorCode.DEVICE_AUTHORIZATION_FAILED,
     'device authorization',
   );
-  const deviceCode = String(payload.device_code ?? '');
-  const userCode = String(payload.user_code ?? '');
-  const verificationUri = String(
-    payload.verification_uri_complete ?? payload.verification_uri ?? '',
-  );
+  const deviceCode = stringField(payload.device_code) ?? '';
+  const userCode = stringField(payload.user_code) ?? '';
+  const verificationUri =
+    stringField(payload.verification_uri_complete) ?? stringField(payload.verification_uri) ?? '';
   if (!deviceCode || !userCode || !verificationUri) {
     throw new XaiOAuthError(
       'xAI device authorization did not return device_code, user_code, and verification_uri.',
@@ -501,7 +508,7 @@ async function requestDeviceCode(deviceAuthorizationEndpoint: string) {
 
 async function loginWithDeviceCode(
   discovery: XaiDiscovery,
-  callbacks: import('@earendil-works/pi-ai').OAuthLoginCallbacks,
+  callbacks: OAuthLoginCallbacks,
 ): Promise<XaiOAuthCredentials> {
   if (!discovery.device_authorization_endpoint) {
     throw new XaiOAuthError(
@@ -509,18 +516,14 @@ async function loginWithDeviceCode(
       XaiErrorCode.DEVICE_AUTHORIZATION_UNAVAILABLE,
     );
   }
-  const onDeviceCode =
-    typeof (callbacks as { onDeviceCode?: unknown }).onDeviceCode === 'function'
-      ? callbacks.onDeviceCode
-      : undefined;
-  if (!onDeviceCode) {
+  if (typeof (callbacks as { onDeviceCode?: unknown }).onDeviceCode !== 'function') {
     throw new XaiOAuthError(
       'xAI device authorization requires a device-code capable pi login UI.',
       XaiErrorCode.DEVICE_AUTHORIZATION_UNAVAILABLE,
     );
   }
   const device = await requestDeviceCode(discovery.device_authorization_endpoint);
-  onDeviceCode({
+  callbacks.onDeviceCode({
     userCode: device.userCode,
     verificationUri: device.verificationUri,
     intervalSeconds: device.intervalSeconds,
@@ -566,9 +569,9 @@ async function loginWithDeviceCode(
     if (payload.error === 'authorization_pending') return poll(intervalSeconds);
     if (payload.error === 'slow_down') return poll(intervalSeconds + 5);
     throw new XaiOAuthError(
-      `xAI device authorization failed: ${response.status} ${String(
-        payload.error_description ?? payload.error ?? 'unknown error',
-      )}`,
+      `xAI device authorization failed: ${response.status} ${
+        stringField(payload.error_description) ?? stringField(payload.error) ?? 'unknown error'
+      }`,
       XaiErrorCode.DEVICE_AUTHORIZATION_FAILED,
       payload.error === 'access_denied' || payload.error === 'expired_token',
     );
@@ -586,9 +589,7 @@ async function loginWithBrowserCallback() {
   return { callback, challenge, nonce, state, verifier };
 }
 
-export async function login(
-  callbacks: import('@earendil-works/pi-ai').OAuthLoginCallbacks,
-): Promise<import('@earendil-works/pi-ai').OAuthCredentials> {
+export async function login(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials> {
   const hasDeviceLoginUi =
     typeof callbacks.onSelect === 'function' &&
     typeof (callbacks as { onDeviceCode?: unknown }).onDeviceCode === 'function';
@@ -669,9 +670,7 @@ export async function login(
   }
 }
 
-export async function refresh(
-  credentials: import('@earendil-works/pi-ai').OAuthCredentials,
-): Promise<import('@earendil-works/pi-ai').OAuthCredentials> {
+export async function refresh(credentials: OAuthCredentials): Promise<OAuthCredentials> {
   const xai = credentials as XaiOAuthCredentials;
   const tokenEndpoint =
     xai.tokenEndpoint || xai.discovery?.token_endpoint || (await discover()).token_endpoint;
@@ -706,7 +705,7 @@ export async function refresh(
   }
 
   const payload = await tokenResponseJson(response, XaiErrorCode.REFRESH_FAILED, 'token refresh');
-  const access = String(payload.access_token ?? '');
+  const access = stringField(payload.access_token) ?? '';
   if (!access) {
     throw new XaiOAuthError(
       'xAI token refresh did not return access_token.',
@@ -715,7 +714,7 @@ export async function refresh(
     );
   }
 
-  const refresh_new = String(payload.refresh_token ?? credentials.refresh);
+  const refresh_new = stringField(payload.refresh_token) ?? credentials.refresh;
   const expiresIn =
     typeof payload.expires_in === 'number'
       ? payload.expires_in
@@ -727,8 +726,8 @@ export async function refresh(
     refresh: refresh_new,
     expires: Date.now() + expiresIn * 1000 - REFRESH_SKEW_MS,
     tokenEndpoint,
-    idToken: String(payload.id_token ?? xai.idToken ?? ''),
-    tokenType: String(payload.token_type ?? xai.tokenType ?? 'Bearer'),
+    idToken: stringField(payload.id_token) ?? xai.idToken ?? '',
+    tokenType: stringField(payload.token_type) ?? xai.tokenType ?? 'Bearer',
     baseUrl: getBaseUrl(),
   };
 }

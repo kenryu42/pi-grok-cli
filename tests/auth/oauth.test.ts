@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, type Mock, vi } from 'vitest';
 import {
   closeCallbackServer,
   getBaseUrl,
@@ -12,6 +12,9 @@ import { XaiErrorCode } from '../../src/shared/errors.js';
 
 type CompleteOAuthLoginCallbacks = Parameters<typeof oauthLogin>[0];
 type OAuthLoginCallbacks = Partial<CompleteOAuthLoginCallbacks>;
+type DeviceCodeCallback = CompleteOAuthLoginCallbacks['onDeviceCode'];
+type ProgressCallback = NonNullable<CompleteOAuthLoginCallbacks['onProgress']>;
+type FetchInput = Parameters<typeof fetch>[0];
 const login = (callbacks: OAuthLoginCallbacks) =>
   oauthLogin(callbacks as CompleteOAuthLoginCallbacks);
 
@@ -48,11 +51,50 @@ function deviceAuthorizationResponse(overrides: Record<string, unknown> = {}) {
   });
 }
 
-function deviceLoginCallbacks(onDeviceCode = vi.fn()) {
+function deviceLoginCallbacks(onDeviceCode = vi.fn<DeviceCodeCallback>()) {
   return {
     onSelect: async () => 'device',
     onDeviceCode,
   } as unknown as OAuthLoginCallbacks;
+}
+
+function unexpectedFetch(input: FetchInput): never {
+  throw new Error(
+    `Unexpected fetch URL: ${input instanceof Request ? input.url : input.toString()}`,
+  );
+}
+
+function mockDeviceLogin(
+  pollToken: (input: FetchInput) => Response | Promise<Response> = unexpectedFetch,
+  device: Record<string, unknown> = {},
+) {
+  const fetchMock = vi.fn<typeof fetch>(async (input) => {
+    if (input === 'https://auth.x.ai/.well-known/openid-configuration') {
+      return Response.json(deviceDiscoveryDocument);
+    }
+    if (input === 'https://auth.x.ai/oauth/device/code') return deviceAuthorizationResponse(device);
+    return pollToken(input);
+  });
+  globalThis.fetch = fetchMock;
+  return fetchMock;
+}
+
+async function failDeviceLogin(advanceMs: number) {
+  vi.useFakeTimers();
+  const onDeviceCode = vi.fn<DeviceCodeCallback>();
+  const resultPromise = login(deviceLoginCallbacks(onDeviceCode)).then(
+    () => undefined,
+    (error: unknown) => error,
+  );
+  await vi.waitFor(() => expect(onDeviceCode).toHaveBeenCalledOnce());
+  await vi.advanceTimersByTimeAsync(advanceMs);
+  return resultPromise;
+}
+
+function requestBody(fetchMock: Mock<typeof fetch>, call: number) {
+  const body = fetchMock.mock.calls[call]?.[1]?.body;
+  expect(body).toBeInstanceOf(URLSearchParams);
+  return body as URLSearchParams;
 }
 
 async function fetchCallback(input: string | URL, init: RequestInit = {}) {
@@ -191,14 +233,20 @@ describe('OAuth helpers without network access', () => {
         Accept: 'application/json',
       },
     });
-    expect((fetchMock.mock.calls[0]?.[1]?.body as URLSearchParams).toString()).toBe(
+    expect(requestBody(fetchMock, 0).toString()).toBe(
       'grant_type=refresh_token&client_id=b1a00492-073a-47ea-816f-4c329264a828&refresh_token=old-refresh',
     );
   });
 
-  it('keeps the existing refresh token and metadata when refresh omits optional fields', async () => {
+  it.each([
+    ['omits optional fields', {}],
+    [
+      'returns non-string optional fields',
+      { refresh_token: { value: 'new-refresh' }, id_token: { value: 'new-id' }, token_type: {} },
+    ],
+  ])('keeps the existing refresh token and metadata when refresh %s', async (_label, fields) => {
     const fetchMock = vi.fn<typeof fetch>(async () =>
-      Response.json({ access_token: 'new-access', expires_in: '900' }),
+      Response.json({ access_token: 'new-access', expires_in: '900', ...fields }),
     );
     globalThis.fetch = fetchMock;
 
@@ -247,8 +295,11 @@ describe('OAuth helpers without network access', () => {
     });
   });
 
-  it('rejects refresh responses without an access token', async () => {
-    const fetchMock = vi.fn<typeof fetch>(async () => Response.json({}));
+  it.each([
+    {},
+    { access_token: { value: 'new-access' } },
+  ])('rejects refresh responses without a string access token: %j', async (payload) => {
+    const fetchMock = vi.fn<typeof fetch>(async () => Response.json(payload));
     globalThis.fetch = fetchMock;
 
     await expect(refresh(storedRefreshCredentials)).rejects.toMatchObject({
@@ -274,7 +325,7 @@ describe('OAuth helpers without network access', () => {
 
     await expect(refresh(storedRefreshCredentials)).rejects.toMatchObject({
       code: XaiErrorCode.REFRESH_FAILED,
-      message: expect.stringContaining('xAI token refresh returned invalid JSON:'),
+      message: expect.stringContaining('xAI token refresh returned invalid JSON:') as string,
     });
   });
 
@@ -314,6 +365,20 @@ describe('OAuth helpers without network access', () => {
     ]);
   });
 
+  it('rejects a non-string device endpoint in discovery', async () => {
+    globalThis.fetch = vi.fn<typeof fetch>(async () =>
+      Response.json({
+        ...discoveryDocument,
+        device_authorization_endpoint: { url: 'https://auth.x.ai/device' },
+      }),
+    );
+
+    await expect(refresh(credentialsWithoutEndpoint)).rejects.toMatchObject({
+      code: XaiErrorCode.DISCOVERY_INVALID_ORIGIN,
+      message: 'xAI OAuth discovery returned invalid device_authorization_endpoint: ',
+    });
+  });
+
   it('wraps discovery network failures', async () => {
     globalThis.fetch = vi.fn<typeof fetch>(async () => {
       throw new Error('network down');
@@ -332,7 +397,7 @@ describe('OAuth helpers without network access', () => {
 
     await expect(refresh(credentialsWithoutEndpoint)).rejects.toMatchObject({
       code: XaiErrorCode.DISCOVERY_FAILED,
-      message: expect.stringContaining('xAI OIDC discovery returned invalid JSON:'),
+      message: expect.stringContaining('xAI OIDC discovery returned invalid JSON:') as string,
     });
   });
 
@@ -354,6 +419,17 @@ describe('OAuth helpers without network access', () => {
     await expect(refresh(credentialsWithoutEndpoint)).rejects.toMatchObject({
       code: XaiErrorCode.DISCOVERY_INVALID_ORIGIN,
       message: 'xAI OAuth authorization_endpoint must use HTTPS: http://auth.x.ai/oauth/authorize',
+    });
+
+    globalThis.fetch = vi.fn<typeof fetch>(async () =>
+      Response.json({
+        authorization_endpoint: { url: 'https://auth.x.ai/oauth/authorize' },
+        token_endpoint: 'https://auth.x.ai/oauth/token',
+      }),
+    );
+    await expect(refresh(credentialsWithoutEndpoint)).rejects.toMatchObject({
+      code: XaiErrorCode.DISCOVERY_INVALID_ORIGIN,
+      message: 'xAI OAuth discovery returned invalid authorization_endpoint: ',
     });
   });
 
@@ -382,9 +458,7 @@ describe('OAuth helpers without network access', () => {
     });
 
     expect(fetchMock.mock.calls[1]?.[0]).toBe('https://auth.x.ai/oauth/token');
-    expect((fetchMock.mock.calls[1]?.[1]?.body as URLSearchParams).get('code')).toBe(
-      'callback-code',
-    );
+    expect(requestBody(fetchMock, 1).get('code')).toBe('callback-code');
   });
 
   it('answers trusted-origin CORS preflight requests before accepting the callback', async () => {
@@ -393,13 +467,15 @@ describe('OAuth helpers without network access', () => {
 
     await expect(
       login({
-        onAuth: async (auth) => {
+        onAuth: (auth) => {
           const redirect = new URL(new URL(auth.url).searchParams.get('redirect_uri') ?? '');
-          preflight = await fetchCallback(redirect, {
+          void fetchCallback(redirect, {
             method: 'OPTIONS',
             headers: { Origin: 'https://auth.x.ai' },
+          }).then((response) => {
+            preflight = response;
+            authorizeCallback(auth);
           });
-          authorizeCallback(auth);
         },
       }),
     ).resolves.toMatchObject({ access: 'access' });
@@ -424,9 +500,27 @@ describe('OAuth helpers without network access', () => {
     });
   });
 
+  it('defaults non-string token metadata from the token exchange', async () => {
+    mockBrowserLogin({
+      access_token: 'access',
+      refresh_token: 'refresh',
+      id_token: { value: 'login-id' },
+      token_type: { value: 'DPoP' },
+    });
+
+    await expect(login({ onAuth: authorizeCallback })).resolves.toMatchObject({
+      access: 'access',
+      refresh: 'refresh',
+      idToken: '',
+      tokenType: 'Bearer',
+    });
+  });
+
   it.each([
     [{ refresh_token: 'refresh' }, 'access_token'],
     [{ access_token: 'access' }, 'refresh_token'],
+    [{ access_token: { value: 'access' }, refresh_token: 'refresh' }, 'access_token'],
+    [{ access_token: 'access', refresh_token: { value: 'refresh' } }, 'refresh_token'],
   ])('rejects token exchange payloads missing %s', async (payload, field) => {
     mockBrowserLogin(payload);
 
@@ -459,13 +553,13 @@ describe('OAuth helpers without network access', () => {
       },
       deviceDiscoveryDocument,
     );
-    const onSelect = vi.fn(async () => 'browser');
+    const onSelect = vi.fn<CompleteOAuthLoginCallbacks['onSelect']>(async () => 'browser');
 
     try {
       await expect(
         login({
           onSelect,
-          onDeviceCode: vi.fn(),
+          onDeviceCode: vi.fn<DeviceCodeCallback>(),
           onAuth: authorizeCallback,
         }),
       ).resolves.toMatchObject({ access: 'browser-access', refresh: 'browser-refresh' });
@@ -494,10 +588,10 @@ describe('OAuth helpers without network access', () => {
 
     await expect(
       login({
-        onAuth: (auth) => rejectCallbackThenAuthorize(auth, 'code=bad&state=wrong'),
+        onAuth: (auth) => void rejectCallbackThenAuthorize(auth, 'code=bad&state=wrong'),
       }),
     ).resolves.toMatchObject({ access: 'login-access' });
-    expect((fetchMock.mock.calls[1]?.[1]?.body as URLSearchParams).get('code')).toBe('accepted');
+    expect(requestBody(fetchMock, 1).get('code')).toBe('accepted');
   });
 
   it('ignores an HTTP callback without state', async () => {
@@ -505,7 +599,7 @@ describe('OAuth helpers without network access', () => {
 
     await expect(
       login({
-        onAuth: (auth) => rejectCallbackThenAuthorize(auth, 'code=ignored'),
+        onAuth: (auth) => void rejectCallbackThenAuthorize(auth, 'code=ignored'),
       }),
     ).resolves.toMatchObject({ access: 'access' });
   });
@@ -518,16 +612,16 @@ describe('OAuth helpers without network access', () => {
 
     await expect(
       login({
-        onAuth: async (auth) => {
+        onAuth: (auth) => {
           const redirect = new URL(new URL(auth.url).searchParams.get('redirect_uri') ?? '');
           const invalid =
             suffix === 'other'
               ? `${redirect.origin}/other?code=ignored&state=${new URL(auth.url).searchParams.get('state')}`
               : `${redirect.origin}/${suffix}`;
-          await expect(fetchCallback(invalid)).resolves.toMatchObject({
-            status: suffix === 'other' ? 404 : 400,
+          void fetchCallback(invalid).then((response) => {
+            expect(response.status).toBe(suffix === 'other' ? 404 : 400);
+            authorizeCallback(auth);
           });
-          authorizeCallback(auth);
         },
       }),
     ).resolves.toMatchObject({ access: 'access' });
@@ -538,7 +632,7 @@ describe('OAuth helpers without network access', () => {
       if (input === 'https://auth.x.ai/.well-known/openid-configuration') {
         return Response.json(discoveryDocument);
       }
-      throw new Error(`Unexpected fetch URL: ${String(input)}`);
+      return unexpectedFetch(input);
     });
     globalThis.fetch = fetchMock;
 
@@ -573,7 +667,7 @@ describe('OAuth helpers without network access', () => {
     });
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect((fetchMock.mock.calls[1]?.[1]?.body as URLSearchParams).get('code')).toBe('first');
+    expect(requestBody(fetchMock, 1).get('code')).toBe('first');
   });
 
   it.each([
@@ -594,14 +688,14 @@ describe('OAuth helpers without network access', () => {
     await expect(login(manualCallback(manualInput) as OAuthLoginCallbacks)).resolves.toMatchObject({
       access: 'manual-access',
     });
-    expect((fetchMock.mock.calls[1]?.[1]?.body as URLSearchParams).get('code')).toBe('manual');
+    expect(requestBody(fetchMock, 1).get('code')).toBe('manual');
   });
 
   it('accepts a verified raw authorization code from the manual input channel', async () => {
     const authorizationCode =
       'synthetic_7A9B2C4D6E8F1G3H5J7K9M2N4P6Q8R1S3T5V7W9X2Y4Z6A8B1C3D5E7F9G2H4J6K';
     const controller = new AbortController();
-    const onProgress = vi.fn(() => controller.abort());
+    const onProgress = vi.fn<ProgressCallback>(() => controller.abort());
     const fetchMock = mockBrowserLogin({
       access_token: 'manual-access',
       refresh_token: 'manual-refresh',
@@ -615,13 +709,11 @@ describe('OAuth helpers without network access', () => {
       }),
     ).resolves.toMatchObject({ access: 'manual-access' });
     expect(onProgress).not.toHaveBeenCalled();
-    expect((fetchMock.mock.calls[1]?.[1]?.body as URLSearchParams).get('code')).toBe(
-      authorizationCode,
-    );
+    expect(requestBody(fetchMock, 1).get('code')).toBe(authorizationCode);
   });
 
   it('reports and ignores invalid manual input while the HTTP callback remains active', async () => {
-    const onProgress = vi.fn();
+    const onProgress = vi.fn<ProgressCallback>();
     mockBrowserLogin();
 
     await expect(
@@ -642,7 +734,7 @@ describe('OAuth helpers without network access', () => {
     ['', 'Pasted callback was empty.'],
     ['not a callback', 'OAuth state is missing.'],
   ])('reports and ignores malformed manual input: %j', async (input, reason) => {
-    const onProgress = vi.fn();
+    const onProgress = vi.fn<ProgressCallback>();
     mockBrowserLogin();
 
     await login({
@@ -656,7 +748,7 @@ describe('OAuth helpers without network access', () => {
   });
 
   it('makes late manual input a no-op after the HTTP callback wins', async () => {
-    const onProgress = vi.fn();
+    const onProgress = vi.fn<ProgressCallback>();
     let resolveManual: ((value: string) => void) | undefined;
     mockBrowserLogin();
 
@@ -688,7 +780,7 @@ describe('OAuth helpers without network access', () => {
         return `${redirectUri}?code=manual&state=${new URL(authUrl).searchParams.get('state')}`;
       },
     });
-    await expect(fetchCallback(redirectUri)).rejects.toThrow();
+    await expect(fetchCallback(redirectUri)).rejects.toThrow('fetch failed');
   });
 
   it('surfaces a matching-state manual OAuth error', async () => {
@@ -706,7 +798,7 @@ describe('OAuth helpers without network access', () => {
   it('aborts browser login while waiting for both callback paths', async () => {
     const controller = new AbortController();
     globalThis.fetch = vi.fn<typeof fetch>(async () => Response.json(discoveryDocument));
-    const onAuth = vi.fn(() => controller.abort());
+    const onAuth = vi.fn<CompleteOAuthLoginCallbacks['onAuth']>(() => controller.abort());
 
     await expect(
       login({
@@ -732,18 +824,12 @@ describe('OAuth helpers without network access', () => {
   it('logs in with device authorization for SSH/headless sessions', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(1_700_000_000_000);
-    const onSelect = vi.fn(async () => 'device');
-    const onDeviceCode = vi.fn();
-    const onProgress = vi.fn();
+    const onSelect = vi.fn<CompleteOAuthLoginCallbacks['onSelect']>(async () => 'device');
+    const onDeviceCode = vi.fn<DeviceCodeCallback>();
+    const onProgress = vi.fn<ProgressCallback>();
     let tokenPolls = 0;
-    const fetchMock = vi.fn<typeof fetch>(async (input) => {
-      if (input === 'https://auth.x.ai/.well-known/openid-configuration') {
-        return Response.json(deviceDiscoveryDocument);
-      }
-      if (input === 'https://auth.x.ai/oauth/device/code') return deviceAuthorizationResponse();
-      if (input !== 'https://auth.x.ai/oauth/token') {
-        throw new Error(`Unexpected fetch URL: ${String(input)}`);
-      }
+    const fetchMock = mockDeviceLogin((input) => {
+      if (input !== 'https://auth.x.ai/oauth/token') return unexpectedFetch(input);
       tokenPolls += 1;
       if (tokenPolls === 1) {
         return Response.json({ error: 'authorization_pending' }, { status: 400 });
@@ -756,7 +842,6 @@ describe('OAuth helpers without network access', () => {
         token_type: 'Bearer',
       });
     });
-    globalThis.fetch = fetchMock;
 
     const resultPromise = login({
       onSelect,
@@ -785,7 +870,7 @@ describe('OAuth helpers without network access', () => {
     await expect(resultPromise).resolves.toMatchObject({
       access: 'device-access',
       refresh: 'device-refresh',
-      expires: expect.any(Number),
+      expires: expect.any(Number) as number,
       tokenEndpoint: 'https://auth.x.ai/oauth/token',
       discovery: deviceDiscoveryDocument,
       idToken: 'device-id',
@@ -793,28 +878,35 @@ describe('OAuth helpers without network access', () => {
     });
     expect(fetchMock.mock.calls[2]?.[0]).toBe('https://auth.x.ai/oauth/token');
     expect(fetchMock.mock.calls[3]?.[0]).toBe('https://auth.x.ai/oauth/token');
-    expect((fetchMock.mock.calls[3]?.[1]?.body as URLSearchParams).toString()).toBe(
+    expect(requestBody(fetchMock, 3).toString()).toBe(
       'grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_code&client_id=b1a00492-073a-47ea-816f-4c329264a828&device_code=device-code',
     );
   });
 
   it('rejects malformed device polling numbers before polling', async () => {
-    const fetchMock = vi.fn<typeof fetch>(async (input) => {
-      if (input === 'https://auth.x.ai/.well-known/openid-configuration') {
-        return Response.json(deviceDiscoveryDocument);
-      }
-      if (input === 'https://auth.x.ai/oauth/device/code') {
-        return deviceAuthorizationResponse({ interval: '5s' });
-      }
-      throw new Error(`Unexpected fetch URL: ${String(input)}`);
-    });
-    globalThis.fetch = fetchMock;
+    const fetchMock = mockDeviceLogin(unexpectedFetch, { interval: '5s' });
 
     await expect(login(deviceLoginCallbacks())).rejects.toMatchObject({
       code: XaiErrorCode.DEVICE_AUTHORIZATION_INVALID,
       message: 'xAI device authorization returned invalid interval.',
     });
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    { device_code: { value: 'device-code' } },
+    { user_code: { value: 'ABCD-EFGH' } },
+    { verification_uri: { value: 'uri' }, verification_uri_complete: { value: 'uri' } },
+  ])('rejects non-string device authorization fields: %j', async (device) => {
+    const onDeviceCode = vi.fn<DeviceCodeCallback>();
+    mockDeviceLogin(unexpectedFetch, device);
+
+    await expect(login(deviceLoginCallbacks(onDeviceCode))).rejects.toMatchObject({
+      code: XaiErrorCode.DEVICE_AUTHORIZATION_INVALID,
+      message:
+        'xAI device authorization did not return device_code, user_code, and verification_uri.',
+    });
+    expect(onDeviceCode).not.toHaveBeenCalled();
   });
 
   it('reports rejected and incomplete device authorization responses', async () => {
@@ -846,32 +938,16 @@ describe('OAuth helpers without network access', () => {
   });
 
   it('honors slow_down and marks denied device authorization as requiring login', async () => {
-    vi.useFakeTimers();
-    const onDeviceCode = vi.fn();
-    const fetchMock = vi.fn<typeof fetch>(async (input) => {
-      if (input === 'https://auth.x.ai/.well-known/openid-configuration') {
-        return Response.json(deviceDiscoveryDocument);
-      }
-      if (input === 'https://auth.x.ai/oauth/device/code') return deviceAuthorizationResponse();
-      if (fetchMock.mock.calls.length === 3) {
-        return Response.json({ error: 'slow_down' }, { status: 400 });
-      }
-      return Response.json(
-        { error: 'access_denied', error_description: 'The user denied access.' },
-        { status: 400 },
-      );
-    });
-    globalThis.fetch = fetchMock;
-
-    const resultPromise = login(deviceLoginCallbacks(onDeviceCode)).then(
-      () => undefined,
-      (error: unknown) => error,
+    const fetchMock = mockDeviceLogin(async () =>
+      fetchMock.mock.calls.length === 3
+        ? Response.json({ error: 'slow_down' }, { status: 400 })
+        : Response.json(
+            { error: 'access_denied', error_description: 'The user denied access.' },
+            { status: 400 },
+          ),
     );
 
-    await vi.waitFor(() => expect(onDeviceCode).toHaveBeenCalledOnce());
-    await vi.advanceTimersByTimeAsync(15_000);
-
-    await expect(resultPromise).resolves.toMatchObject({
+    await expect(failDeviceLogin(15_000)).resolves.toMatchObject({
       code: XaiErrorCode.DEVICE_AUTHORIZATION_FAILED,
       message: 'xAI device authorization failed: 400 The user denied access.',
       reloginRequired: true,
@@ -879,86 +955,61 @@ describe('OAuth helpers without network access', () => {
     expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 
-  it('cancels device authorization while waiting to poll', async () => {
+  it.each([
+    [{}, 'https://accounts.x.ai/oauth/device?user_code=ABCD-EFGH'],
+    [{ verification_uri_complete: { value: 'uri' } }, 'https://accounts.x.ai/oauth/device'],
+  ])('cancels device authorization while waiting to poll: %j', async (device, verificationUri) => {
     const controller = new AbortController();
-    const onDeviceCode = vi.fn();
-    const fetchMock = vi.fn<typeof fetch>(async (input) => {
-      if (input === 'https://auth.x.ai/.well-known/openid-configuration') {
-        return Response.json(deviceDiscoveryDocument);
-      }
-      if (input === 'https://auth.x.ai/oauth/device/code') return deviceAuthorizationResponse();
-      throw new Error(`Unexpected fetch URL: ${String(input)}`);
-    });
-    globalThis.fetch = fetchMock;
+    const onDeviceCode = vi.fn<DeviceCodeCallback>();
+    const fetchMock = mockDeviceLogin(unexpectedFetch, device);
 
     const resultPromise = login({
       ...deviceLoginCallbacks(onDeviceCode),
       signal: controller.signal,
     });
     await vi.waitFor(() => expect(onDeviceCode).toHaveBeenCalledOnce());
+    expect(onDeviceCode.mock.calls[0]?.[0].verificationUri).toBe(verificationUri);
     controller.abort();
 
     await expect(resultPromise).rejects.toThrow('Login cancelled');
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it('times out expired device authorization', async () => {
-    vi.useFakeTimers();
-    const onDeviceCode = vi.fn();
-    const fetchMock = vi.fn<typeof fetch>(async (input) => {
-      if (input === 'https://auth.x.ai/.well-known/openid-configuration') {
-        return Response.json(deviceDiscoveryDocument);
-      }
-      if (input === 'https://auth.x.ai/oauth/device/code') {
-        return deviceAuthorizationResponse({ expires_in: 1, interval: 1 });
-      }
-      return Response.json({ error: 'authorization_pending' }, { status: 400 });
-    });
-    globalThis.fetch = fetchMock;
+  it.each([
+    [
+      'times out expired device authorization',
+      { expires_in: 1, interval: 1 },
+      () => Response.json({ error: 'authorization_pending' }, { status: 400 }),
+      'Timed out waiting for xAI device authorization.',
+    ],
+    [
+      'reports non-JSON device polling errors',
+      { interval: 1 },
+      () => new Response('proxy error', { status: 400 }),
+      'xAI device authorization failed: 400 proxy error',
+    ],
+    [
+      'reports non-string device polling error descriptions',
+      { interval: 1 },
+      () =>
+        Response.json(
+          { error: 'access_denied', error_description: { text: 'denied' } },
+          { status: 400 },
+        ),
+      'xAI device authorization failed: 400 access_denied',
+    ],
+  ])('%s', async (_label, device, pollToken, message) => {
+    mockDeviceLogin(pollToken, device);
 
-    const resultPromise = login(deviceLoginCallbacks(onDeviceCode)).then(
-      () => undefined,
-      (error: unknown) => error,
-    );
-    await vi.waitFor(() => expect(onDeviceCode).toHaveBeenCalledOnce());
-    await vi.advanceTimersByTimeAsync(1_000);
-
-    await expect(resultPromise).resolves.toMatchObject({
+    await expect(failDeviceLogin(1_000)).resolves.toMatchObject({
       code: XaiErrorCode.DEVICE_AUTHORIZATION_FAILED,
-      message: 'Timed out waiting for xAI device authorization.',
-    });
-  });
-
-  it('reports non-JSON device polling errors', async () => {
-    vi.useFakeTimers();
-    const onDeviceCode = vi.fn();
-    const fetchMock = vi.fn<typeof fetch>(async (input) => {
-      if (input === 'https://auth.x.ai/.well-known/openid-configuration') {
-        return Response.json(deviceDiscoveryDocument);
-      }
-      if (input === 'https://auth.x.ai/oauth/device/code') {
-        return deviceAuthorizationResponse({ interval: 1 });
-      }
-      return new Response('proxy error', { status: 400 });
-    });
-    globalThis.fetch = fetchMock;
-
-    const resultPromise = login(deviceLoginCallbacks(onDeviceCode)).then(
-      () => undefined,
-      (error: unknown) => error,
-    );
-    await vi.waitFor(() => expect(onDeviceCode).toHaveBeenCalledOnce());
-    await vi.advanceTimersByTimeAsync(1_000);
-
-    await expect(resultPromise).resolves.toMatchObject({
-      code: XaiErrorCode.DEVICE_AUTHORIZATION_FAILED,
-      message: 'xAI device authorization failed: 400 proxy error',
+      message,
     });
   });
 
   it('falls back to browser login when the UI has no device-code callback', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
-    const onSelect = vi.fn(async () => 'device');
+    const onSelect = vi.fn<CompleteOAuthLoginCallbacks['onSelect']>(async () => 'device');
     const fetchMock = vi.fn<typeof fetch>(async (input) => {
       if (input === 'https://auth.x.ai/.well-known/openid-configuration') {
         return Response.json(deviceDiscoveryDocument);
@@ -990,7 +1041,7 @@ describe('OAuth helpers without network access', () => {
   it('reports callback timeouts with a dedicated error code', async () => {
     vi.useFakeTimers();
     globalThis.fetch = vi.fn<typeof fetch>(async () => Response.json(discoveryDocument));
-    const onAuth = vi.fn();
+    const onAuth = vi.fn<CompleteOAuthLoginCallbacks['onAuth']>();
     const resultPromise = login({ onAuth }).then(
       () => undefined,
       (error: unknown) => error,
@@ -1046,7 +1097,7 @@ describe('OAuth helpers without network access', () => {
       }),
     ).rejects.toMatchObject({
       code: XaiErrorCode.TOKEN_EXCHANGE_FAILED,
-      message: expect.stringContaining('xAI token exchange returned invalid JSON:'),
+      message: expect.stringContaining('xAI token exchange returned invalid JSON:') as string,
     });
   });
 });
