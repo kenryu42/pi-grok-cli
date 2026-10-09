@@ -1,19 +1,6 @@
-/**
- * xAI Grok OAuth 2.0 + PKCE implementation.
- *
- * Uses Web Crypto API (crypto.subtle) for PKCE so the extension is
- * portable across Node versions and potential non-Node runtimes.
- *
- * The OAuth flow is identical to pi-grok — same client_id, same auth.x.ai
- * issuer. The difference is in the API endpoint: this extension targets
- * cli-chat-proxy.grok.com instead of api.x.ai.
- */
-
 import { createServer } from 'node:http';
 import { XaiErrorCode, XaiOAuthError } from '../shared/errors.js';
 import { getBaseUrl, XAI_ISSUER, XAI_OAUTH_CLIENT_ID } from './config.js';
-
-// ─── Constants ────────────────────────────────────────────────────────────────
 
 const ISSUER = XAI_ISSUER;
 const DISCOVERY_URL = `${ISSUER}/.well-known/openid-configuration`;
@@ -25,14 +12,11 @@ const CALLBACK_HOST = process.env.PI_GROK_CLI_CALLBACK_HOST || '127.0.0.1';
 const CALLBACK_PORT = Number.parseInt(process.env.PI_GROK_CLI_CALLBACK_PORT || '56122', 10);
 const CALLBACK_PATH = '/callback';
 const MANUAL_AUTHORIZATION_CODE = /^[A-Za-z0-9._~-]{32,2048}$/;
-/** Refresh 120s before actual expiry. */
 const REFRESH_SKEW_MS = 120_000;
 const TOKEN_REQUEST_TIMEOUT_MS = Number.parseInt(
   process.env.PI_GROK_CLI_TOKEN_TIMEOUT_MS || '30000',
   10,
 );
-
-// ─── Types ────────────────────────────────────────────────────────────────────
 
 interface XaiDiscovery {
   authorization_endpoint: string;
@@ -52,8 +36,6 @@ export interface XaiOAuthCredentials {
   baseUrl?: string;
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
 export { getBaseUrl };
 
 function base64Url(buffer: ArrayBuffer | Uint8Array): string {
@@ -63,8 +45,6 @@ function base64Url(buffer: ArrayBuffer | Uint8Array): string {
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-// ─── PKCE ─────────────────────────────────────────────────────────────────────
-
 async function generatePKCE(): Promise<{
   verifier: string;
   challenge: string;
@@ -73,8 +53,6 @@ async function generatePKCE(): Promise<{
   const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
   return { verifier, challenge: base64Url(hash) };
 }
-
-// ─── Endpoint validation ──────────────────────────────────────────────────────
 
 function validateEndpoint(value: string, field: string): string {
   let url: URL;
@@ -106,8 +84,6 @@ function validateEndpoint(value: string, field: string): string {
   }
   return url.toString();
 }
-
-// ─── OIDC Discovery ──────────────────────────────────────────────────────────
 
 async function discover(): Promise<XaiDiscovery> {
   let response: Response;
@@ -156,8 +132,6 @@ async function discover(): Promise<XaiDiscovery> {
       : {}),
   };
 }
-
-// ─── Loopback callback server ────────────────────────────────────────────────
 
 interface CallbackResult {
   code?: string;
@@ -336,8 +310,6 @@ function startCallbackServer(expectedState: string): Promise<{
   })();
 }
 
-// ─── Token exchange ───────────────────────────────────────────────────────────
-
 async function fetchTokenResponse(
   tokenEndpoint: string,
   body: URLSearchParams,
@@ -459,8 +431,6 @@ async function exchangeCode(
     'token exchange',
   );
 }
-
-// ─── Device authorization ───────────────────────────────────────────────────
 
 async function sleep(ms: number, signal?: AbortSignal) {
   if (signal?.aborted) throw new Error('Login cancelled');
@@ -616,8 +586,6 @@ async function loginWithBrowserCallback() {
   return { callback, challenge, nonce, state, verifier };
 }
 
-// ─── Login (called by pi's /login flow) ──────────────────────────────────────
-
 export async function login(
   callbacks: import('@earendil-works/pi-ai').OAuthLoginCallbacks,
 ): Promise<import('@earendil-works/pi-ai').OAuthCredentials> {
@@ -700,8 +668,6 @@ export async function login(
     await closeCallbackServer(browser.callback.server);
   }
 }
-
-// ─── Token refresh ────────────────────────────────────────────────────────────
 
 export async function refresh(
   credentials: import('@earendil-works/pi-ai').OAuthCredentials,

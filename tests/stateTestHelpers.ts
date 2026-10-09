@@ -37,10 +37,6 @@ export function saveTestAccounts(selectedProvider = 'grok-cli-2') {
   );
 }
 
-/**
- * Point HOME at a fresh temp dir for the whole test file, restoring it on
- * teardown. Returns a setup function that creates a new dir per call.
- */
 export function useTempHome(): () => string {
   const originalHome = process.env.HOME;
   const dirs: string[] = [];

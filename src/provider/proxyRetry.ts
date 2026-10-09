@@ -46,9 +46,7 @@ export async function* streamWithProxyRetry(options: {
         options.rotate();
         rotations += 1;
         continue;
-      } catch {
-        // A failed session write must not replace the original proxy error.
-      }
+      } catch {}
     }
     if (message.stopReason === 'pending') {
       throw new Error('Grok CLI response ended without a stop reason');

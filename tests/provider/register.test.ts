@@ -241,7 +241,6 @@ function sessionContext(sessionId: string, accountId?: string): TestContext {
 async function drain(stream: AsyncIterable<unknown> | undefined) {
   if (!stream) throw new Error('Grok CLI test stream is missing.');
   for await (const _event of stream) {
-    // The route setup completes before this empty test stream ends.
   }
 }
 

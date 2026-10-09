@@ -1,32 +1,9 @@
-/**
- * Payload sanitization for xAI's Responses API via cli-chat-proxy.grok.com.
- *
- * xAI's endpoint has quirks compared to stock OpenAI:
- *   - Replayed `reasoning` items must drop output-only status and carry typed content.
- *   - `reasoning.effort` is only supported on a subset of models.
- *   - Empty-string content items cause validation failures.
- *   - `function_call_output.output` cannot contain image arrays.
- *   - `image_url` parts must be normalized to `input_image` with data URIs.
- *   - Local image paths must be resolved to base64 data URIs.
- *   - xAI rejects `role: "developer"` and `role: "system"` in the input
- *     array; these must be moved to top-level `instructions`.
- *   - xAI uses `text.format` instead of OpenAI's `response_format`.
- *   - xAI uses `prompt_cache_key` for conversation caching.
- *   - xAI doesn't support `prompt_cache_retention`.
- *
- * Additional Grok CLI-specific behavior:
- *   - Adds x-grok-* headers for client identification
- *   - Uses prompt_cache_key for session affinity
- */
-
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { extname, isAbsolute, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { supportsReasoning, supportsReasoningEffort } from '../models/catalog.js';
 
 const ENCRYPTED_REASONING_INCLUDE = 'reasoning.encrypted_content';
-
-// ─── Content text extraction ─────────────────────────────────────────────────
 
 function textFromContent(content: unknown): string {
   if (typeof content === 'string') return content;
@@ -44,8 +21,6 @@ function textFromContent(content: unknown): string {
     .filter(Boolean)
     .join('\n');
 }
-
-// ─── Image helpers ────────────────────────────────────────────────────────────
 
 function stripShellQuotes(value: string): string {
   const trimmed = value.trim();
@@ -120,8 +95,6 @@ function normalizeImageInput(value: unknown, cwd: string): string | undefined {
   return `data:${mimeType};base64,${data}`;
 }
 
-// ─── Content part normalization ───────────────────────────────────────────────
-
 function isInputImagePart(value: unknown): value is Record<string, unknown> {
   return (
     !!value &&
@@ -176,8 +149,6 @@ function normalizeImageParts(value: unknown, cwd: string): unknown {
   return obj;
 }
 
-// ─── function_call_output rewrite ─────────────────────────────────────────────
-
 function rewriteFunctionCallOutput(input: Record<string, unknown>[]): Record<string, unknown>[] {
   const rewritten: Record<string, unknown>[] = [];
 
@@ -224,8 +195,6 @@ function rewriteFunctionCallOutput(input: Record<string, unknown>[]): Record<str
   return rewritten;
 }
 
-// ─── Main sanitization ────────────────────────────────────────────────────────
-
 function normalizeReasoningContent(content: unknown) {
   if (typeof content === 'string') {
     return content ? [{ type: 'reasoning_text', text: content }] : undefined;
@@ -246,12 +215,6 @@ function normalizeReasoningContent(content: unknown) {
   return normalized.length ? normalized : undefined;
 }
 
-/**
- * Sanitize a provider request payload for xAI's Responses API via
- * cli-chat-proxy.grok.com.
- *
- * Returns the modified payload.  Mutates the input in place for efficiency.
- */
 export function sanitizePayload(
   params: Record<string, unknown>,
   modelId: string,
@@ -260,7 +223,6 @@ export function sanitizePayload(
 ): Record<string, unknown> {
   const next = params;
 
-  // ── Sanitize input array ──────────────────────────────────────────────
   if (Array.isArray(next.input)) {
     let input = (next.input as unknown[])
       .map((item: unknown) => {
@@ -274,15 +236,12 @@ export function sanitizePayload(
           if (!content) delete obj.content;
         }
 
-        // Drop empty string content
         if (typeof obj.content === 'string' && obj.content.length === 0) return null;
 
         return obj;
       })
       .filter(Boolean) as Record<string, unknown>[];
 
-    // Move system/developer messages to top-level instructions.
-    // xAI rejects role: "developer" and role: "system" in the input array.
     const instructionParts: string[] = [];
     input = input.filter((item) => {
       const role = (item as Record<string, unknown>).role;
@@ -298,24 +257,19 @@ export function sanitizePayload(
       next.instructions = merged;
     }
 
-    // Normalize image parts (resolve local paths, fix types)
     input = normalizeImageParts(input, cwd) as Record<string, unknown>[];
 
-    // Rewrite function_call_output with images
     input = rewriteFunctionCallOutput(input);
 
     next.input = input;
   } else if (typeof next.input === 'string') {
-    // String input is valid and should stay string-shaped.
   }
 
-  // ── response_format → text.format ────────────────────────────────────
   if (next.response_format) {
     if (!next.text) next.text = { format: next.response_format };
     delete next.response_format;
   }
 
-  // ── Reasoning request configuration ───────────────────────────────────
   const reasoning =
     next.reasoning && typeof next.reasoning === 'object' && !Array.isArray(next.reasoning)
       ? { ...(next.reasoning as Record<string, unknown>) }
@@ -335,7 +289,6 @@ export function sanitizePayload(
     if (Object.keys(reasoning).length > 0) next.reasoning = reasoning;
   }
 
-  // ── Strip unsupported fields ─────────────────────────────────────────
   if (Array.isArray(next.include)) {
     const hasReasoning = next.reasoning !== undefined;
     let keptEncryptedReasoning = false;
@@ -354,7 +307,6 @@ export function sanitizePayload(
 
   delete next.prompt_cache_retention;
 
-  // Add prompt_cache_key for conversation caching (routes to same server).
   if (sessionId && !next.prompt_cache_key) {
     next.prompt_cache_key = sessionId;
   }

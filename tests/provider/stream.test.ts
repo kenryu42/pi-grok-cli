@@ -12,7 +12,6 @@ async function versionServer(status: number, body: string) {
   return { url: `${server.origin}/cli/stable`, paths, close: server.close };
 }
 
-// Serves the queued versions in order, one per lookup.
 async function withVersionSequence(
   versions: string[],
   run: (stream: typeof import('../../src/provider/stream.js')) => Promise<void>,

@@ -1,5 +1,3 @@
-// Grok CLI release sent when the latest stable release cannot be looked up.
-// Keep it at a current official release so it stays above the endpoint minimum.
 export const GROK_CLI_VERSION = '1.0.46';
 
 const STABLE_VERSION_TIMEOUT_MS = 5_000;
@@ -28,8 +26,6 @@ export function resolveGrokCliVersion() {
 
 let refreshing: Promise<string> | undefined;
 
-// Discards the cached release after the gate rejects it and looks it up again.
-// Concurrent rejections share one lookup so a failed one cannot replace a newer release.
 export function refreshGrokCliVersion() {
   if (!refreshing) {
     stableVersion = undefined;
@@ -40,11 +36,6 @@ export function refreshGrokCliVersion() {
   return refreshing;
 }
 
-/**
- * Static identification headers attached to each model definition so Pi sends
- * them on every request. The version headers are added per request by the
- * provider stream once the version is resolved.
- */
 export function grokCliModelHeaders(modelId: string): Record<string, string> {
   return {
     'x-grok-client-identifier': 'grok-shell',
@@ -53,7 +44,6 @@ export function grokCliModelHeaders(modelId: string): Record<string, string> {
   };
 }
 
-// Same format as the official Grok CLI client's own version headers.
 export function grokCliVersionHeaders(version: string): Record<string, string> {
   return {
     'User-Agent': `grok-shell/${version} (macos; aarch64)`,

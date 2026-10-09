@@ -243,7 +243,6 @@ describe('Grok CLI exhaustion rotation', () => {
       finish(0, 'error');
       if (state === 'streaming') {
         await settled.promise;
-        // Let rotation reach the held vault lock before another turn starts.
         await new Promise<void>((resolve) => setImmediate(resolve));
         prompts.push(session.prompt('Another request during account rotation'));
         await vi.waitFor(() => expect(responses).toHaveLength(2));

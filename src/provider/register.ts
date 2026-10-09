@@ -187,7 +187,6 @@ export default function registerGrokCli(pi: ExtensionAPI) {
               {
                 ...options,
                 apiKey: route.token,
-                // Keep the retry budget here; SDK retries would reuse the failed conversation ID.
                 maxRetries: 0,
                 headers: {
                   ...grokCliVersionHeaders(version),

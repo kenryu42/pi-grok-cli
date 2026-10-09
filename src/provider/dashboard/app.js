@@ -39,7 +39,6 @@ const makeToast = (node) => {
   const hide = () => {
     clearTimeout(dismiss);
     node.classList.remove('visible');
-    // Clear after the hide transition so stale text leaves the accessibility tree.
     const message = node.textContent;
     setTimeout(() => {
       if (!node.classList.contains('visible') && node.textContent === message) {
@@ -118,13 +117,6 @@ const dateLabel = (value) =>
     hour: '2-digit',
     minute: '2-digit',
   }).format(new Date(value));
-
-/* ---------- State field backdrop ----------
- * A WebGL2 domain-warped noise field driven by live account state: aggregate
- * quota burn raises its energy and shifts the palette indigo → teal → amber,
- * errored accounts bleed ember into the warp, sync activity shimmers, and the
- * pointer stirs the flow. Reduced motion gets a single composed still frame;
- * no WebGL gets the painted CSS fallback (.no-field). */
 
 const FIELD_VERTEX = `#version 300 es
 layout(location = 0) in vec2 aPos;
@@ -281,7 +273,6 @@ const createField = (canvas) => {
       uniforms[name] = gl.getUniformLocation(program, name);
     }
 
-    // The field renders on a 30fps cadence; rAF ticks faster only to pace the next draw.
     const FRAME_MS = 1000 / 30;
     const current = { energy: 0.12, alert: 0, pending: 0 };
     const target = { energy: 0.12, alert: 0, pending: 0 };
@@ -428,11 +419,6 @@ const updateFieldTargets = (state, offline = false) => {
   });
 };
 
-/* ---------- Quota gauges ----------
- * Ring gauges drawn with a conic-gradient over the registered --gauge
- * property. Sweeps are animated with WAAPI (registered custom property
- * interpolation); where that is unsupported the gauge renders statically. */
-
 const gaugeMemory = new Map();
 
 const animateGauge = (gauge, from, to) => {
@@ -442,9 +428,7 @@ const animateGauge = (gauge, from, to) => {
       duration: 780,
       easing: 'cubic-bezier(0.22, 0.9, 0.24, 1)',
     });
-  } catch {
-    // Custom-property WAAPI unsupported: the inline --gauge value already shows the truth.
-  }
+  } catch {}
 };
 
 const quotaRow = (accountId, label, usedLabel, metaText, remaining) => {
@@ -760,7 +744,6 @@ const render = (state) => {
       .filter((account) => account.login.state === 'pending')
       .map((account) => account.id),
   );
-  // A login that left pending since the last render resolves audibly, not only visually.
   for (const accountId of pendingAccountIds) {
     if (nextPending.has(accountId)) continue;
     const account = state.accounts.find((candidate) => candidate.id === accountId);
@@ -768,8 +751,6 @@ const render = (state) => {
     if (account?.login.state === 'failed') showToast(account.login.error || 'Login failed.', true);
     if (account?.login.quotaError) showToast(account.login.quotaError, true);
   }
-  // Login progress goes to a persistent live region: poll re-renders replace the
-  // panel itself, so aria-live on the panel would never announce anything.
   const progress = state.accounts
     .filter((account) => account.login.state === 'pending')
     .map((account) => account.login.progress || 'Waiting for browser authorization…')
@@ -803,8 +784,6 @@ const render = (state) => {
   }
 };
 
-// Structural, user-initiated changes (add / remove / switch / login) morph via
-// the View Transitions API; everything else re-renders plainly.
 const renderTransition = (state) => {
   if (
     reduceMotion.matches ||
@@ -844,7 +823,6 @@ async function refreshState(force = false, animate = false) {
     accountsRoot.classList.remove('refreshing');
     if (lastState) updateFieldTargets(JSON.parse(lastState), true);
     else field?.setTargets({ alert: 0.65, pending: 0 });
-    // Keep the last good state on screen once loaded; a stale console beats a blank one.
     if (!lastState) {
       accountsRoot.replaceChildren(
         element(
@@ -918,9 +896,6 @@ window.addEventListener('focus', () => {
   void refreshState();
 });
 
-// Cursor spotlight: proximity lights each card's border through --mx/--my/--glow
-// custom properties, so the effect travels across cards without touching layout.
-// Resets when the pointer leaves the grid or motion/pointer preferences change.
 const setupProximity = () => {
   const media = {
     motion: matchMedia('(prefers-reduced-motion: no-preference)'),
