@@ -134,10 +134,13 @@ function terminalInteraction(ctx: ExtensionCommandContext): AuthInteraction {
   return {
     notify(event) {
       if (event.type === 'auth_url') {
+        ctx.ui.notify(`Open this URL to continue login: ${event.url}`, 'info');
         openAuthorizationUrl(event.url, () => {
-          ctx.ui.notify(`Open this URL to continue login: ${event.url}`, 'warning');
+          ctx.ui.notify(`Could not open browser automatically: ${event.url}`, 'warning');
         });
-        ctx.ui.notify(event.instructions ?? 'Complete the Grok CLI login in your browser.', 'info');
+        if (event.instructions) {
+          ctx.ui.notify(event.instructions, 'info');
+        }
         return;
       }
       if (event.type === 'device_code') {

@@ -415,6 +415,10 @@ describe('vault account management', () => {
 
     expect(commandContext.ui.notify).toHaveBeenCalledWith(
       expect.stringContaining('https://accounts.x.ai/authorize?state=test'),
+      'info',
+    );
+    expect(commandContext.ui.notify).toHaveBeenCalledWith(
+      expect.stringContaining('https://accounts.x.ai/authorize?state=test'),
       'warning',
     );
   });
