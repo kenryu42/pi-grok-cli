@@ -1,6 +1,6 @@
 {
   "extends": "./tsconfig.json",
-  "include": ["src/**/*.ts", "tests/**/*.ts"],
+  "include": ["src/**/*.ts", "tests/**/*.ts", "vitest.config.ts"],
   "compilerOptions": {
     "declaration": false,
     "declarationMap": false,

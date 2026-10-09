@@ -12,6 +12,12 @@ on:
       - "bun.lock"
       - "tsconfig.json"
       - "biome.json"
+      - ".oxlintrc.json"
+      - ".oxfmtrc.json"
+      - "knip.json"
+      - "tsconfig.check.json"
+      - "vitest.config.ts"
+      - "scripts/**"
   pull_request:
     branches: [main]
     paths:
@@ -22,6 +28,12 @@ on:
       - "bun.lock"
       - "tsconfig.json"
       - "biome.json"
+      - ".oxlintrc.json"
+      - ".oxfmtrc.json"
+      - "knip.json"
+      - "tsconfig.check.json"
+      - "vitest.config.ts"
+      - "scripts/**"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -42,7 +54,7 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Run project checks
-        run: bun run check:ci
+        run: bun run check
 
   draft-release:
     runs-on: ubuntu-latest

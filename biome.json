@@ -6,13 +6,10 @@
     "useIgnoreFile": true
   },
   "files": {
-    "ignoreUnknown": false
+    "includes": ["**/*.css", "**/*.html", "**/*.json", "**/*.jsonc"]
   },
   "formatter": {
-    "enabled": true,
-    "indentStyle": "space",
-    "indentWidth": 2,
-    "lineWidth": 100
+    "enabled": false
   },
   "linter": {
     "enabled": true,
@@ -20,19 +17,7 @@
       "recommended": true
     }
   },
-  "javascript": {
-    "formatter": {
-      "quoteStyle": "single",
-      "trailingCommas": "all",
-      "semicolons": "always"
-    }
-  },
   "assist": {
-    "enabled": true,
-    "actions": {
-      "source": {
-        "organizeImports": "on"
-      }
-    }
+    "enabled": false
   }
 }

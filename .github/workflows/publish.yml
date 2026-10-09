@@ -37,7 +37,7 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Run project checks
-        run: bun run check:ci
+        run: bun run check
 
   publish:
     runs-on: ubuntu-latest

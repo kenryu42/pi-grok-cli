@@ -239,15 +239,18 @@ describe('registerImagineFeature command', () => {
   it.each([
     ['on', true, ['read', 'custom', 'image_gen']],
     ['off', false, ['read', 'custom']],
-  ] as const)('applies explicit %s idempotently and persists', async (argument, enabled, expected) => {
-    const extension = setup('token', expected);
+  ] as const)(
+    'applies explicit %s idempotently and persists',
+    async (argument, enabled, expected) => {
+      const extension = setup('token', expected);
 
-    await extension.commands.get('grok-cli-imagine:tool')?.handler(argument, extension.context);
+      await extension.commands.get('grok-cli-imagine:tool')?.handler(argument, extension.context);
 
-    expect(extension.getActiveTools()).toEqual(expected);
-    expect(loadConfig().config.imagine).toEqual({ enabled });
-    expect(extension.setActiveTools).not.toHaveBeenCalled();
-  });
+      expect(extension.getActiveTools()).toEqual(expected);
+      expect(loadConfig().config.imagine).toEqual({ enabled });
+      expect(extension.setActiveTools).not.toHaveBeenCalled();
+    },
+  );
 
   it('reports persisted and active state without mutation', async () => {
     const extension = setup('token', ['read']);

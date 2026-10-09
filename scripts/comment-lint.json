@@ -1,0 +1,15 @@
+{
+  "exclude": [],
+  "allow": {
+    "src/imagine/imageUrl.ts": [
+      "// Read at most one byte beyond the limit, even if the file grows after stat."
+    ],
+    "src/provider/dashboard/app.js": [
+      "// Open the popup with the final URL instead of scripting a blank one: embedded",
+      "// browsers (e.g. WKWebView) hand window.open('') an unusable about:blank view."
+    ],
+    "src/provider/stream.ts": [
+      "/**\n * The inference endpoint rejects requests with HTTP 426 when\n * `x-grok-client-version` is missing or older than its minimum supported\n * release; it ignores User-Agent. Reading the latest stable release from the\n * pointer the official installer uses keeps requests above a raised minimum\n * without an extension release. The lookup runs once per process until a\n * request is rejected by the gate.\n */"
+    ]
+  }
+}

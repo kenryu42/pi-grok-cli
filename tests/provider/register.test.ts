@@ -14,8 +14,8 @@ import type { ExtensionAPI, ProviderConfig } from '@earendil-works/pi-coding-age
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as OAuth from '../../src/auth/oauth.js';
 import {
-  ACCOUNT_VAULT_MARKER,
   type AccountVault,
+  ACCOUNT_VAULT_MARKER,
   getAccountVault,
   mutateAccountVault,
 } from '../../src/provider/accountVault.js';
@@ -355,40 +355,41 @@ describe('proxy conversation recovery', () => {
     }
   });
 
-  it.each([
-    401, 502, 520,
-  ])('retries HTTP %i twice with new conversation IDs and the same cache key', async (status) => {
-    await setAccount1Credential('one');
-    writePiVaultMarker();
-    mockProviderStream
-      .mockImplementationOnce(() => proxyResponse(status))
-      .mockImplementationOnce(() => proxyResponse(status))
-      .mockImplementationOnce(() => proxyResponse());
-    const extension = await setupExtension();
-    const onPayload = vi.fn<NonNullable<SimpleStreamOptions['onPayload']>>();
-    const stream = await startProxyRequest(extension, {
-      sessionId: 'session-a',
-      headers: { custom: 'kept' },
-      onPayload,
-    });
+  it.each([401, 502, 520])(
+    'retries HTTP %i twice with new conversation IDs and the same cache key',
+    async (status) => {
+      await setAccount1Credential('one');
+      writePiVaultMarker();
+      mockProviderStream
+        .mockImplementationOnce(() => proxyResponse(status))
+        .mockImplementationOnce(() => proxyResponse(status))
+        .mockImplementationOnce(() => proxyResponse());
+      const extension = await setupExtension();
+      const onPayload = vi.fn<NonNullable<SimpleStreamOptions['onPayload']>>();
+      const stream = await startProxyRequest(extension, {
+        sessionId: 'session-a',
+        headers: { custom: 'kept' },
+        onPayload,
+      });
 
-    expect(await eventTypes(stream)).toEqual(['done']);
-    expect((await stream.result()).stopReason).toBe('stop');
-    expect(mockProviderStream.mock.calls.map((call) => call[2]?.headers)).toEqual([
-      { ...VERSION_HEADERS, custom: 'kept', 'x-grok-conv-id': 'session-a' },
-      { ...VERSION_HEADERS, custom: 'kept', 'x-grok-conv-id': 'session-a:1' },
-      { ...VERSION_HEADERS, custom: 'kept', 'x-grok-conv-id': 'session-a:2' },
-    ]);
-    for (const call of mockProviderStream.mock.calls) {
-      expect(call[2]).toMatchObject({ apiKey: 'one', sessionId: 'session-a', onPayload });
-    }
-    expect(extension.entries.filter((entry) => entry.customType === 'grok-cli-conv-id-v1')).toEqual(
-      [
+      expect(await eventTypes(stream)).toEqual(['done']);
+      expect((await stream.result()).stopReason).toBe('stop');
+      expect(mockProviderStream.mock.calls.map((call) => call[2]?.headers)).toEqual([
+        { ...VERSION_HEADERS, custom: 'kept', 'x-grok-conv-id': 'session-a' },
+        { ...VERSION_HEADERS, custom: 'kept', 'x-grok-conv-id': 'session-a:1' },
+        { ...VERSION_HEADERS, custom: 'kept', 'x-grok-conv-id': 'session-a:2' },
+      ]);
+      for (const call of mockProviderStream.mock.calls) {
+        expect(call[2]).toMatchObject({ apiKey: 'one', sessionId: 'session-a', onPayload });
+      }
+      expect(
+        extension.entries.filter((entry) => entry.customType === 'grok-cli-conv-id-v1'),
+      ).toEqual([
         { customType: 'grok-cli-conv-id-v1', data: { generation: 1 } },
         { customType: 'grok-cli-conv-id-v1', data: { generation: 2 } },
-      ],
-    );
-  });
+      ]);
+    },
+  );
 
   it.each([
     { status: 502, started: false, sessionId: 'session-a', abort: false, attempts: 3 },
@@ -397,31 +398,34 @@ describe('proxy conversation recovery', () => {
     { status: 502, started: true, sessionId: 'session-a', abort: false, attempts: 1 },
     { status: 502, started: false, sessionId: undefined, abort: false, attempts: 1 },
     { status: 502, started: false, sessionId: 'session-a', abort: true, attempts: 1 },
-  ])('delivers terminal failures without unsafe replay: $status, started=$started, abort=$abort, attempts=$attempts', async (scenario) => {
-    await setAccount1Credential('one');
-    writePiVaultMarker();
-    const controller = new AbortController();
-    mockProviderStream.mockImplementation(() => {
-      if (scenario.abort) controller.abort();
-      return proxyResponse(scenario.status, scenario.started);
-    });
-    const extension = await setupExtension();
-    const stream = await startProxyRequest(extension, {
-      sessionId: scenario.sessionId,
-      signal: controller.signal,
-    });
-    const types = await eventTypes(stream);
-    expect(mockProviderStream).toHaveBeenCalledTimes(scenario.attempts);
-    expect(types).toEqual(scenario.started ? ['start', 'error'] : ['error']);
-    expect(await stream.result()).toMatchObject({
-      role: 'assistant',
-      provider: 'grok-cli',
-      stopReason: 'error',
-    });
-    expect((await stream.result()).errorMessage).toContain(`(${scenario.status})`);
-    const { requestAccount } = await import('../../src/provider/requestOwnership.js');
-    expect(requestAccount(await stream.result())).toBe('account-1');
-  });
+  ])(
+    'delivers terminal failures without unsafe replay: $status, started=$started, abort=$abort, attempts=$attempts',
+    async (scenario) => {
+      await setAccount1Credential('one');
+      writePiVaultMarker();
+      const controller = new AbortController();
+      mockProviderStream.mockImplementation(() => {
+        if (scenario.abort) controller.abort();
+        return proxyResponse(scenario.status, scenario.started);
+      });
+      const extension = await setupExtension();
+      const stream = await startProxyRequest(extension, {
+        sessionId: scenario.sessionId,
+        signal: controller.signal,
+      });
+      const types = await eventTypes(stream);
+      expect(mockProviderStream).toHaveBeenCalledTimes(scenario.attempts);
+      expect(types).toEqual(scenario.started ? ['start', 'error'] : ['error']);
+      expect(await stream.result()).toMatchObject({
+        role: 'assistant',
+        provider: 'grok-cli',
+        stopReason: 'error',
+      });
+      expect((await stream.result()).errorMessage).toContain(`(${scenario.status})`);
+      const { requestAccount } = await import('../../src/provider/requestOwnership.js');
+      expect(requestAccount(await stream.result())).toBe('account-1');
+    },
+  );
 
   it('fails a response that ends without a stop reason instead of completing it', async () => {
     await setAccount1Credential('one');
@@ -628,7 +632,9 @@ async function runStatus(extension: Awaited<ReturnType<typeof setupExtension>>) 
 
 async function runStatusWithModels(getAll: TestContext['modelRegistry']['getAll']) {
   const notify = vi.fn<TestContext['ui']['notify']>();
-  await (await setupExtension()).commands
+  await (
+    await setupExtension()
+  ).commands
     .get('grok-cli-usage')
     ?.handler('', { modelRegistry: { getAll }, ui: { notify } });
   return notify;

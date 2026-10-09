@@ -1,0 +1,5 @@
+interface:
+  display_name: "Fix Comment Lint"
+  short_description: "Move what rejected comments say into code, tests or the PR"
+policy:
+  allow_implicit_invocation: true

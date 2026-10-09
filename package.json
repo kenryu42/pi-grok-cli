@@ -27,12 +27,14 @@
     "typecheck": "tsc -p tsconfig.check.json",
     "prepack": "bun run test && bun run coverage && bun run typecheck",
     "knip": "knip --production",
-    "lint": "biome check --write .",
-    "lint:ci": "biome ci .",
-    "check": "bun run lint && bun run typecheck && bun run knip && bun run check-duplicates && AGENT=1 bun run coverage",
-    "check:ci": "bun run lint:ci && bun run typecheck && bun run knip && bun run check-duplicates && AGENT=1 bun run coverage",
+    "lint": "oxlint",
+    "lint:biome": "biome lint --error-on-warnings .",
+    "lint:comments": "bun scripts/lint-comments.mjs",
+    "format": "oxfmt",
+    "format:check": "oxfmt --check",
+    "check": "bun run lint && bun run lint:biome && bun run format:check && bun run lint:comments && bun run typecheck && bun run knip && bun run check-duplicates && AGENT=1 bun run coverage",
     "prepare": "husky",
-    "check-duplicates": "bunx jscpd src tests --exitCode 1 --reporters ai --noTips"
+    "check-duplicates": "jscpd src tests scripts vitest.config.ts --threshold 0 --exit-code 1 --no-tips --reporters ai"
   },
   "author": {
     "name": "J Liew",
@@ -66,16 +68,20 @@
     "@vitest/coverage-v8": "^4.1.8",
     "happy-dom": "^20.10.6",
     "husky": "^9.1.7",
-    "jscpd": "^4.2.4",
+    "jscpd": "^5.4.0",
     "knip": "^6.15.0",
     "lint-staged": "^17.0.7",
+    "oxc-parser": "^0.153.0",
+    "oxfmt": "^0.72.0",
+    "oxlint": "^1.87.0",
+    "oxlint-tsgolint": "^7.0.2003",
     "release-tools": "github:kenryu42/release-tools",
-    "typescript": "^6.0.3",
+    "typescript": "^7.0.2",
     "vitest": "^4.1.8"
   },
   "lint-staged": {
     "*": [
-      "biome check --write --no-errors-on-unmatched"
+      "oxfmt --no-error-on-unmatched-pattern"
     ]
   }
 }

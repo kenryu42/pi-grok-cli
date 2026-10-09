@@ -71,18 +71,18 @@ describe('image_gen tool', () => {
     return { test, bytes, result };
   }
 
-  it.each([
-    400 * 1024 - 1,
-    400 * 1024,
-  ])('accepts a %i-byte source image within the size limit', async (size) => {
-    const edit = await editSourceImageOfSize(size);
-    expect(edit.result.details.error).toBeUndefined();
-    expect(edit.test.generate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        imageUrl: `data:image/png;base64,${edit.bytes.toString('base64')}`,
-      }),
-    );
-  });
+  it.each([400 * 1024 - 1, 400 * 1024])(
+    'accepts a %i-byte source image within the size limit',
+    async (size) => {
+      const edit = await editSourceImageOfSize(size);
+      expect(edit.result.details.error).toBeUndefined();
+      expect(edit.test.generate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          imageUrl: `data:image/png;base64,${edit.bytes.toString('base64')}`,
+        }),
+      );
+    },
+  );
 
   it('rejects a source image one byte over the size limit', async () => {
     const edit = await editSourceImageOfSize(400 * 1024 + 1);
@@ -107,23 +107,22 @@ describe('image_gen tool', () => {
     );
   });
 
-  it.each([
-    'not an image',
-    'RIFF0000WAVEfmt ',
-    '\u0089PNG',
-  ])('rejects non-image or incomplete file content %j before generation', async (content) => {
-    const test = setup('token');
-    writeFileSync(join(test.context.cwd, 'fake.png'), content);
-    const result = await test.tool.execute(
-      'edit',
-      { prompt: 'Make it blue', image: 'fake.png' },
-      undefined,
-      undefined,
-      test.context,
-    );
-    expect(result.details.error).toMatch(/Unsupported image/);
-    expect(test.generate).not.toHaveBeenCalled();
-  });
+  it.each(['not an image', 'RIFF0000WAVEfmt ', '\u0089PNG'])(
+    'rejects non-image or incomplete file content %j before generation',
+    async (content) => {
+      const test = setup('token');
+      writeFileSync(join(test.context.cwd, 'fake.png'), content);
+      const result = await test.tool.execute(
+        'edit',
+        { prompt: 'Make it blue', image: 'fake.png' },
+        undefined,
+        undefined,
+        test.context,
+      );
+      expect(result.details.error).toMatch(/Unsupported image/);
+      expect(test.generate).not.toHaveBeenCalled();
+    },
+  );
 
   it('returns path-only content and path details', async () => {
     const test = setup('token');

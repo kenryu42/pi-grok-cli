@@ -295,19 +295,19 @@ describe('OAuth helpers without network access', () => {
     });
   });
 
-  it.each([
-    {},
-    { access_token: { value: 'new-access' } },
-  ])('rejects refresh responses without a string access token: %j', async (payload) => {
-    const fetchMock = vi.fn<typeof fetch>(async () => Response.json(payload));
-    globalThis.fetch = fetchMock;
+  it.each([{}, { access_token: { value: 'new-access' } }])(
+    'rejects refresh responses without a string access token: %j',
+    async (payload) => {
+      const fetchMock = vi.fn<typeof fetch>(async () => Response.json(payload));
+      globalThis.fetch = fetchMock;
 
-    await expect(refresh(storedRefreshCredentials)).rejects.toMatchObject({
-      code: XaiErrorCode.REFRESH_FAILED,
-      reloginRequired: true,
-      message: 'xAI token refresh did not return access_token.',
-    });
-  });
+      await expect(refresh(storedRefreshCredentials)).rejects.toMatchObject({
+        code: XaiErrorCode.REFRESH_FAILED,
+        reloginRequired: true,
+        message: 'xAI token refresh did not return access_token.',
+      });
+    },
+  );
 
   it('wraps refresh transport and JSON failures', async () => {
     globalThis.fetch = vi.fn<typeof fetch>(async () => {
@@ -604,28 +604,28 @@ describe('OAuth helpers without network access', () => {
     ).resolves.toMatchObject({ access: 'access' });
   });
 
-  it.each([
-    'other',
-    `callback?state=missing-code`,
-  ])('ignores an invalid HTTP callback path or payload: %s', async (suffix) => {
-    mockBrowserLogin();
+  it.each(['other', `callback?state=missing-code`])(
+    'ignores an invalid HTTP callback path or payload: %s',
+    async (suffix) => {
+      mockBrowserLogin();
 
-    await expect(
-      login({
-        onAuth: (auth) => {
-          const redirect = new URL(new URL(auth.url).searchParams.get('redirect_uri') ?? '');
-          const invalid =
-            suffix === 'other'
-              ? `${redirect.origin}/other?code=ignored&state=${new URL(auth.url).searchParams.get('state')}`
-              : `${redirect.origin}/${suffix}`;
-          void fetchCallback(invalid).then((response) => {
-            expect(response.status).toBe(suffix === 'other' ? 404 : 400);
-            authorizeCallback(auth);
-          });
-        },
-      }),
-    ).resolves.toMatchObject({ access: 'access' });
-  });
+      await expect(
+        login({
+          onAuth: (auth) => {
+            const redirect = new URL(new URL(auth.url).searchParams.get('redirect_uri') ?? '');
+            const invalid =
+              suffix === 'other'
+                ? `${redirect.origin}/other?code=ignored&state=${new URL(auth.url).searchParams.get('state')}`
+                : `${redirect.origin}/${suffix}`;
+            void fetchCallback(invalid).then((response) => {
+              expect(response.status).toBe(suffix === 'other' ? 404 : 400);
+              authorizeCallback(auth);
+            });
+          },
+        }),
+      ).resolves.toMatchObject({ access: 'access' });
+    },
+  );
 
   it('surfaces a matching-state OAuth error without exchanging a code', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (input) => {
