@@ -1,4 +1,4 @@
-export const GROK_CLI_VERSION = '1.0.46';
+export const PINNED_GROK_CLI_VERSION = '1.0.46';
 
 const STABLE_VERSION_TIMEOUT_MS = 5_000;
 
@@ -9,8 +9,7 @@ let stableVersion: Promise<string> | undefined;
  * `x-grok-client-version` is missing or older than its minimum supported
  * release; it ignores User-Agent. Reading the latest stable release from the
  * pointer the official installer uses keeps requests above a raised minimum
- * without an extension release. The lookup runs once per process until a
- * request is rejected by the gate.
+ * without an extension release.
  */
 export function resolveGrokCliVersion() {
   stableVersion ??= fetch(process.env.PI_GROK_CLI_VERSION_URL || 'https://x.ai/cli/stable', {
@@ -18,22 +17,22 @@ export function resolveGrokCliVersion() {
   })
     .then(async (response) => {
       const version = response.ok ? (await response.text()).trim() : '';
-      return /^\d+\.\d+\.\d+(-[\w.]+)?$/.test(version) ? version : GROK_CLI_VERSION;
+      return /^\d+\.\d+\.\d+(-[\w.]+)?$/.test(version) ? version : PINNED_GROK_CLI_VERSION;
     })
-    .catch(() => GROK_CLI_VERSION);
+    .catch(() => PINNED_GROK_CLI_VERSION);
   return stableVersion;
 }
 
-let refreshing: Promise<string> | undefined;
+let sharedVersionRefresh: Promise<string> | undefined;
 
 export function refreshGrokCliVersion() {
-  if (!refreshing) {
+  if (!sharedVersionRefresh) {
     stableVersion = undefined;
-    refreshing = resolveGrokCliVersion().finally(() => {
-      refreshing = undefined;
+    sharedVersionRefresh = resolveGrokCliVersion().finally(() => {
+      sharedVersionRefresh = undefined;
     });
   }
-  return refreshing;
+  return sharedVersionRefresh;
 }
 
 export function grokCliModelHeaders(modelId: string): Record<string, string> {
@@ -44,9 +43,11 @@ export function grokCliModelHeaders(modelId: string): Record<string, string> {
   };
 }
 
+const OFFICIAL_CLIENT_USER_AGENT_PLATFORM = 'macos; aarch64';
+
 export function grokCliVersionHeaders(version: string): Record<string, string> {
   return {
-    'User-Agent': `grok-shell/${version} (macos; aarch64)`,
+    'User-Agent': `grok-shell/${version} (${OFFICIAL_CLIENT_USER_AGENT_PLATFORM})`,
     'x-grok-client-version': version,
   };
 }

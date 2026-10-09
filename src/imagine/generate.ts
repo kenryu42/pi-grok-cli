@@ -1,5 +1,5 @@
 import packageJson from '../../package.json';
-import { GROK_CLI_VERSION } from '../provider/stream.js';
+import { PINNED_GROK_CLI_VERSION } from '../provider/stream.js';
 import { normalizeAspectRatio } from './aspect.js';
 
 const REQUEST_TIMEOUT_MS = 60_000;
@@ -113,7 +113,7 @@ export async function generateImage(options: {
         'content-type': 'application/json',
         accept: 'application/json',
         'user-agent': `pi-grok-cli/${packageJson.version}`,
-        'x-grok-client-version': GROK_CLI_VERSION,
+        'x-grok-client-version': PINNED_GROK_CLI_VERSION,
       },
       body: JSON.stringify({
         model: process.env.PI_GROK_CLI_IMAGINE_MODEL ?? 'grok-imagine-image-quality',
