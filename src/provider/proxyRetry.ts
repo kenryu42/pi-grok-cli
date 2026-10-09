@@ -4,6 +4,17 @@ import type {
   AssistantMessageEventStream,
 } from '@earendil-works/pi-ai';
 
+export const SDK_MAX_RETRIES_UNDER_PROXY_RETRY = 0;
+
+function rotatedConversation(rotate: () => void) {
+  try {
+    rotate();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function* streamWithProxyRetry(options: {
   start: () => AssistantMessageEventStream;
   rotate?: () => void;
@@ -40,13 +51,11 @@ export async function* streamWithProxyRetry(options: {
     if (
       (status === '401' || status === '502' || status === '520') &&
       rotations < 2 &&
-      options.rotate
+      options.rotate &&
+      rotatedConversation(options.rotate)
     ) {
-      try {
-        options.rotate();
-        rotations += 1;
-        continue;
-      } catch {}
+      rotations += 1;
+      continue;
     }
     if (message.stopReason === 'pending') {
       throw new Error('Grok CLI response ended without a stop reason');

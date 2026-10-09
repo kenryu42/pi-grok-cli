@@ -23,7 +23,7 @@ import {
   mutateAccountVault,
 } from './accountVault.js';
 import { migrateSavedModelProviders } from './modelMigration.js';
-import { streamWithProxyRetry } from './proxyRetry.js';
+import { SDK_MAX_RETRIES_UNDER_PROXY_RETRY, streamWithProxyRetry } from './proxyRetry.js';
 import { removeQuotaUsage } from './quotaCache.js';
 import { rememberRequestAccount } from './requestOwnership.js';
 import { registerExhaustionRotation } from './rotation.js';
@@ -182,7 +182,7 @@ export default function registerGrokCli(pi: ExtensionAPI) {
               {
                 ...options,
                 apiKey: route.token,
-                maxRetries: 0,
+                maxRetries: SDK_MAX_RETRIES_UNDER_PROXY_RETRY,
                 headers: {
                   ...grokCliVersionHeaders(version),
                   ...options?.headers,
