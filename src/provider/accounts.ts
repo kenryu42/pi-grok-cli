@@ -118,7 +118,7 @@ function callbacks(interaction: AuthInteraction): OAuthLoginCallbacks {
   };
 }
 
-function openAuthorizationUrl(url: string, onError: () => void) {
+function openAuthorizationUrl(url: string) {
   const command: [string, string[]] =
     process.platform === 'darwin'
       ? ['open', [url]]
@@ -126,7 +126,7 @@ function openAuthorizationUrl(url: string, onError: () => void) {
         ? ['rundll32', ['url.dll,FileProtocolHandler', url]]
         : ['xdg-open', [url]];
   const child = spawn(command[0], command[1], { detached: true, stdio: 'ignore' });
-  child.once('error', onError);
+  child.once('error', () => {});
   child.unref();
 }
 
@@ -134,9 +134,8 @@ function terminalInteraction(ctx: ExtensionCommandContext): AuthInteraction {
   return {
     notify(event) {
       if (event.type === 'auth_url') {
-        openAuthorizationUrl(event.url, () => {
-          ctx.ui.notify(`Open this URL to continue login: ${event.url}`, 'warning');
-        });
+        openAuthorizationUrl(event.url);
+        ctx.ui.notify(`Open this URL to continue login: ${event.url}`, 'warning');
         ctx.ui.notify(event.instructions ?? 'Complete the Grok CLI login in your browser.', 'info');
         return;
       }
